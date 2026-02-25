@@ -138,15 +138,13 @@ export function PatientsTable({
       header: "Microchip Number",
       cell: ({ getValue }) => getValue() || '-'
     },
-    // { 
-    //   accessorKey: "isActive", 
-    //   header: "Status", 
-    //   cell: ({ getValue }) => (
-    //     <Badge variant={getValue() ? "default" : "destructive"}>
-    //       {getValue() ? "Active" : "Inactive"}
-    //     </Badge>
-    //   )
-    // },
+    {
+      accessorKey: "isActive",
+      header: "Status",
+      cell: ({ getValue }) => getValue() ?
+        <Badge className="bg-[#1E3D3D] text-white hover:bg-[#1E3D3D]/80">Active</Badge> :
+        <Badge variant="destructive">Inactive</Badge>
+    },
     ...(showClinicColumn ? [
      
     ] : []),

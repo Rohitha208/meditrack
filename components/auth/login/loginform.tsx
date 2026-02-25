@@ -4,8 +4,6 @@ import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { toast } from "sonner"
-
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -27,8 +25,7 @@ import { useLoginMutation } from "@/queries/auth/login-user";
 import { useRouter } from "next/navigation";
 import { setJwtToken, setUserId, setClientId, setCompanyId } from '@/utils/clientCookie';
 import { Loader2 } from 'lucide-react';
-// import { useQueryState } from 'nuqs';
-// import { useToast } from '@/hooks/use-toast';
+import { useToast } from '@/hooks/use-toast';
 import { useRootContext } from '@/context/RootContext';
 import { getCompanySubdomain } from "@/utils/subdomain"
 import { useGetCompanyBySubdomain } from "@/queries/companies"
@@ -50,7 +47,7 @@ interface LoginFormProps {
 
 export function LoginForm({ hideRegisterLink }: LoginFormProps) {
   const { setUser, fetchUser } = useRootContext();
-  // const { toast } = useToast();
+  const { toast } = useToast();
   const router = useRouter();
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -80,14 +77,17 @@ export function LoginForm({ hideRegisterLink }: LoginFormProps) {
       }
       fetchUser(data, data.user.roleName);
       router.push(data.redirectUrl ? data.redirectUrl : "/dashboard");
-      toast.success("Login Successful", {
+      toast({
+        title: "Login Successful",
         description: "Welcome to the PawTrack",
+        variant: "success",
       })
     },
-    onError: (error) => {
-      toast.error("Error", {
-        description: error instanceof Error ? error.message : "Login failed. Please try again.",
-        duration: 3000,
+    onError: (error: any) => {
+      toast({
+        title: "Login Failed",
+        description: error instanceof Error ? error.message : "Invalid credentials. Please try again.",
+        variant: "destructive",
       })
     }
   });
