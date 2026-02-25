@@ -8,6 +8,7 @@ import SurgeryComponent from "@/components/appointments/surgery"
 import { useGetAppointmentById } from "@/queries/appointment/get-appointment-by-id"
 import { useGetVisitByAppointmentId } from "@/queries/visit/get-visit-by-appointmentId"
 import { useGetPatientAppointmentHistory } from "@/queries/patients/get-patient-appointment-history"
+import { useContentLayout } from "@/hooks/useContentLayout"
 import { Button } from "@/components/ui/button"
 import { ChevronLeft, ChevronRight, Calendar } from "lucide-react"
 import React, { useMemo, useState, useEffect } from "react"
@@ -20,9 +21,16 @@ interface VisitManagerProps {
 
 export default function VisitManager({ patientId, appointmentId, onClose }: VisitManagerProps) {
   const [currentAppointmentId, setCurrentAppointmentId] = useState(appointmentId)
+  const { clinic, user, userType } = useContentLayout()
   const { data: appointment } = useGetAppointmentById(currentAppointmentId)
   const { data: visitData } = useGetVisitByAppointmentId(currentAppointmentId)
-  const { data: history } = useGetPatientAppointmentHistory(patientId)
+  
+  // Use clinic ID for appointment history if user is clinic admin or veterinarian
+  const clinicIdForHistory = (user?.roleName === 'Clinic Admin' || user?.roleName === 'Veterinarian') 
+    ? (appointment?.clinicId || clinic?.id) 
+    : undefined
+
+  const { data: history } = useGetPatientAppointmentHistory(patientId, clinicIdForHistory)
 
   // Keep currentAppointmentId in sync if parent prop changes
   useEffect(() => {

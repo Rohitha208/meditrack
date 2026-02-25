@@ -68,7 +68,7 @@ function OrderModal({ isOpen, onClose, clinicId, initialProductId, initialQuanti
   }, user?.companyId)
 
   // Create dropdown options
-  const supplierOptions = suppliersData?.items?.map(supplier => ({
+  const supplierOptions = suppliersData?.items?.filter(supplier => supplier.isActive !== false).map(supplier => ({
     value: supplier.id,
     label: supplier.name
   })) || []
@@ -362,6 +362,16 @@ function OrderModal({ isOpen, onClose, clinicId, initialProductId, initialQuanti
         message: "Please select a supplier"
       });
       hasErrors = true;
+    } else {
+      // Additional validation to ensure selected supplier is active
+      const selectedSupplier = suppliersData?.items?.find(supplier => supplier.id === data.supplierId);
+      if (selectedSupplier && selectedSupplier.isActive === false) {
+        form.setError("supplierId", {
+          type: "validation",
+          message: "Selected supplier is not active. Please choose an active supplier."
+        });
+        hasErrors = true;
+      }
     }
 
     // Check expected delivery date

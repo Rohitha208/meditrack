@@ -14,6 +14,7 @@ export type Supplier = {
   email: string;
   website: string;
   taxId: string;
+  isActive: boolean;
   createdAt: string;
   updatedAt: string;
   clinicDetail?: {

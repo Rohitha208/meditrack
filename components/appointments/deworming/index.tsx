@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { CheckCircle, History } from "lucide-react"
 import { useTabCompletion, type TabId, TabCompletionProvider } from "@/context/TabCompletionContext"
 import { useGetPatientAppointmentHistory } from "@/queries/patients/get-patient-appointment-history"
+import { useContentLayout } from "@/hooks/useContentLayout"
 import { useGetVisitByAppointmentId } from "@/queries/visit/get-visit-by-appointmentId"
 import { useGetAppointmentById } from "@/queries/appointment/get-appointment-by-id"
 import { appointmentTabConfigMap } from "../appointmentTabConfig"
@@ -38,23 +39,25 @@ function DewormingContent({
   const [showMedicalHistory, setShowMedicalHistory] = useState(false)
   const [currentAppointmentId, setCurrentAppointmentId] = useState(initialAppointmentId)
   const [followUpDateFooter, setFollowUpDateFooter] = useState<string>("")
+  const { clinic, user, userType } = useContentLayout()
 
-  const { data: history } = useGetPatientAppointmentHistory(patientId)
   const { data: appointment } = useGetAppointmentById(currentAppointmentId)
+
+  const clinicIdForHistory = (user?.roleName === 'Clinic Admin' || user?.roleName === 'Veterinarian')
+    ? (appointment?.clinicId || clinic?.id)
+    : undefined
+
+  const { data: history } = useGetPatientAppointmentHistory(patientId, clinicIdForHistory)
   const { data: visitData, refetch: refetchVisitData } = useGetVisitByAppointmentId(currentAppointmentId)
   const [weightGraphOpen, setWeightGraphOpen] = useState(false)
 
-  // Get tab completion state
   const { isTabCompleted } = useTabCompletion()
 
-  // Get the current tab configuration based on appointment type
   const currentTabConfig = useMemo(() => {
     const type = appointment?.appointmentType?.name || "Deworming"
-    const config = appointmentTabConfigMap[type] || appointmentTabConfigMap["Deworming"] || []
-    return config
+    return appointmentTabConfigMap[type] || appointmentTabConfigMap["Deworming"] || []
   }, [appointment?.appointmentType?.name])
 
-  // Initialize tab from URL parameter or default to first tab
   useEffect(() => {
     const tabFromUrl = searchParams.get("tab") as TabId | null
     if (tabFromUrl && currentTabConfig.some((tab) => tab.value === tabFromUrl)) {
@@ -62,7 +65,6 @@ function DewormingContent({
     } else if (currentTabConfig.length > 0 && appointment?.appointmentType?.name) {
       const defaultTab = currentTabConfig[0].value
       setActiveTab(defaultTab)
-      // Update URL if no valid tab in URL
       if (!tabFromUrl) {
         const params = new URLSearchParams(searchParams.toString())
         params.set("tab", defaultTab)
@@ -71,51 +73,37 @@ function DewormingContent({
     }
   }, [currentTabConfig, appointment?.appointmentType?.name, searchParams, router])
 
-  // Update URL when tab changes (only when Visit Summary is already open)
   const handleTabChange = (value: string) => {
     const newTab = value as TabId
     setActiveTab(newTab)
-    // Only update URL if Visit Summary is open (this component is rendered)
     const params = new URLSearchParams(searchParams.toString())
     params.set("tab", newTab)
-    params.set("appointmentId", currentAppointmentId) // Ensure appointmentId is also in URL
+    params.set("appointmentId", currentAppointmentId)
     router.replace(`?${params.toString()}`, { scroll: false })
   }
 
-  // Filter appointment history to only include InProgress or completed appointments of type Deworming
   const filteredAppointmentHistory = useMemo(() => {
-    return history?.appointmentHistory.filter((appt) => 
-      (appt.status === "InProgress" || 
-       appt.status === "completed") &&
-      appt.appointmentType === "Deworming"
+    return history?.appointmentHistory.filter(
+      (appt) => appt.status === "in_progress" || appt.status === "completed"
     ) || []
   }, [history?.appointmentHistory])
 
-  // Keep currentAppointmentId in sync if parent prop changes
   useEffect(() => {
     setCurrentAppointmentId(initialAppointmentId)
   }, [initialAppointmentId])
 
-  // When currentAppointmentId changes, refetch visit data
   useEffect(() => {
     refetchVisitData()
   }, [currentAppointmentId, refetchVisitData])
 
   const isDewormingTabCompleted = (tabValue: string): boolean => {
-    // First check TabCompletionContext for immediate state
-    const contextCompleted = isTabCompleted(tabValue as TabId);
-    if (contextCompleted) return true;
-    
-    // Fall back to database state
+    const contextCompleted = isTabCompleted(tabValue as TabId)
+    if (contextCompleted) return true
     if (!visitData) return false
     const visit = visitData as any
     const tabConfig = currentTabConfig.find((tab) => tab.value === tabValue)
-
-    if (!tabConfig || !tabConfig.isCompletedKey) {
-      return false
-    }
-    const isCompleted = Boolean(visit[tabConfig.isCompletedKey])
-    return isCompleted
+    if (!tabConfig || !tabConfig.isCompletedKey) return false
+    return Boolean(visit[tabConfig.isCompletedKey])
   }
 
   const navigateToNextTab = () => {
@@ -128,21 +116,21 @@ function DewormingContent({
 
   const handleCloseAndClearUrl = () => {
     const params = new URLSearchParams(searchParams.toString())
-
-    // remove tab & appointmentId
     params.delete("tab")
     params.delete("appointmentId")
-
     router.replace(`?${params.toString()}`, { scroll: false })
-
     onClose()
   }
 
   return (
     <>
       <Sheet open={true} onOpenChange={handleCloseAndClearUrl}>
-        <SheetContent side="right" className="w-full sm:!max-w-full md:!max-w-[70%] lg:!max-w-[70%]">
-          <SheetHeader className="mb-6 mr-10">
+        <SheetContent
+          side="right"
+          className="w-full sm:!max-w-full md:!max-w-[70%] lg:!max-w-[70%] flex flex-col overflow-hidden h-full"
+        >
+          {/* Fixed header */}
+          <SheetHeader className="mb-3 mr-10 flex-shrink-0">
             <div className="flex items-center justify-between">
               <SheetTitle>Deworming Visit</SheetTitle>
               <div className="flex items-center gap-2">
@@ -159,40 +147,37 @@ function DewormingContent({
             </div>
           </SheetHeader>
 
-          {/* Appointment History Navigation */}
-          {filteredAppointmentHistory.length > 0 && (
-            <div className="mb-4">
-              <AppointmentHistoryNavigation
-                patientHistory={filteredAppointmentHistory}
-                currentAppointmentId={currentAppointmentId}
-                onAppointmentSelect={(newAppointmentId) => {
-                  setCurrentAppointmentId(newAppointmentId)
-                  // Reset to first tab when changing appointments, but preserve URL param if valid
-                  if (currentTabConfig && currentTabConfig.length > 0) {
-                    const tabFromUrl = searchParams.get("tab") as TabId | null
-                    const validTab =
-                      tabFromUrl && currentTabConfig.some((tab) => tab.value === tabFromUrl)
-                        ? tabFromUrl
-                        : currentTabConfig[0].value
-                    setActiveTab(validTab)
-                    const params = new URLSearchParams(searchParams.toString())
-                    params.set("tab", validTab)
-                    router.replace(`?${params.toString()}`, { scroll: false })
-                  }
-                }}
-                selectedAppointmentType="Deworming"
-              />
-            </div>
-          )}
+          {/* Single scrollable content area - min-h-0 prevents double scrollbar */}
+          <div className="flex-1 overflow-y-auto min-h-0">
+            {/* Appointment History Navigation - inside scroll div, same as SurgeryComponent */}
+            {filteredAppointmentHistory.length > 0 && (
+              <div className="mb-2">
+                <AppointmentHistoryNavigation
+                  patientHistory={filteredAppointmentHistory}
+                  currentAppointmentId={currentAppointmentId}
+                  onAppointmentSelect={(newAppointmentId) => {
+                    setCurrentAppointmentId(newAppointmentId)
+                    if (currentTabConfig && currentTabConfig.length > 0) {
+                      const tabFromUrl = searchParams.get("tab") as TabId | null
+                      const validTab =
+                        tabFromUrl && currentTabConfig.some((tab) => tab.value === tabFromUrl)
+                          ? tabFromUrl
+                          : currentTabConfig[0].value
+                      setActiveTab(validTab)
+                      const params = new URLSearchParams(searchParams.toString())
+                      params.set("tab", validTab)
+                      router.replace(`?${params.toString()}`, { scroll: false })
+                    }
+                  }}
+                  selectedAppointmentType="Deworming"
+                />
+              </div>
+            )}
+            {(() => {
+              const appointmentType = appointment?.appointmentType?.name?.toLowerCase()
 
-          {/* Main Content */}
-          {(() => {
-            const appointmentType = appointment?.appointmentType?.name?.toLowerCase()
-
-            // Only show vaccination in embedded mode if explicitly set
-            if (appointmentType === "vaccination" && currentTabConfig.length === 0) {
-              return (
-                <div className="p-4">
+              if (appointmentType === "vaccination" && currentTabConfig.length === 0) {
+                return (
                   <VaccinationPlanning
                     patientId={patientId}
                     appointmentId={currentAppointmentId}
@@ -204,68 +189,64 @@ function DewormingContent({
                     embedded={true}
                     hideMedicalHistoryButton={true}
                   />
-                </div>
-              )
-            }
+                )
+              }
 
-            // Handle certification appointments
-            if (appointmentType === "certification" || appointmentType === "certificate") {
-              return (
-                <div className="p-4">
+              if (appointmentType === "certification" || appointmentType === "certificate") {
+                return (
                   <CertificateManagementWrapper
                     appointmentId={currentAppointmentId}
                     patientId={patientId}
                     onClose={handleCloseAndClearUrl}
                     embedded={true}
                   />
-                </div>
+                )
+              }
+
+              return (
+                <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
+                  <TabsList className="w-full">
+                    {currentTabConfig.map((tab) => (
+                      <TabsTrigger
+                        key={tab.value}
+                        value={tab.value}
+                        className={`flex items-center gap-1 text-lg font-bold ${
+                          isDewormingTabCompleted(tab.value) ? "data-[state=active]:text-green-600" : ""
+                        }`}
+                      >
+                        <span className="flex items-center gap-1">
+                          {tab.label}
+                          {isDewormingTabCompleted(tab.value) && (
+                            <CheckCircle className="h-4 w-4 text-green-600 ml-1" />
+                          )}
+                        </span>
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+
+                  {currentTabConfig.map((tab: any) => {
+                    const TabComponent = tab.component
+                    return (
+                      <TabsContent key={tab.value} value={tab.value} className="mt-0">
+                        <TabCompletionProvider>
+                          <TabComponent
+                            patientId={patientId}
+                            appointmentId={currentAppointmentId}
+                            visitId={visitData?.id}
+                            onNext={navigateToNextTab}
+                            onClose={handleCloseAndClearUrl}
+                            externalFollowUpDate={followUpDateFooter}
+                            onExternalFollowUpDateChange={setFollowUpDateFooter}
+                            setWeightGraphOpen={tab.value === "deworming-intake" ? setWeightGraphOpen : undefined}
+                          />
+                        </TabCompletionProvider>
+                      </TabsContent>
+                    )
+                  })}
+                </Tabs>
               )
-            }
-
-            // For deworming or any other type, show the tabs
-
-            // Default case - show tabs
-            return (
-              <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
-                <TabsList className="w-full">
-                  {currentTabConfig.map((tab) => (
-                    <TabsTrigger
-                      key={tab.value}
-                      value={tab.value}
-                      className={`flex items-center gap-1 text-lg font-bold ${
-                        isDewormingTabCompleted(tab.value) ? "data-[state=active]:text-green-600" : ""
-                      }`}
-                    >
-                      <span className="flex items-center gap-1">
-                        {tab.label}
-                        {isDewormingTabCompleted(tab.value) && <CheckCircle className="h-4 w-4 text-green-600 ml-1" />}
-                      </span>
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-
-                {currentTabConfig.map((tab: any) => {
-                  const TabComponent = tab.component
-                  return (
-                    <TabsContent key={tab.value} value={tab.value} className="mt-0">
-                      <TabCompletionProvider>
-                        <TabComponent
-                          patientId={patientId}
-                          appointmentId={currentAppointmentId}
-                          visitId={visitData?.id}
-                          onNext={navigateToNextTab}
-                          onClose={handleCloseAndClearUrl}
-                          externalFollowUpDate={followUpDateFooter}
-                          onExternalFollowUpDateChange={setFollowUpDateFooter}
-                          setWeightGraphOpen={tab.value === "deworming-intake" ? setWeightGraphOpen : undefined}
-                        />
-                      </TabCompletionProvider>
-                    </TabsContent>
-                  )
-                })}
-              </Tabs>
-            )
-          })()}
+            })()}
+          </div>
         </SheetContent>
       </Sheet>
 
@@ -301,7 +282,6 @@ function DewormingContent({
   )
 }
 
-// Main export with TabCompletionProvider
 export default function DewormingComponent(props: DewormingComponentProps) {
   return (
     <TabCompletionProvider>

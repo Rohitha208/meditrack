@@ -26,9 +26,16 @@ export interface PatientAppointmentHistoryResponse {
   appointmentHistory: AppointmentHistoryItem[];
 }
 
-async function getPatientAppointmentHistory(patientId: string): Promise<PatientAppointmentHistoryResponse> {
+async function getPatientAppointmentHistory(patientId: string, clinicId?: string): Promise<PatientAppointmentHistoryResponse> {
   if (!patientId) throw new Error("patientId is required");
-  const res = await fetch(`/api/patient/appointment-history/${patientId}`, { cache: "no-store" });
+  
+  const params = new URLSearchParams();
+  if (clinicId) {
+    params.append('clinicId', clinicId);
+  }
+  
+  const url = `/api/patient/appointment-history/${patientId}${params.toString() ? `?${params.toString()}` : ''}`;
+  const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || "Failed to fetch appointment history");
@@ -36,10 +43,10 @@ async function getPatientAppointmentHistory(patientId: string): Promise<PatientA
   return res.json();
 }
 
-export function useGetPatientAppointmentHistory(patientId: string) {
+export function useGetPatientAppointmentHistory(patientId: string, clinicId?: string) {
   return useQuery<PatientAppointmentHistoryResponse>({
-    queryKey: ["patientAppointmentHistory", patientId],
-    queryFn: () => getPatientAppointmentHistory(patientId),
+    queryKey: ["patientAppointmentHistory", patientId, clinicId],
+    queryFn: () => getPatientAppointmentHistory(patientId, clinicId),
     enabled: !!patientId,
   });
 }

@@ -16,6 +16,7 @@ import { useGetPatientAppointmentHistory } from "@/queries/patients/get-patient-
 import AppointmentHistoryNavigation from "../AppointmentHistoryNavigation"
 import MedicalHistoryTab from "../MedicalHistoryTab"
 import CertificateManagementWrapper from "../certification";
+import { useContentLayout } from "@/hooks/useContentLayout"
 
 interface VaccinationManagerProps {
   patientId: string
@@ -43,8 +44,15 @@ function VaccinationManager({
   const [weightGraphOpen, setWeightGraphOpen] = useState(false);
   const [showMedicalHistory, setShowMedicalHistory] = useState(false);
   const [currentAppointmentId, setCurrentAppointmentId] = useState(appointmentId);
+  const { clinic, user, userType } = useContentLayout()
   const { data: appointment } = useGetAppointmentById(currentAppointmentId);
-  const { data: history } = useGetPatientAppointmentHistory(patientId);
+
+  // Use clinic ID for appointment history if user is clinic admin or veterinarian
+  const clinicIdForHistory = (user?.roleName === 'Clinic Admin' || user?.roleName === 'Veterinarian') 
+    ? (appointment?.clinicId || clinic?.id) 
+    : undefined
+
+  const { data: history } = useGetPatientAppointmentHistory(patientId, clinicIdForHistory);
   const { data: visitData, refetch: refetchVisitData } = useGetVisitByAppointmentId(currentAppointmentId);
   const [followUpDateFooter, setFollowUpDateFooter] = useState<string>("");
 
@@ -96,10 +104,11 @@ function VaccinationManager({
     router.replace(`?${params.toString()}`, { scroll: false });
   };
 
-  // Filter appointment history to exclude scheduled appointments only
   const filteredAppointmentHistory = useMemo(() => {
-    return history?.appointmentHistory.filter(appt => appt.status !== "scheduled") || [];
-  }, [history?.appointmentHistory]);
+  return history?.appointmentHistory.filter(
+    (appt) => appt.status === "in_progress" || appt.status === "completed"
+  ) || []
+}, [history?.appointmentHistory])
 
   // Keep currentAppointmentId in sync if parent prop changes
   useEffect(() => {
