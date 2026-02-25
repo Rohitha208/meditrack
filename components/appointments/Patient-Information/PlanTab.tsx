@@ -512,9 +512,10 @@ export default function PlanTab({ patientId, appointmentId, onNext, onClose, onC
               className="max-w-md"
               disabled={isReadOnly}
             />
-            <Button 
+            <Button
               onClick={handleAddPlan}
               disabled={!newPlanName.trim() || createPlanMutation.isPending || isReadOnly}
+              className="bg-[#1E3D3D] hover:bg-[#1E3D3D]/90 text-white"
             >
               Add
             </Button>
@@ -546,7 +547,7 @@ export default function PlanTab({ patientId, appointmentId, onNext, onClose, onC
                     return plan ? (
                       <div 
                         key={plan.id}
-                        className="flex items-center bg-green-100 text-green-800 rounded-full px-3 py-1 text-sm"
+                        className="flex items-center bg-[#D2EFEC] text-[#1E3D3D] rounded-full px-3 py-1 text-sm"
                       >
                         {plan.name}
                         <button 
@@ -572,7 +573,7 @@ export default function PlanTab({ patientId, appointmentId, onNext, onClose, onC
                     onClick={() => handlePlanClick(plan.id)}
                     className={`rounded-full px-3 py-1 text-sm border transition-colors ${
                       selectedPlans.includes(plan.id)
-                        ? 'bg-green-100 border-green-300 text-green-800'
+                        ? 'bg-[#D2EFEC] border-[#1E3D3D] text-[#1E3D3D]'
                         : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
                     }`}
                     disabled={isReadOnly}
@@ -779,7 +780,7 @@ export default function PlanTab({ patientId, appointmentId, onNext, onClose, onC
                   <Button
                     onClick={handleCheckout}
                     disabled={false}
-                    className="ml-2 bg-green-600 hover:bg-green-700 text-white"
+                    className="ml-2 bg-[#1E3D3D] hover:bg-[#1E3D3D]/90 text-white"
                   >
                     Checkout
                   </Button>
