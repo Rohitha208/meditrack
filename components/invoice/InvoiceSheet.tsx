@@ -889,6 +889,7 @@ export default function InvoiceSheet({ isOpen, onClose, patientId, appointmentId
             <Button
               onClick={handleSave}
               disabled={isVisitCompleted || createInvoiceMutation.isPending || updateInvoiceMutation.isPending || (!isEditing && !!currentInvoiceId)}
+              className="bg-[#1E3D3D] hover:bg-[#1E3D3D]/90 text-white"
             >
               {createInvoiceMutation.isPending || updateInvoiceMutation.isPending ? (
                 <>
