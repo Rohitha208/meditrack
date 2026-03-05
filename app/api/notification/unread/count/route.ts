@@ -9,7 +9,21 @@ export async function GET(request: NextRequest) {
     let token = getJwtToken(request);
     if (!token) token = testToken;
 
-    const response = await fetch(`${apiUrl}/api/Notification/unread/count`, {
+    // Get parameters from query string
+    const { searchParams } = new URL(request.url);
+    const clinicId = searchParams.get('clinicId');
+    const clientId = searchParams.get('clientId');
+
+    // Build API URL with appropriate parameter
+    const params = new URLSearchParams();
+    if (clinicId) params.append('clinicId', clinicId);
+    if (clientId) params.append('clientId', clientId);
+
+    const apiUrlWithParams = params.toString() 
+      ? `${apiUrl}/api/Notification/unread/count?${params.toString()}`
+      : `${apiUrl}/api/Notification/unread/count`;
+
+    const response = await fetch(apiUrlWithParams, {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,

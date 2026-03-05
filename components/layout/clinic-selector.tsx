@@ -70,6 +70,7 @@ export function ClinicSelector() {
       queryClient.invalidateQueries({ queryKey: ['purchaseOrderReceivingHistory'] });
       queryClient.invalidateQueries({ queryKey: ['suppliers'] });
       queryClient.invalidateQueries({ queryKey: ['clinic'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications-unread-count'] });
       queryClient.refetchQueries({ queryKey: ['inventory-dashboard'] });
       queryClient.refetchQueries({ queryKey: ['inventory'] });
     }
