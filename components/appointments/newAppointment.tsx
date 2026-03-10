@@ -20,7 +20,7 @@ import { useGetUsers } from "@/queries/users/get-users"
 import { useGetRole } from "@/queries/roles/get-role";
 import { NewPatientForm } from "@/components/patients/new-patient-form"
 import { Separator } from "@/components/ui/separator"
-import { Plus, Search, X, Loader2, Mic, Sparkles } from "lucide-react"
+import { Plus, Search, X, Loader2, Mic, Sparkles, Video } from "lucide-react"
 import { useRootContext } from '@/context/RootContext'
 import { useGetRoomsByClinicId } from "@/queries/rooms/get-room-by-clinic-id"
 import { useSearchPatients } from "@/queries/patients/get-patients-by-search"
@@ -36,6 +36,8 @@ import { useGetUserById } from "@/queries/users/get-user-by-id"
 import { reasonFormatting, notesFormatting } from "@/app/actions/reasonformatting";
 import * as z from "zod"
 import { newAppointmentSchema, NewAppointmentFormValues } from "@/components/schema/appointmentSchema"
+import { Switch } from "@/components/ui/switch"
+import { useCreateNotification } from '@/queries/notifications/create-notification'
 
 // Extended patient interface to handle API response variations
 interface SearchPatientResult {
@@ -296,15 +298,38 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
     }));
   }, [appointmentTypes, isLoadingAppointmentTypes]);
 
+  const { mutate: createNotification } = useCreateNotification();
+  const lastSubmittedDataRef = React.useRef<NewAppointmentFormValues | null>(null);
+
   const { mutate: createAppointment, isPending } = useCreateAppointment({
     onSuccess: () => {
+      const submittedData = lastSubmittedDataRef.current;
+
+      // If this was a video call appointment, notify the assigned vet
+      if (submittedData?.isVideoCall && submittedData?.veterinarianId) {
+        createNotification({
+          userId: submittedData.veterinarianId,
+          type: 'video_call_appointment',
+          title: 'New Video Call Appointment',
+          message: `A video call consultation has been scheduled. Please check your upcoming appointments.`,
+          data: JSON.stringify({
+            patientId: submittedData.patientId,
+            veterinarianId: submittedData.veterinarianId,
+            isVideoCall: true,
+          }),
+        });
+      }
+
       toast({
         title: "Appointment Created",
-        description: "Appointment has been created successfully",
+        description: submittedData?.isVideoCall
+          ? "Video call appointment created. The veterinarian has been notified."
+          : "Appointment has been created successfully",
         variant: "success",
       })
       form.reset() // Clear the form after successful creation
       setSelectedPatient(null) // Clear selected patient after creation
+      lastSubmittedDataRef.current = null;
       // Notify rest of app to refresh appointments
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('appointments:refresh'))
@@ -505,7 +530,10 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
         appointmentTimeTo: selectedSlotDetails.endTime,
         roomSlotId: data.slotId, // Keep for backward compatibility
         createdBy: user?.id,
+        isVideoCall: data.isVideoCall || false,
       } as any; // Use type assertion to allow adding id property
+
+      lastSubmittedDataRef.current = data;
 
       // Add isRegistered and sendEmail for appointment approvals
       if (appointmentId) {
@@ -1227,6 +1255,38 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
                     />
                   </div>
                 </div>
+
+                {/* Video Call Consultation Toggle */}
+                <FormField
+                  control={form.control}
+                  name="isVideoCall"
+                  render={({ field }) => (
+                    <FormItem>
+                      <div className="flex items-center justify-between rounded-lg border border-[#1E3D3D]/20 dark:border-[#1E3D3D]/30 p-4">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#D2EFEC] dark:bg-[#1E3D3D]/40">
+                            <Video className="h-5 w-5 text-[#1E3D3D] dark:text-[#D2EFEC]" />
+                          </div>
+                          <div className="space-y-0.5">
+                            <FormLabel className="text-sm font-medium">
+                              Video Call Consultation
+                            </FormLabel>
+                            <p className="text-xs text-muted-foreground">
+                              Schedule as a video call appointment
+                            </p>
+                          </div>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            className="data-[state=checked]:bg-[#1E3D3D]"
+                          />
+                        </FormControl>
+                      </div>
+                    </FormItem>
+                  )}
+                />
 
                 <SheetFooter>
                   <Button type="button" variant="outline" onClick={handleCancel}>

@@ -3,7 +3,7 @@ import { useContext, useState } from "react";
 import { PatientDashboardContext } from "@/components/patientDashboard/PatientDashboardProvider";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Calendar, Clock, User, MapPin, Plus, Star } from "lucide-react";
+import { Calendar, Clock, User, MapPin, Plus, Star, Video } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import PatientAppointmentForm from "@/components/patients/patient-appointment-form";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -134,19 +134,49 @@ export default function AppointmentsPage() {
                         })()}
                       </div>
                     </div>
-                    {/* Rate button for completed and not-yet-rated */}
-                    {isClient && appointment.status === 'completed' && !ratingsByAppointment.get(appointment.id) && (
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setRatingAppointmentId(appointment.id);
-                          setIsRatingOpen(true);
-                        }}
-                        className="border-[#1E3D3D] dark:border-[#D2EFEC] text-[#1E3D3D] dark:text-[#D2EFEC] hover:bg-[#1E3D3D] hover:text-white dark:hover:bg-[#D2EFEC] dark:hover:text-[#1E3D3D]"
-                      >
-                        Rate
-                      </Button>
-                    )}
+                    <div className="flex flex-col gap-2 items-end shrink-0">
+                      {/* Video Call badge */}
+                      {true || appointment.isVideoCall && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-[#D2EFEC] dark:bg-[#1E3D3D]/30 text-[#1E3D3D] dark:text-[#D2EFEC]">
+                          <Video className="h-3 w-3" />
+                          Video Call
+                        </span>
+                      )}
+                      {/* Start Video Call button for confirmed/in-progress video call appointments */}
+                      {isClient && ( true || appointment.isVideoCall) && (
+                        appointment.status === 'confirmed' ||
+                        appointment.status === 'scheduled' ||
+                        appointment.status === 'in_progress' ||
+                        appointment.status === 'In_progress'
+                      ) && (
+                        <Button
+                          onClick={() => {
+                            window.open(
+                              `/video-call/${appointment.id}`,
+                              `videocall_${appointment.id}`,
+                              'width=1280,height=720,menubar=no,toolbar=no,location=no,status=no'
+                            );
+                          }}
+                          className="bg-[#1E3D3D] hover:bg-[#1E3D3D]/90 text-white dark:bg-[#D2EFEC] dark:text-[#1E3D3D] dark:hover:bg-[#D2EFEC]/90"
+                        >
+                          <Video className="h-4 w-4 mr-2" />
+                          Start Video Call
+                        </Button>
+                      )}
+                      {/* Rate button for completed and not-yet-rated */}
+                      {isClient && appointment.status === 'completed' && !ratingsByAppointment.get(appointment.id) && (
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setRatingAppointmentId(appointment.id);
+                            setIsRatingOpen(true);
+                          }}
+                          className="border-[#1E3D3D] dark:border-[#D2EFEC] text-[#1E3D3D] dark:text-[#D2EFEC] hover:bg-[#1E3D3D] hover:text-white dark:hover:bg-[#D2EFEC] dark:hover:text-[#1E3D3D]"
+                        >
+                          Rate
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))

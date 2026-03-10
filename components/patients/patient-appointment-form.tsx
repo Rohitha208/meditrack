@@ -19,10 +19,12 @@ import type { Clinic } from '../clinic';
 import { useGetUsers } from "@/queries/users/get-users"
 import { useGetAvailableSlotsByUserId, AvailableSlot } from "@/queries/users/get-availabelSlots-by-userId"
 import { useGetRole } from "@/queries/roles/get-role";
-import { Loader2 } from "lucide-react"
+import { Loader2, Video } from "lucide-react"
+import { Switch } from "@/components/ui/switch"
 import { useGetAppointmentType } from '@/queries/appointmentType/get-appointmentType';
 import { getSubdomain } from '@/utils/subdomain';
 import { useGetCompanyBySubdomain } from '@/queries/companies/get-company-by-subdomain';
+import { useCreateNotification } from '@/queries/notifications/create-notification';
 
 // Define the form schema
 const appointmentSchema = z.object({
@@ -40,6 +42,7 @@ const appointmentSchema = z.object({
   slotId: z.string().min(1, "Please select a time slot"),
   reason: z.string().min(1, "Please provide a reason for the appointment"),
   notes: z.string().optional(),
+  isVideoCall: z.boolean().optional(),
 })
 
 type AppointmentFormValues = z.infer<typeof appointmentSchema>
@@ -74,6 +77,7 @@ export default function PatientAppointmentForm({ isOpen, onClose, clientId, pati
       slotId: "",
       reason: "",
       notes: "",
+      isVideoCall: false,
     },
   })
 
@@ -198,15 +202,41 @@ export default function PatientAppointmentForm({ isOpen, onClose, clientId, pati
     label: patient.name
   }))
 
+  const { mutate: createNotification } = useCreateNotification();
+  const lastSubmittedDataRef = React.useRef<AppointmentFormValues | null>(null);
+
   const { mutate: createAppointment, isPending } = useCreateAppointment({
     onSuccess: () => {
+      const submittedData = lastSubmittedDataRef.current;
+
+      // If this was a video call appointment, notify the assigned vet
+      if (submittedData?.isVideoCall && submittedData?.veterinarianId) {
+        const selectedPatient = patients.find(p => p.id === submittedData.patientId);
+        const patientName = selectedPatient?.name || "a patient";
+
+        createNotification({
+          userId: submittedData.veterinarianId,
+          type: 'video_call_appointment',
+          title: 'New Video Call Appointment',
+          message: `A video call consultation has been requested for ${patientName}. Please check your upcoming appointments.`,
+          data: JSON.stringify({
+            patientId: submittedData.patientId,
+            veterinarianId: submittedData.veterinarianId,
+            isVideoCall: true,
+          }),
+        });
+      }
+
       toast({
         title: "Appointment Requested",
-        description: "Your appointment request has been submitted successfully",
+        description: submittedData?.isVideoCall
+          ? "Your video call appointment request has been submitted. The veterinarian has been notified."
+          : "Your appointment request has been submitted successfully",
         variant: "success",
       })
       form.reset()
       setSelectedSlot(null)
+      lastSubmittedDataRef.current = null;
       onClose(true)
     },
     onError: (error) => {
@@ -215,6 +245,7 @@ export default function PatientAppointmentForm({ isOpen, onClose, clientId, pati
         description: error instanceof Error ? error.message : "Failed to submit appointment request",
         variant: "destructive",
       })
+      lastSubmittedDataRef.current = null;
       onClose(false)
     }
   })
@@ -280,9 +311,11 @@ export default function PatientAppointmentForm({ isOpen, onClose, clientId, pati
         roomSlotId: data.slotId, // For backward compatibility
         status: "requested", // Set status to requested for client-submitted appointments
         isRegistered: true, // Set isRegistered to true as requested
-        isActive: true
+        isActive: true,
+        isVideoCall: data.isVideoCall || false,
       }
 
+      lastSubmittedDataRef.current = data;
       createAppointment(formattedData)
     } catch (error) {
       console.error("Error submitting form:", error)
@@ -538,6 +571,38 @@ export default function PatientAppointmentForm({ isOpen, onClose, clientId, pati
                         />
                       </FormControl>
                       <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Video Call Consultation Toggle */}
+                <FormField
+                  control={form.control}
+                  name="isVideoCall"
+                  render={({ field }) => (
+                    <FormItem>
+                      <div className="flex items-center justify-between rounded-lg border border-[#1E3D3D]/20 dark:border-[#1E3D3D]/30 p-4">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#D2EFEC] dark:bg-[#1E3D3D]/40">
+                            <Video className="h-5 w-5 text-[#1E3D3D] dark:text-[#D2EFEC]" />
+                          </div>
+                          <div className="space-y-0.5">
+                            <FormLabel className="text-sm font-medium text-[#1E3D3D] dark:text-[#D2EFEC]">
+                              Video Call Consultation
+                            </FormLabel>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                              Join this appointment via video call instead of in-person visit
+                            </p>
+                          </div>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            className="data-[state=checked]:bg-[#1E3D3D]"
+                          />
+                        </FormControl>
+                      </div>
                     </FormItem>
                   )}
                 />

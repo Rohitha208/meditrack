@@ -23,10 +23,11 @@ export const NotificationListener = () => {
         notificationService.onNotification((payload) => {
           console.log("[NotificationListener] Received notification:", payload);
 
-          // Show toast notification
-          toast(payload.title || "New notification", {
+          // Show toast notification with video call distinction
+          const isVideoCall = payload.type === 'video_call_appointment';
+          toast(isVideoCall ? `📹 ${payload.title || "Video Call Appointment"}` : (payload.title || "New notification"), {
             description: payload.message,
-            duration: 5000,
+            duration: isVideoCall ? 8000 : 5000,
           });
 
           // Invalidate queries to refetch the updated notification list

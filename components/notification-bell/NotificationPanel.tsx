@@ -67,6 +67,8 @@ const NotificationPanelContent = () => {
         return '✅';
       case 'appointment_completed':
         return '✔️';
+      case 'video_call_appointment':
+        return '📹';
       case 'success':
         return '✅';
       case 'error':

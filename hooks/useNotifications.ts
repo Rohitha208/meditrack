@@ -11,7 +11,8 @@ export type NotificationType =
   | 'appointment_cancelled'
   | 'appointment_updated'
   | 'appointment_completed'
-  | 'appointment_checked_in';
+  | 'appointment_checked_in'
+  | 'video_call_appointment';
 
 export interface Notification {
   id: string;
