@@ -17,6 +17,7 @@ export interface Client {
   emergencyContactPhone?: string;
   notes?: string;
   isActive: boolean;
+  isPremium: boolean;
   createdAt: string | null;
   updatedAt: string | null;
 }
