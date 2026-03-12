@@ -1,25 +1,66 @@
 "use client"
 
-import { useContext, useState } from "react"
+import { useContext, useState, useEffect } from "react"
 import { PatientDashboardContext } from "@/components/patientDashboard/PatientDashboardProvider"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Video, Phone, Shield, Clock, AlertTriangle, PawPrint } from "lucide-react"
+import { Video, Shield, Clock, AlertTriangle, PawPrint, Building2, Stethoscope } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { useCreateNotification } from "@/queries/notifications/create-notification"
+import { useGetClinic } from "@/queries/clinic/get-clinic"
+import { useGetUsers } from "@/queries/users/get-users"
+import { useGetRole } from "@/queries/roles/get-role"
 import { toast } from "sonner"
 
 export default function EmergencyVideoCall() {
   const { pets, clientData, isClient, clientId } = useContext(PatientDashboardContext)
+  const [selectedClinicId, setSelectedClinicId] = useState<string>("")
+  const [selectedVetId, setSelectedVetId] = useState<string>("")
   const [selectedPetId, setSelectedPetId] = useState<string>("")
   const [emergencyNotes, setEmergencyNotes] = useState("")
   const [isCallStarting, setIsCallStarting] = useState(false)
   const { mutate: createNotification } = useCreateNotification()
 
   const isPremium = clientData?.isPremium === true
+
+  // Fetch clinics for the client's company
+  const { data: clinicsData, isLoading: isClinicsLoading } = useGetClinic(
+    1, 100, clientData?.companyId ?? null, isPremium
+  )
+  const clinics = clinicsData?.items ?? []
+
+  // Fetch the veterinarian role ID
+  const { data: rolesData } = useGetRole(1, 100, "", isPremium)
+  const [veterinarianRoleId, setVeterinarianRoleId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (rolesData?.data) {
+      const vetRole = rolesData.data.find(
+        (role: any) => role.name.toLowerCase() === "veterinarian"
+      )
+      if (vetRole) {
+        setVeterinarianRoleId(vetRole.id)
+      }
+    }
+  }, [rolesData])
+
+  // Fetch veterinarians for the selected clinic
+  const { data: vetsData, isLoading: isVetsLoading } = useGetUsers(
+    1, 50, "",
+    !!(selectedClinicId && veterinarianRoleId), // enabled
+    "", // companyId
+    selectedClinicId ? [selectedClinicId] : [], // clinicIds
+    veterinarianRoleId ? [veterinarianRoleId] : [] // roleIds
+  )
+  const veterinarians = vetsData?.items ?? []
+
+  // Reset vet selection when clinic changes
+  useEffect(() => {
+    setSelectedVetId("")
+  }, [selectedClinicId])
 
   // If not premium, show upgrade prompt
   if (!isPremium) {
@@ -49,8 +90,18 @@ export default function EmergencyVideoCall() {
   }
 
   const selectedPet = pets.find((p: any) => p.id === selectedPetId)
+  const selectedVet = veterinarians.find((v: any) => v.id === selectedVetId)
+  const selectedClinic = clinics.find((c: any) => c.id === selectedClinicId)
 
   const handleStartCall = () => {
+    if (!selectedClinicId) {
+      toast("Please select a clinic", { description: "Choose a clinic to connect with." })
+      return
+    }
+    if (!selectedVetId) {
+      toast("Please select a veterinarian", { description: "Choose a veterinarian for the consultation." })
+      return
+    }
     if (!selectedPetId) {
       toast("Please select a pet", { description: "Choose which pet needs emergency attention." })
       return
@@ -58,29 +109,40 @@ export default function EmergencyVideoCall() {
 
     setIsCallStarting(true)
 
-    // Send notification to clinic about the emergency call
+    // Send notification to the selected veterinarian
     createNotification({
-      userId: clientId,
-      type: "video_call_appointment",
-      title: "Emergency Video Call Started",
-      message: `Emergency video call requested for ${selectedPet?.name || "a pet"}. ${emergencyNotes ? `Notes: ${emergencyNotes}` : ""}`,
+      userId: selectedVetId,
+      type: "emergency_video_call",
+      title: "Incoming Emergency Video Call",
+      message: `Emergency video call from ${clientData?.firstName || ""} ${clientData?.lastName || ""} for ${selectedPet?.name || "a pet"}${selectedPet?.species ? ` (${selectedPet.species})` : ""}.${emergencyNotes ? ` Notes: ${emergencyNotes}` : ""}`,
       data: JSON.stringify({
         patientId: selectedPetId,
         clientId,
+        veterinarianId: selectedVetId,
+        clinicId: selectedClinicId,
         isEmergency: true,
         notes: emergencyNotes,
       }),
+    }, {
+      onSuccess: () => {
+        toast.success("Notification sent", { description: `${selectedVet?.firstName} ${selectedVet?.lastName} has been notified.` })
+      },
+      onError: () => {
+        toast.error("Failed to notify veterinarian", { description: "Please try again." })
+      }
     })
 
     // Open video call in a new window
     window.open(
-      `/video-call/emergency-${clientId}-${Date.now()}`,
+      `/video-call/emergency-${selectedPetId}-${Date.now()}`,
       `videocall_emergency`,
       "width=1280,height=720,menubar=no,toolbar=no,location=no,status=no"
     )
 
     setIsCallStarting(false)
   }
+
+  const isFormComplete = selectedClinicId && selectedVetId && selectedPetId
 
   return (
     <div className="space-y-6">
@@ -103,8 +165,8 @@ export default function EmergencyVideoCall() {
               <h3 className="text-white font-semibold mb-1">When to use Emergency Video Call</h3>
               <p className="text-[#D2EFEC]/80 text-sm">
                 Use this for urgent situations like sudden injuries, poisoning, difficulty breathing,
-                or any condition that needs immediate veterinary guidance. A veterinarian will connect
-                with you as soon as possible.
+                or any condition that needs immediate veterinary guidance. Select your clinic and veterinarian
+                to start a direct video consultation.
               </p>
             </div>
           </div>
@@ -116,13 +178,77 @@ export default function EmergencyVideoCall() {
         <CardHeader>
           <CardTitle className="text-[#1E3D3D] dark:text-[#D2EFEC]">Start Emergency Consultation</CardTitle>
           <CardDescription className="text-gray-600 dark:text-gray-400">
-            Connect with an available veterinarian instantly via video call
+            Select a clinic, veterinarian, and pet to begin your video call
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-          {/* Pet Selection */}
+          {/* Step 1: Clinic Selection */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium text-[#1E3D3D] dark:text-[#D2EFEC]">
+            <Label className="text-sm font-medium text-[#1E3D3D] dark:text-[#D2EFEC] flex items-center gap-2">
+              <Building2 className="h-4 w-4" />
+              Select Clinic
+            </Label>
+            {isClinicsLoading ? (
+              <p className="text-sm text-gray-500">Loading clinics...</p>
+            ) : clinics.length === 0 ? (
+              <p className="text-sm text-red-500">No clinics available.</p>
+            ) : (
+              <Select value={selectedClinicId} onValueChange={setSelectedClinicId}>
+                <SelectTrigger className="border-[#1E3D3D]/20 dark:border-[#1E3D3D]/30">
+                  <SelectValue placeholder="Choose a clinic" />
+                </SelectTrigger>
+                <SelectContent>
+                  {clinics.map((clinic: any) => (
+                    <SelectItem key={clinic.id} value={clinic.id}>
+                      <div className="flex items-center gap-2">
+                        <Building2 className="h-4 w-4 text-[#1E3D3D]" />
+                        <span>{clinic.name}</span>
+                        {clinic.city && (
+                          <span className="text-xs text-gray-400">({clinic.city})</span>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+
+          {/* Step 2: Veterinarian Selection */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium text-[#1E3D3D] dark:text-[#D2EFEC] flex items-center gap-2">
+              <Stethoscope className="h-4 w-4" />
+              Select Veterinarian
+            </Label>
+            {!selectedClinicId ? (
+              <p className="text-sm text-gray-400 italic">Please select a clinic first</p>
+            ) : isVetsLoading ? (
+              <p className="text-sm text-gray-500">Loading veterinarians...</p>
+            ) : veterinarians.length === 0 ? (
+              <p className="text-sm text-red-500">No veterinarians available at this clinic.</p>
+            ) : (
+              <Select value={selectedVetId} onValueChange={setSelectedVetId}>
+                <SelectTrigger className="border-[#1E3D3D]/20 dark:border-[#1E3D3D]/30">
+                  <SelectValue placeholder="Choose a veterinarian" />
+                </SelectTrigger>
+                <SelectContent>
+                  {veterinarians.map((vet: any) => (
+                    <SelectItem key={vet.id} value={vet.id}>
+                      <div className="flex items-center gap-2">
+                        <Stethoscope className="h-4 w-4 text-[#1E3D3D]" />
+                        <span>Dr. {vet.firstName} {vet.lastName}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+
+          {/* Step 3: Pet Selection */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium text-[#1E3D3D] dark:text-[#D2EFEC] flex items-center gap-2">
+              <PawPrint className="h-4 w-4" />
               Select Pet
             </Label>
             {pets.length === 0 ? (
@@ -149,19 +275,27 @@ export default function EmergencyVideoCall() {
             )}
           </div>
 
-          {/* Selected Pet Info */}
-          {selectedPet && (
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-[#D2EFEC]/30 dark:bg-[#1E3D3D]/20 border border-[#1E3D3D]/10">
-              <Avatar className="h-10 w-10">
-                <AvatarFallback className="bg-[#D2EFEC] dark:bg-[#1E3D3D] text-[#1E3D3D] dark:text-[#D2EFEC]">
-                  {selectedPet.name?.[0] || "?"}
-                </AvatarFallback>
-              </Avatar>
-              <div>
-                <p className="text-sm font-medium text-[#1E3D3D] dark:text-[#D2EFEC]">{selectedPet.name}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
-                  {[selectedPet.species, selectedPet.breed].filter(Boolean).join(" - ")}
-                </p>
+          {/* Selected Summary */}
+          {isFormComplete && (
+            <div className="p-4 rounded-lg bg-[#D2EFEC]/30 dark:bg-[#1E3D3D]/20 border border-[#1E3D3D]/10 space-y-2">
+              <p className="text-xs font-semibold text-[#1E3D3D] dark:text-[#D2EFEC] uppercase tracking-wide">Call Summary</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="flex items-center gap-2">
+                  <Building2 className="h-4 w-4 text-[#1E3D3D]/60 dark:text-[#D2EFEC]/60" />
+                  <span className="text-sm text-[#1E3D3D] dark:text-[#D2EFEC]">{selectedClinic?.name}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Stethoscope className="h-4 w-4 text-[#1E3D3D]/60 dark:text-[#D2EFEC]/60" />
+                  <span className="text-sm text-[#1E3D3D] dark:text-[#D2EFEC]">Dr. {selectedVet?.firstName} {selectedVet?.lastName}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Avatar className="h-5 w-5">
+                    <AvatarFallback className="bg-[#D2EFEC] dark:bg-[#1E3D3D] text-[#1E3D3D] dark:text-[#D2EFEC] text-[10px]">
+                      {selectedPet?.name?.[0] || "?"}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="text-sm text-[#1E3D3D] dark:text-[#D2EFEC]">{selectedPet?.name}</span>
+                </div>
               </div>
             </div>
           )}
@@ -182,8 +316,8 @@ export default function EmergencyVideoCall() {
           {/* Start Call Button */}
           <Button
             onClick={handleStartCall}
-            disabled={pets.length === 0 || !selectedPetId || isCallStarting}
-            className="w-full h-14 bg-[#1E3D3D] hover:bg-[#1E3D3D]/90 text-white text-base font-semibold shadow-lg"
+            disabled={!isFormComplete || isCallStarting}
+            className="w-full h-14 bg-[#1E3D3D] hover:bg-[#1E3D3D]/90 text-white text-base font-semibold shadow-lg disabled:opacity-50"
           >
             <Video className="h-5 w-5 mr-3" />
             {isCallStarting ? "Connecting..." : "Start Emergency Video Call"}
@@ -194,10 +328,6 @@ export default function EmergencyVideoCall() {
             <div className="flex items-center gap-1">
               <Clock className="h-3.5 w-3.5" />
               <span>Available 24/7</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Phone className="h-3.5 w-3.5" />
-              <span>Instant connection</span>
             </div>
             <div className="flex items-center gap-1">
               <Shield className="h-3.5 w-3.5" />
