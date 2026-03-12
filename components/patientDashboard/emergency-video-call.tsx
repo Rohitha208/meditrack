@@ -10,14 +10,44 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { useCreateNotification } from "@/queries/notifications/create-notification"
+import { useStartVideoMutation } from "@/queries/video/start-video"
 import { toast } from "sonner"
 
 export default function EmergencyVideoCall() {
-  const { pets, clientData, isClient, clientId } = useContext(PatientDashboardContext)
+  const { pets, clientData, isClient, clientId, veterinarianId } = useContext(PatientDashboardContext)
   const [selectedPetId, setSelectedPetId] = useState<string>("")
   const [emergencyNotes, setEmergencyNotes] = useState("")
   const [isCallStarting, setIsCallStarting] = useState(false)
   const { mutate: createNotification } = useCreateNotification()
+
+  const { mutate: startVideoCall, isPending: isVideoCallLoading } = useStartVideoMutation({
+    onSuccess: (data) => {
+      toast.success("Video call started successfully", {
+        description: "Connecting you with a veterinarian..."
+      })
+
+      // Open video call in a new window with the returned session data
+      if (data?.sessionUrl) {
+        window.open(
+          data.sessionUrl,
+          `videocall_emergency`,
+          "width=1280,height=720,menubar=no,toolbar=no,location=no,status=no"
+        )
+      } else {
+        // Fallback to original URL structure if no sessionUrl returned
+        window.open(
+          `/video-call/emergency-${clientId}-${Date.now()}`,
+          `videocall_emergency`,
+          "width=1280,height=720,menubar=no,toolbar=no,location=no,status=no"
+        )
+      }
+    },
+    onError: (error) => {
+      toast.error("Failed to start video call", {
+        description: error.message || "Please try again or contact support"
+      })
+    }
+  })
 
   const isPremium = clientData?.isPremium === true
 
@@ -56,11 +86,22 @@ export default function EmergencyVideoCall() {
       return
     }
 
+    if (!veterinarianId) {
+      toast.error("No veterinarian assigned", { 
+        description: "Please contact the clinic to assign a veterinarian." 
+      })
+      return
+    }
     setIsCallStarting(true)
+    // Start the video call with the assigned veterinarian as userId and selected pet as patientId
+    startVideoCall({
+      userId: veterinarianId,
+      patientId: selectedPetId
+    })
 
-    // Send notification to clinic about the emergency call
+    // Send notification to the assigned veterinarian about the emergency call
     createNotification({
-      userId: clientId,
+      userId: veterinarianId,
       type: "video_call_appointment",
       title: "Emergency Video Call Started",
       message: `Emergency video call requested for ${selectedPet?.name || "a pet"}. ${emergencyNotes ? `Notes: ${emergencyNotes}` : ""}`,
@@ -71,13 +112,6 @@ export default function EmergencyVideoCall() {
         notes: emergencyNotes,
       }),
     })
-
-    // Open video call in a new window
-    window.open(
-      `/video-call/emergency-${clientId}-${Date.now()}`,
-      `videocall_emergency`,
-      "width=1280,height=720,menubar=no,toolbar=no,location=no,status=no"
-    )
 
     setIsCallStarting(false)
   }
@@ -182,11 +216,11 @@ export default function EmergencyVideoCall() {
           {/* Start Call Button */}
           <Button
             onClick={handleStartCall}
-            disabled={pets.length === 0 || !selectedPetId || isCallStarting}
+            disabled={pets.length === 0 || !selectedPetId || isCallStarting || isVideoCallLoading}
             className="w-full h-14 bg-[#1E3D3D] hover:bg-[#1E3D3D]/90 text-white text-base font-semibold shadow-lg"
           >
             <Video className="h-5 w-5 mr-3" />
-            {isCallStarting ? "Connecting..." : "Start Emergency Video Call"}
+            {isCallStarting || isVideoCallLoading ? "Connecting..." : "Start Emergency Video Call"}
           </Button>
 
           {/* Footer Info */}

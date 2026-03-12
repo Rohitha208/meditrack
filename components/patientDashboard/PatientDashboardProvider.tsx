@@ -47,6 +47,7 @@ export function PatientDashboardProvider({ children }: { children: React.ReactNo
   const appointments = appointmentQuery.data?.items || [];
   const isAppointmentsLoading = appointmentQuery.isLoading;
   const appointmentsError = appointmentQuery.error;
+  const veterinarianId = appointments?.[0]?.veterinarianId;
 
   useEffect(() => {
     setIsClient(true);
@@ -76,6 +77,7 @@ export function PatientDashboardProvider({ children }: { children: React.ReactNo
       isAppointmentsLoading,
       appointmentsError,
       refetchAppointments: appointmentQuery.refetch,
+      veterinarianId,
       isSidebarOpen,
       setIsSidebarOpen,
     }}>
