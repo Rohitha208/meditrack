@@ -1,6 +1,6 @@
 "use client"
 
-import { useContext, useState, useEffect } from "react"
+import { useContext, useState, useEffect, useCallback } from "react"
 import { PatientDashboardContext } from "@/components/patientDashboard/PatientDashboardProvider"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,8 @@ import { useGetClinic } from "@/queries/clinic/get-clinic"
 import { useGetUsers } from "@/queries/users/get-users"
 import { useGetRole } from "@/queries/roles/get-role"
 import { useStartVideoMutation } from "@/queries/video/start-video"
+import { notificationService } from "@/services/Notification/notificationService"
+import { markSessionAsInitiated } from "@/components/video-call/VideoCallListener"
 import { toast } from "sonner"
 
 export default function EmergencyVideoCall() {
@@ -23,27 +25,67 @@ export default function EmergencyVideoCall() {
   const [selectedPetId, setSelectedPetId] = useState<string>("")
   const [emergencyNotes, setEmergencyNotes] = useState("")
   const [isCallStarting, setIsCallStarting] = useState(false)
+  const [waitingSessionId, setWaitingSessionId] = useState<string | null>(null)
   const { mutate: createNotification } = useCreateNotification()
+
+  // Listen for CallAccepted event from the vet — then open the video window
+  useEffect(() => {
+    if (!waitingSessionId) return
+
+    const handleCallAccepted = (data: { videoSessionId: string; userId: string }) => {
+      if (data.videoSessionId === waitingSessionId) {
+        toast.success("Call accepted!", { description: "Joining video call..." })
+        setWaitingSessionId(null)
+        setIsCallStarting(false)
+        window.open(
+          `/video-call/${data.videoSessionId}`,
+          `videocall_emergency`,
+          "width=1280,height=720,menubar=no,toolbar=no,location=no,status=no"
+        )
+      }
+    }
+
+    // Listen via custom event dispatched by VideoCallListener
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      handleCallAccepted(detail)
+    }
+    window.addEventListener("videocall:accepted", handler)
+
+    // Also register directly on notificationService as fallback
+    notificationService.onEvent("CallAccepted", handleCallAccepted)
+
+    // Auto-cancel waiting after 90 seconds
+    const timeout = setTimeout(() => {
+      setWaitingSessionId(null)
+      setIsCallStarting(false)
+      toast.error("No response from veterinarian", { description: "Please try again or select a different veterinarian." })
+    }, 90000)
+
+    return () => {
+      window.removeEventListener("videocall:accepted", handler)
+      clearTimeout(timeout)
+    }
+  }, [waitingSessionId])
 
   const { mutate: startVideoCall, isPending: isVideoCallLoading } = useStartVideoMutation({
     onSuccess: (data) => {
-      setIsCallStarting(false)
       const sessionId = data?.videoSessionId
       if (!sessionId) {
+        setIsCallStarting(false)
         toast.error("Failed to start video call", { description: "No session ID returned from server." })
         return
       }
 
-      toast.success("Video call started successfully", {
-        description: "Connecting you with a veterinarian..."
+      toast.success("Call request sent!", {
+        description: "Waiting for veterinarian to accept..."
       })
 
-      // Open video call window using the videoSessionId returned by the backend
-      window.open(
-        `/video-call/${sessionId}`,
-        `videocall_emergency`,
-        "width=1280,height=720,menubar=no,toolbar=no,location=no,status=no"
-      )
+      // Mark this session so VideoCallListener won't show incoming dialog to us
+      markSessionAsInitiated(sessionId)
+
+      // Enter waiting state — the CallAccepted listener will open the window
+      setWaitingSessionId(sessionId)
     },
     onError: (error) => {
       setIsCallStarting(false)
@@ -339,14 +381,39 @@ export default function EmergencyVideoCall() {
             />
           </div>
 
+          {/* Waiting for vet overlay */}
+          {waitingSessionId && (
+            <div className="p-6 rounded-lg bg-[#1E3D3D]/10 dark:bg-[#1E3D3D]/30 border border-[#1E3D3D]/20 text-center space-y-3">
+              <div className="flex justify-center">
+                <div className="h-12 w-12 rounded-full border-4 border-[#1E3D3D] border-t-transparent animate-spin" />
+              </div>
+              <h3 className="text-lg font-semibold text-[#1E3D3D] dark:text-[#D2EFEC]">
+                Waiting for Veterinarian...
+              </h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                {selectedVet ? `Dr. ${selectedVet.firstName} ${selectedVet.lastName}` : "The veterinarian"} has been notified. The video call will open automatically once they accept.
+              </p>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setWaitingSessionId(null)
+                  setIsCallStarting(false)
+                }}
+                className="border-[#1E3D3D]/30 text-[#1E3D3D] dark:text-[#D2EFEC]"
+              >
+                Cancel
+              </Button>
+            </div>
+          )}
+
           {/* Start Call Button */}
           <Button
             onClick={handleStartCall}
-            disabled={!isFormComplete || isCallStarting || isVideoCallLoading}
+            disabled={!isFormComplete || isCallStarting || isVideoCallLoading || !!waitingSessionId}
             className="w-full h-14 bg-[#1E3D3D] hover:bg-[#1E3D3D]/90 text-white text-base font-semibold shadow-lg disabled:opacity-50"
           >
             <Video className="h-5 w-5 mr-3" />
-            {isCallStarting || isVideoCallLoading ? "Connecting..." : "Start Emergency Video Call"}
+            {waitingSessionId ? "Waiting for response..." : isCallStarting || isVideoCallLoading ? "Connecting..." : "Start Emergency Video Call"}
           </Button>
 
           {/* Footer Info */}

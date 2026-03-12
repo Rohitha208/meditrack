@@ -22,6 +22,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import VideoCallChat from "./VideoCallChat"
 import VideoCallSettings from "./VideoCallSettings"
 import { useEndVideoMutation } from "@/queries/video/end-video"
+import { videoSignalingService } from "@/services/VideoCall/videoSignalingService"
+import { WebRTCService } from "@/services/VideoCall/webrtcService"
 
 interface VideoCallRoomProps {
   appointmentId: string
@@ -55,54 +57,169 @@ export default function VideoCallRoom({ appointmentId }: VideoCallRoomProps) {
   const screenStreamRef = useRef<MediaStream | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const webrtcRef = useRef<WebRTCService | null>(null)
+  const peerConnectionIdRef = useRef<string | null>(null)
+  const [hasRemoteStream, setHasRemoteStream] = useState(false)
 
-  // TODO: Replace with actual participant data from your API
-  const participantName = "Dr. Veterinarian"
+  const participantName = "Participant"
   const localName = "You"
 
-  // Initialize local camera/mic
+  // Initialize local media + SignalR signaling + WebRTC
   useEffect(() => {
-    const initMedia = async () => {
+    let mounted = true
+
+    const initCall = async () => {
+      // 1. Get local media
+      let stream: MediaStream | null = null
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
-        })
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      } catch {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true })
+        } catch {
+          console.error("[VideoCallRoom] Cannot access any media devices")
+        }
+      }
+
+      if (!mounted) {
+        stream?.getTracks().forEach((t) => t.stop())
+        return
+      }
+
+      if (stream) {
         localStreamRef.current = stream
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream
         }
-        // Simulate connection after getting media
-        setTimeout(() => setCallStatus("connected"), 2000)
-      } catch (err) {
-        console.error("Failed to access media devices:", err)
-        
-        // Try with audio only if video fails
-        try {
-          console.log("Trying audio only...")
-          const audioStream = await navigator.mediaDevices.getUserMedia({
-            video: false,
-            audio: true,
-          })
-          localStreamRef.current = audioStream
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = audioStream
+      }
+
+      // 2. Connect to video signaling hub
+      await videoSignalingService.init()
+      if (!mounted) return
+
+      // 3. Create WebRTC peer connection
+      const webrtc = new WebRTCService({
+        onRemoteStream: (remoteStream) => {
+          if (!mounted) return
+          console.log("[VideoCallRoom] Remote stream received")
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream
           }
-          setTimeout(() => setCallStatus("connected"), 2000)
-        } catch (audioErr) {
-          setTimeout(() => setCallStatus("connected"), 2000)
+          setHasRemoteStream(true)
+          setCallStatus("connected")
+        },
+        onIceCandidate: (candidate) => {
+          if (peerConnectionIdRef.current) {
+            videoSignalingService.sendIceCandidate(
+              appointmentId,
+              peerConnectionIdRef.current,
+              candidate.toJSON()
+            )
+          }
+        },
+        onConnectionStateChange: (state) => {
+          console.log("[VideoCallRoom] Connection state:", state)
+          if (state === "disconnected" || state === "failed") {
+            if (mounted) setHasRemoteStream(false)
+          }
+        },
+      })
+      webrtcRef.current = webrtc
+
+      // Add local stream to peer connection
+      if (stream) {
+        webrtc.addLocalStream(stream)
+      }
+
+      // 4. Register signaling event handlers
+
+      // When a peer joins the room — we create an offer (we are the initiator)
+      videoSignalingService.onUserJoined(async (connectionId) => {
+        if (!mounted) return
+        console.log("[VideoCallRoom] Peer joined:", connectionId)
+        peerConnectionIdRef.current = connectionId
+        try {
+          const offer = await webrtc.createOffer()
+          await videoSignalingService.sendOffer(appointmentId, connectionId, offer)
+        } catch (err) {
+          console.error("[VideoCallRoom] Error creating/sending offer:", err)
         }
+      })
+
+      // When we receive an offer (we are the callee)
+      videoSignalingService.onReceiveOffer(async (senderConnectionId, offer) => {
+        if (!mounted) return
+        console.log("[VideoCallRoom] Received offer from:", senderConnectionId)
+        peerConnectionIdRef.current = senderConnectionId
+        try {
+          const answer = await webrtc.createAnswer(offer)
+          await videoSignalingService.sendAnswer(appointmentId, senderConnectionId, answer)
+        } catch (err) {
+          console.error("[VideoCallRoom] Error creating/sending answer:", err)
+        }
+      })
+
+      // When we receive an answer to our offer
+      videoSignalingService.onReceiveAnswer(async (senderConnectionId, answer) => {
+        if (!mounted) return
+        console.log("[VideoCallRoom] Received answer from:", senderConnectionId)
+        try {
+          await webrtc.setRemoteAnswer(answer)
+        } catch (err) {
+          console.error("[VideoCallRoom] Error setting remote answer:", err)
+        }
+      })
+
+      // When we receive an ICE candidate
+      videoSignalingService.onReceiveIceCandidate(async (_senderConnectionId, candidate) => {
+        if (!mounted) return
+        try {
+          await webrtc.addIceCandidate(candidate)
+        } catch (err) {
+          console.error("[VideoCallRoom] Error adding ICE candidate:", err)
+        }
+      })
+
+      // When peer leaves
+      videoSignalingService.onUserLeft((connectionId) => {
+        if (!mounted) return
+        console.log("[VideoCallRoom] Peer left:", connectionId)
+        setHasRemoteStream(false)
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = null
+        }
+      })
+
+      // 5. Join the signaling room
+      try {
+        await videoSignalingService.joinRoom(appointmentId)
+        console.log("[VideoCallRoom] Joined room:", appointmentId)
+      } catch (err) {
+        console.error("[VideoCallRoom] Error joining room:", err)
       }
     }
-    initMedia()
 
-    return () => {
-      // Cleanup streams on unmount
+    initCall()
+
+    // Cleanup on unmount / window close
+    const cleanup = () => {
+      mounted = false
       localStreamRef.current?.getTracks().forEach((track) => track.stop())
       screenStreamRef.current?.getTracks().forEach((track) => track.stop())
+      webrtcRef.current?.close()
+      webrtcRef.current = null
+      videoSignalingService.leaveRoom(appointmentId)
       if (timerRef.current) clearInterval(timerRef.current)
     }
-  }, [])
+
+    const handleBeforeUnload = () => cleanup()
+    window.addEventListener("beforeunload", handleBeforeUnload)
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload)
+      cleanup()
+    }
+  }, [appointmentId])
 
   // Call duration timer
   useEffect(() => {
@@ -153,10 +270,6 @@ export default function VideoCallRoom({ appointmentId }: VideoCallRoomProps) {
     if (isScreenSharing) {
       screenStreamRef.current?.getTracks().forEach((track) => track.stop())
       screenStreamRef.current = null
-      // Restore camera to remote video area
-      if (localStreamRef.current && remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = null
-      }
       setIsScreenSharing(false)
     } else {
       try {
@@ -165,17 +278,10 @@ export default function VideoCallRoom({ appointmentId }: VideoCallRoomProps) {
           audio: false,
         })
         screenStreamRef.current = screenStream
-        // Show screen share in the main video area
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = screenStream
-        }
         // Listen for user ending screen share from browser UI
         screenStream.getVideoTracks()[0].onended = () => {
           setIsScreenSharing(false)
           screenStreamRef.current = null
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = null
-          }
         }
         setIsScreenSharing(true)
       } catch (err) {
@@ -197,25 +303,32 @@ export default function VideoCallRoom({ appointmentId }: VideoCallRoomProps) {
 
   // End call
   const endCall = useCallback(() => {
-    // Validate appointment ID format
     if (!appointmentId) {
       console.error("No appointment ID provided!")
       return
     }
-    
+
     // Stop local media tracks
     localStreamRef.current?.getTracks().forEach((track) => track.stop())
     screenStreamRef.current?.getTracks().forEach((track) => track.stop())
-    
+
+    // Close WebRTC peer connection
+    webrtcRef.current?.close()
+    webrtcRef.current = null
+
+    // Leave signaling room
+    videoSignalingService.leaveRoom(appointmentId)
+
     // Clear timer
     if (timerRef.current) clearInterval(timerRef.current)
-    
+
     // Update UI state
     setCallStatus("ended")
+    setHasRemoteStream(false)
     endVideoCall({
       videoSessionId: appointmentId
     })
-  }, [endVideoCall, appointmentId, isEndingCall])
+  }, [endVideoCall, appointmentId])
 
   // Listen for fullscreen change events
   useEffect(() => {
@@ -248,21 +361,7 @@ export default function VideoCallRoom({ appointmentId }: VideoCallRoomProps) {
               Close Window
             </Button>
             <Button
-              onClick={() => {
-                setCallStatus("connecting")
-                setCallDuration(0)
-                const initMedia = async () => {
-                  try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-                    localStreamRef.current = stream
-                    if (localVideoRef.current) localVideoRef.current.srcObject = stream
-                    setTimeout(() => setCallStatus("connected"), 2000)
-                  } catch (err) {
-                    console.error("Failed to reinitialize media:", err)
-                  }
-                }
-                initMedia()
-              }}
+              onClick={() => window.location.reload()}
               variant="outline"
               className="border-[#1E3D3D] text-[#D2EFEC] hover:bg-[#1E3D3D] hover:text-white px-8"
             >
@@ -344,7 +443,7 @@ export default function VideoCallRoom({ appointmentId }: VideoCallRoomProps) {
                     playsInline
                     className="w-full h-full object-cover"
                   />
-                  {!remoteVideoRef.current?.srcObject && !isScreenSharing && (
+                  {!hasRemoteStream && !isScreenSharing && (
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className="text-center space-y-3">
                         <Avatar className="h-28 w-28 mx-auto">

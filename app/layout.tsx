@@ -9,6 +9,7 @@ import PWAInstallPrompt from "@/components/pwa-install-prompt";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { NotificationInitializer } from "@/components/notification-bell/NotificationInitializer";
 import { NotificationListener } from "@/components/notification-bell/NotificationListener";
+import VideoCallListener from "@/components/video-call/VideoCallListener";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -48,6 +49,7 @@ export default function RootLayout({
                 {children}
                 <NotificationInitializer />
                 <NotificationListener />
+                <VideoCallListener />
               </TooltipProvider>
               <Toaster />
               {/* <PWAInstallPrompt /> */}
