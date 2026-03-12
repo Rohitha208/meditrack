@@ -7,6 +7,7 @@ interface StartVideoMutationConfig {
 
 type StartVideoFormData = {
   userId: string;
+  patientId: string;
 }
 
 export const startVideo = async (data: StartVideoFormData) => {

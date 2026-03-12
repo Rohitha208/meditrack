@@ -21,6 +21,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import VideoCallChat from "./VideoCallChat"
 import VideoCallSettings from "./VideoCallSettings"
+import { useEndVideoMutation } from "@/queries/video/end-video"
 
 interface VideoCallRoomProps {
   appointmentId: string
@@ -36,6 +37,16 @@ export default function VideoCallRoom({ appointmentId }: VideoCallRoomProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [callStatus, setCallStatus] = useState<"connecting" | "connected" | "ended">("connecting")
   const [callDuration, setCallDuration] = useState(0)
+  
+  // End video mutation
+  const { mutate: endVideoCall, isPending: isEndingCall } = useEndVideoMutation({
+    onSuccess: (data) => {
+      console.log("Video call ended successfully:", data)
+    },
+    onError: (error) => {
+      console.error("Failed to end video call:", error)
+    }
+  })
 
   // Refs for video elements
   const localVideoRef = useRef<HTMLVideoElement>(null)
@@ -65,8 +76,22 @@ export default function VideoCallRoom({ appointmentId }: VideoCallRoomProps) {
         setTimeout(() => setCallStatus("connected"), 2000)
       } catch (err) {
         console.error("Failed to access media devices:", err)
-        // Even if camera fails, mark as connected
-        setTimeout(() => setCallStatus("connected"), 2000)
+        
+        // Try with audio only if video fails
+        try {
+          console.log("Trying audio only...")
+          const audioStream = await navigator.mediaDevices.getUserMedia({
+            video: false,
+            audio: true,
+          })
+          localStreamRef.current = audioStream
+          if (localVideoRef.current) {
+            localVideoRef.current.srcObject = audioStream
+          }
+          setTimeout(() => setCallStatus("connected"), 2000)
+        } catch (audioErr) {
+          setTimeout(() => setCallStatus("connected"), 2000)
+        }
       }
     }
     initMedia()
@@ -172,11 +197,25 @@ export default function VideoCallRoom({ appointmentId }: VideoCallRoomProps) {
 
   // End call
   const endCall = useCallback(() => {
+    // Validate appointment ID format
+    if (!appointmentId) {
+      console.error("No appointment ID provided!")
+      return
+    }
+    
+    // Stop local media tracks
     localStreamRef.current?.getTracks().forEach((track) => track.stop())
     screenStreamRef.current?.getTracks().forEach((track) => track.stop())
+    
+    // Clear timer
     if (timerRef.current) clearInterval(timerRef.current)
+    
+    // Update UI state
     setCallStatus("ended")
-  }, [])
+    endVideoCall({
+      videoSessionId: appointmentId
+    })
+  }, [endVideoCall, appointmentId, isEndingCall])
 
   // Listen for fullscreen change events
   useEffect(() => {
@@ -496,13 +535,18 @@ export default function VideoCallRoom({ appointmentId }: VideoCallRoomProps) {
                   variant="ghost"
                   size="icon"
                   onClick={endCall}
-                  className="h-12 w-14 rounded-full bg-red-600 text-white hover:bg-red-700 transition-all"
+                  disabled={isEndingCall}
+                  className="h-12 w-14 rounded-full bg-red-600 text-white hover:bg-red-700 transition-all disabled:opacity-50"
                 >
-                  <PhoneOff className="h-5 w-5" />
+                  {isEndingCall ? (
+                    <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" />
+                  ) : (
+                    <PhoneOff className="h-5 w-5" />
+                  )}
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="top" className="bg-red-600 text-white border-red-600">
-                End Call
+                {isEndingCall ? "Ending Call..." : "End Call"}
               </TooltipContent>
             </Tooltip>
           </div>
