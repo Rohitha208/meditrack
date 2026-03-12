@@ -27,27 +27,26 @@ export default function EmergencyVideoCall() {
 
   const { mutate: startVideoCall, isPending: isVideoCallLoading } = useStartVideoMutation({
     onSuccess: (data) => {
+      setIsCallStarting(false)
+      const sessionId = data?.videoSessionId
+      if (!sessionId) {
+        toast.error("Failed to start video call", { description: "No session ID returned from server." })
+        return
+      }
+
       toast.success("Video call started successfully", {
         description: "Connecting you with a veterinarian..."
       })
 
-      // Open video call in a new window with the returned session data
-      if (data?.sessionUrl) {
-        window.open(
-          data.sessionUrl,
-          `videocall_emergency`,
-          "width=1280,height=720,menubar=no,toolbar=no,location=no,status=no"
-        )
-      } else {
-        // Fallback to original URL structure if no sessionUrl returned
-        window.open(
-          `/video-call/emergency-${clientId}-${Date.now()}`,
-          `videocall_emergency`,
-          "width=1280,height=720,menubar=no,toolbar=no,location=no,status=no"
-        )
-      }
+      // Open video call window using the videoSessionId returned by the backend
+      window.open(
+        `/video-call/${sessionId}`,
+        `videocall_emergency`,
+        "width=1280,height=720,menubar=no,toolbar=no,location=no,status=no"
+      )
     },
     onError: (error) => {
+      setIsCallStarting(false)
       toast.error("Failed to start video call", {
         description: error.message || "Please try again or contact support"
       })
@@ -167,8 +166,6 @@ export default function EmergencyVideoCall() {
         toast.error("Failed to notify veterinarian", { description: "Please try again." })
       }
     })
-
-    setIsCallStarting(false)
   }
 
   const isFormComplete = selectedClinicId && selectedVetId && selectedPetId

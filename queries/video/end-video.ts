@@ -15,9 +15,7 @@ export const endVideo = async (data: EndVideoFormData) => {
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      dto: data
-    }),
+    body: JSON.stringify({ dto: data }),
   });
 
   if (!response.ok) {
