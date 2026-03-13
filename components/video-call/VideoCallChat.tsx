@@ -16,11 +16,11 @@ interface ChatMessage {
 }
 
 interface VideoCallChatProps {
-  appointmentId: string
+  sessionId: string
   onClose: () => void
 }
 
-export default function VideoCallChat({ appointmentId, onClose }: VideoCallChatProps) {
+export default function VideoCallChat({ sessionId, onClose }: VideoCallChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [inputText, setInputText] = useState("")
   const scrollRef = useRef<HTMLDivElement>(null)

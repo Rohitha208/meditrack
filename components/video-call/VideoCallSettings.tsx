@@ -28,14 +28,23 @@ export default function VideoCallSettings({ onClose }: VideoCallSettingsProps) {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices()
         const audioIn = devices
-          .filter((d) => d.kind === "audioinput")
-          .map((d) => ({ deviceId: d.deviceId, label: d.label || `Microphone ${d.deviceId.slice(0, 5)}` }))
+          .filter((device) => device.kind === "audioinput" && device.label)
+          .map((device) => ({
+            deviceId: device.deviceId,
+            label: device.label || `Microphone ${device.deviceId.slice(0, 8)}`,
+          }))
         const videoIn = devices
-          .filter((d) => d.kind === "videoinput")
-          .map((d) => ({ deviceId: d.deviceId, label: d.label || `Camera ${d.deviceId.slice(0, 5)}` }))
+          .filter((device) => device.kind === "videoinput" && device.label)
+          .map((device) => ({
+            deviceId: device.deviceId,
+            label: device.label || `Camera ${device.deviceId.slice(0, 8)}`,
+          }))
         const audioOut = devices
-          .filter((d) => d.kind === "audiooutput")
-          .map((d) => ({ deviceId: d.deviceId, label: d.label || `Speaker ${d.deviceId.slice(0, 5)}` }))
+          .filter((device) => device.kind === "audiooutput" && device.label)
+          .map((device) => ({
+            deviceId: device.deviceId,
+            label: device.label || `Speaker ${device.deviceId.slice(0, 8)}`,
+          }))
 
         setAudioInputs(audioIn)
         setVideoInputs(videoIn)

@@ -110,6 +110,10 @@ export class WebRTCService {
     return this.pc?.connectionState ?? null
   }
 
+  getPeerConnection(): RTCPeerConnection | null {
+    return this.pc
+  }
+
   close() {
     if (this.pc) {
       this.pc.close()

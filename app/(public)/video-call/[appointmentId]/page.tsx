@@ -5,7 +5,7 @@ import VideoCallRoom from "@/components/video-call/VideoCallRoom"
 
 export default function VideoCallPage() {
   const params = useParams()
-  const appointmentId = params.appointmentId as string
+  const id = params.appointmentId as string
 
-  return <VideoCallRoom appointmentId={appointmentId} />
+  return <VideoCallRoom sessionId={id} />
 }
