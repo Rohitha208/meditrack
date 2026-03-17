@@ -2,8 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "@/components/ui/use-toast";
 
 
-const getUnreadNotificationCount = async (): Promise<number> => {
-  const response = await fetch("/api/notification/unread/count");
+const getUnreadNotificationCount = async (clinicId?: string, clientId?: string): Promise<number> => {
+  const params = new URLSearchParams();
+  if (clinicId) params.append('clinicId', clinicId);
+  if (clientId) params.append('clientId', clientId);
+
+  const url = params.toString() 
+    ? `/api/notification/unread/count?${params.toString()}`
+    : "/api/notification/unread/count";
+  
+  const response = await fetch(url);
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
@@ -14,10 +22,10 @@ const getUnreadNotificationCount = async (): Promise<number> => {
   return data.count;
 };
 
-export const useUnreadNotificationCount = (enabled = true) => {
+export const useUnreadNotificationCount = (clinicId?: string, clientId?: string, enabled = true) => {
   const query = useQuery({
-    queryKey: ["notifications-unread-count"],
-    queryFn: getUnreadNotificationCount,
+    queryKey: ["notifications-unread-count", clinicId, clientId],
+    queryFn: () => getUnreadNotificationCount(clinicId, clientId),
     enabled,
     refetchOnWindowFocus: false,
   });

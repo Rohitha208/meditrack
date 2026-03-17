@@ -7,6 +7,7 @@ export interface CreateNotificationRequest {
     title: string;
     message: string;
     data?: string; // JSON string or object
+    clinicId?: string; // Optional clinic ID for clinic-specific notifications
 }
 
 export async function createNotification(notification: CreateNotificationRequest) {
@@ -39,7 +40,7 @@ export function useCreateNotification() {
         mutationFn: createNotification,
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['notifications'] });
-            queryClient.invalidateQueries({ queryKey: ['notifications', 'unread-count'] });
+            queryClient.invalidateQueries({ queryKey: ['notifications-unread-count'] });
         },
         onError: (error: Error) => {
             console.error("Notification creation error:", error);

@@ -1,9 +1,10 @@
-// components/notification-panel/NotificationPanel.tsx
 'use client';
 
 import { useQueryStates, parseAsString } from 'nuqs';
 import { useGetNotifications ,AppNotification} from '@/queries/notifications/get-notifications';
 import { useMarkNotificationRead } from '@/queries/notifications/mark-notification-read';
+import { useRootContext } from '@/context/RootContext';
+import { getClientId } from '@/utils/clientCookie';
 import {
   Sheet,
   SheetContent,
@@ -32,9 +33,16 @@ export const NotificationPanel = () => {
 
 const NotificationPanelContent = () => {
   const [{ notificationState }, setNotificationState] = useQueryStates(searchParamsParser);
+  const { clinic, userType } = useRootContext();
+  const clientId = getClientId();
   
-  const { data: notificationsData, isLoading } = useGetNotifications();
-
+  // Use clientId for clients, clinicId for veterinarians/staff
+  const isClient = userType?.isClient;
+  const { data: notificationsData, isLoading } = useGetNotifications(
+    undefined, 
+    isClient ? undefined : (clinic?.id || undefined), // clinicId only for non-clients
+    isClient ? clientId : undefined // clientId only for clients
+  );
 
   const markAsReadMutation = useMarkNotificationRead();
 
