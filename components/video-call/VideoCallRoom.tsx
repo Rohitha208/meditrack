@@ -41,7 +41,6 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
   const [callDuration, setCallDuration] = useState(0)
   const [participantsCount, setParticipantsCount] = useState(1) // Start with 1 for current user
   const [remoteUserJoined, setRemoteUserJoined] = useState(false)
-  const [remoteUserId, setRemoteUserId] = useState<string | null>(null)
   
   // End video mutation
   const { mutate: endVideoCall, isPending: isEndingCall } = useEndVideoMutation({
@@ -62,6 +61,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const webrtcRef = useRef<WebRTCService | null>(null)
   const peerConnectionIdRef = useRef<string | null>(null)
+  const remoteStreamRef = useRef<MediaStream | null>(null)
   const [hasRemoteStream, setHasRemoteStream] = useState(false)
 
   const participantName = "Participant"
@@ -114,10 +114,8 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
       const webrtc = new WebRTCService({
         onRemoteStream: (remoteStream) => {
           if (!mounted) return
-          console.log("[VideoCallRoom] Remote stream received")
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = remoteStream
-          }
+          console.log("[VideoCallRoom] Remote stream received, tracks:", remoteStream.getTracks().map(t => `${t.kind}:${t.readyState}`))
+          remoteStreamRef.current = remoteStream
           setHasRemoteStream(true)
           setCallStatus("connected")
         },
@@ -149,25 +147,22 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
       // When a peer joins the room — we create an offer (we are the initiator)
       videoSignalingService.onUserJoined(async (connectionId: string, userId: string) => {
         if (!mounted) return
-        console.log("[VideoCallRoom] Peer joined:", connectionId, userId)
-        
-        // Prevent duplicate joins from same user
-        if (remoteUserId === userId) {
-          console.log("[VideoCallRoom] User already joined, ignoring duplicate")
+
+        // Ignore our own join event (backend sends UserJoined to entire group)
+        const myConnectionId = videoSignalingService.getConnectionId()
+        if (connectionId === myConnectionId) {
+          console.log("[VideoCallRoom] Ignoring own UserJoined event")
           return
         }
-        
+
+        console.log("[VideoCallRoom] Peer joined:", connectionId, userId)
+
         peerConnectionIdRef.current = connectionId
-        setRemoteUserId(userId)
+
         setRemoteUserJoined(true)
-        setParticipantsCount(prev => {
-          const newCount = prev + 1
-          console.log(`[VideoCallRoom] Participants count: ${prev} -> ${newCount}`)
-          return newCount
-        })
-        
-        // Only create offer if we don't already have a remote description
-        // This prevents both sides from creating offers
+        setParticipantsCount(2)
+
+        // We were here first and the other user just joined, so WE create the offer
         try {
           const pc = webrtc.getPeerConnection()
           if (pc && pc.signalingState === 'stable') {
@@ -188,7 +183,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
         console.log("[VideoCallRoom] Received offer from:", senderConnectionId)
         peerConnectionIdRef.current = senderConnectionId
         setRemoteUserJoined(true)
-        setParticipantsCount(prev => prev + 1)
+        setParticipantsCount(2)
         try {
           const answer = await webrtc.createAnswer(offer)
           await videoSignalingService.sendAnswer(sessionId, senderConnectionId, answer)
@@ -225,16 +220,30 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
         }
       })
 
-      // When peer leaves
+      // When peer leaves — end the call for us too
       videoSignalingService.onUserLeft((connectionId: string, userId: string) => {
         if (!mounted) return
+
+        // Ignore our own leave event
+        const myConnectionId = videoSignalingService.getConnectionId()
+        if (connectionId === myConnectionId) return
+
         console.log("[VideoCallRoom] Peer left:", connectionId, userId)
         setRemoteUserJoined(false)
-        setParticipantsCount(prev => Math.max(1, prev - 1))
-        setRemoteUserId(null)
+        setParticipantsCount(1)
+
+        setHasRemoteStream(false)
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = null
         }
+
+        // End the call — the other side has disconnected
+        localStreamRef.current?.getTracks().forEach((track) => track.stop())
+        screenStreamRef.current?.getTracks().forEach((track) => track.stop())
+        webrtc.close()
+        webrtcRef.current = null
+        if (timerRef.current) clearInterval(timerRef.current)
+        setCallStatus("ended")
       })
 
       // 5. Join the signaling room
@@ -267,6 +276,14 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
       cleanup()
     }
   }, [sessionId])
+
+  // Apply remote stream to video element after it mounts in the DOM
+  useEffect(() => {
+    if (hasRemoteStream && remoteStreamRef.current && remoteVideoRef.current) {
+      console.log("[VideoCallRoom] Attaching remote stream to video element")
+      remoteVideoRef.current.srcObject = remoteStreamRef.current
+    }
+  }, [hasRemoteStream, callStatus])
 
   // Call duration timer
   useEffect(() => {
