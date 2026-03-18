@@ -1,5 +1,5 @@
 "use client"
-
+ 
 import React, { useState, useRef, useEffect, useCallback } from "react"
 import {
   Mic,
@@ -23,12 +23,12 @@ import VideoCallChat from "./VideoCallChat"
 import VideoCallSettings from "./VideoCallSettings"
 import { useEndVideoMutation } from "@/queries/video/end-video"
 import { videoSignalingService } from "@/services/VideoCall/videoSignalingService"
-import { WebRTCService } from "@/services/VideoCall/webrtcService"
-
+import { WebRTCService, DataChannelMessage } from "@/services/VideoCall/webrtcService"
+ 
 interface VideoCallRoomProps {
   sessionId: string
 }
-
+ 
 export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
   // Media states
   const [isMicOn, setIsMicOn] = useState(true)
@@ -41,7 +41,8 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
   const [callDuration, setCallDuration] = useState(0)
   const [participantsCount, setParticipantsCount] = useState(1) // Start with 1 for current user
   const [remoteUserJoined, setRemoteUserJoined] = useState(false)
-  
+  const [remoteCameraOn, setRemoteCameraOn] = useState(true)
+ 
   // End video mutation
   const { mutate: endVideoCall, isPending: isEndingCall } = useEndVideoMutation({
     onSuccess: (data) => {
@@ -51,7 +52,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
       console.error("Failed to end video call:", error)
     }
   })
-
+ 
   // Refs for video elements
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
@@ -63,14 +64,14 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
   const peerConnectionIdRef = useRef<string | null>(null)
   const remoteStreamRef = useRef<MediaStream | null>(null)
   const [hasRemoteStream, setHasRemoteStream] = useState(false)
-
+ 
   const participantName = "Participant"
   const localName = "You"
-
+ 
   // Initialize local media + SignalR signaling + WebRTC
   useEffect(() => {
     let mounted = true
-
+ 
     const initCall = async () => {
       // 1. Get local media
       let stream: MediaStream | null = null
@@ -93,23 +94,23 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
           return
         }
       }
-
+ 
       if (!mounted) {
         stream?.getTracks().forEach((t) => t.stop())
         return
       }
-
+ 
       if (stream) {
         localStreamRef.current = stream
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream
         }
       }
-
+ 
       // 2. Connect to video signaling hub
       await videoSignalingService.init()
       if (!mounted) return
-
+ 
       // 3. Create WebRTC peer connection
       const webrtc = new WebRTCService({
         onRemoteStream: (remoteStream) => {
@@ -134,34 +135,40 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
             if (mounted) setHasRemoteStream(false)
           }
         },
+        onDataChannelMessage: (msg: DataChannelMessage) => {
+          if (!mounted) return
+          if (msg.type === "camera-state") {
+            setRemoteCameraOn(msg.enabled)
+          }
+        },
       })
       webrtcRef.current = webrtc
-
+ 
       // Add local stream to peer connection
       if (stream) {
         webrtc.addLocalStream(stream)
       }
-
+ 
       // 4. Register signaling event handlers
-
+ 
       // When a peer joins the room — we create an offer (we are the initiator)
       videoSignalingService.onUserJoined(async (connectionId: string, userId: string) => {
         if (!mounted) return
-
+ 
         // Ignore our own join event (backend sends UserJoined to entire group)
         const myConnectionId = videoSignalingService.getConnectionId()
         if (connectionId === myConnectionId) {
           console.log("[VideoCallRoom] Ignoring own UserJoined event")
           return
         }
-
+ 
         console.log("[VideoCallRoom] Peer joined:", connectionId, userId)
-
+ 
         peerConnectionIdRef.current = connectionId
-
+ 
         setRemoteUserJoined(true)
         setParticipantsCount(2)
-
+ 
         // We were here first and the other user just joined, so WE create the offer
         try {
           const pc = webrtc.getPeerConnection()
@@ -176,7 +183,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
           console.error("[VideoCallRoom] Error creating/sending offer:", err)
         }
       })
-
+ 
       // When we receive an offer (we are the callee)
       videoSignalingService.onReceiveOffer(async (senderConnectionId: string, offer: RTCSessionDescriptionInit) => {
         if (!mounted) return
@@ -191,7 +198,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
           console.error("[VideoCallRoom] Error creating/sending answer:", err)
         }
       })
-
+ 
       // When we receive an answer to our offer
       videoSignalingService.onReceiveAnswer(async (senderConnectionId, answer) => {
         if (!mounted) return
@@ -199,7 +206,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
         try {
           // Check peer connection state before setting remote description
           const pc = webrtc.getPeerConnection()
-          if (pc && (pc.signalingState === 'have-local-offer' || 
+          if (pc && (pc.signalingState === 'have-local-offer' ||
               pc.signalingState === 'have-remote-offer')) {
             await webrtc.setRemoteAnswer(answer)
           } else {
@@ -209,7 +216,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
           console.error("[VideoCallRoom] Error setting remote answer:", err)
         }
       })
-
+ 
       // When we receive an ICE candidate
       videoSignalingService.onReceiveIceCandidate(async (_senderConnectionId, candidate) => {
         if (!mounted) return
@@ -219,24 +226,24 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
           console.error("[VideoCallRoom] Error adding ICE candidate:", err)
         }
       })
-
+ 
       // When peer leaves — end the call for us too
       videoSignalingService.onUserLeft((connectionId: string, userId: string) => {
         if (!mounted) return
-
+ 
         // Ignore our own leave event
         const myConnectionId = videoSignalingService.getConnectionId()
         if (connectionId === myConnectionId) return
-
+ 
         console.log("[VideoCallRoom] Peer left:", connectionId, userId)
         setRemoteUserJoined(false)
         setParticipantsCount(1)
-
+ 
         setHasRemoteStream(false)
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = null
         }
-
+ 
         // End the call — the other side has disconnected
         localStreamRef.current?.getTracks().forEach((track) => track.stop())
         screenStreamRef.current?.getTracks().forEach((track) => track.stop())
@@ -245,7 +252,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
         if (timerRef.current) clearInterval(timerRef.current)
         setCallStatus("ended")
       })
-
+ 
       // 5. Join the signaling room
       try {
         await videoSignalingService.joinRoom(sessionId)
@@ -254,9 +261,9 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
         console.error("[VideoCallRoom] Error joining room:", err)
       }
     }
-
+ 
     initCall()
-
+ 
     // Cleanup on unmount / window close
     const cleanup = () => {
       mounted = false
@@ -264,19 +271,21 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
       screenStreamRef.current?.getTracks().forEach((track) => track.stop())
       webrtcRef.current?.close()
       webrtcRef.current = null
-      videoSignalingService.leaveRoom(sessionId)
+      if (!hasEndedRef.current) {
+        videoSignalingService.leaveRoom(sessionId)
+      }
       if (timerRef.current) clearInterval(timerRef.current)
     }
-
+ 
     const handleBeforeUnload = () => cleanup()
     window.addEventListener("beforeunload", handleBeforeUnload)
-
+ 
     return () => {
       window.removeEventListener("beforeunload", handleBeforeUnload)
       cleanup()
     }
   }, [sessionId])
-
+ 
   // Apply remote stream to video element after it mounts in the DOM
   useEffect(() => {
     if (hasRemoteStream && remoteStreamRef.current && remoteVideoRef.current) {
@@ -284,7 +293,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
       remoteVideoRef.current.srcObject = remoteStreamRef.current
     }
   }, [hasRemoteStream, callStatus])
-
+ 
   // Call duration timer
   useEffect(() => {
     if (callStatus === "connected") {
@@ -296,7 +305,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
       if (timerRef.current) clearInterval(timerRef.current)
     }
   }, [callStatus])
-
+ 
   const formatDuration = (seconds: number) => {
     const hrs = Math.floor(seconds / 3600)
     const mins = Math.floor((seconds % 3600) / 60)
@@ -306,7 +315,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
     }
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
   }
-
+ 
   // Toggle microphone
   const toggleMic = useCallback(() => {
     if (localStreamRef.current) {
@@ -317,17 +326,19 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
     }
     setIsMicOn((prev) => !prev)
   }, [])
-
+ 
   // Toggle camera
   const toggleCamera = useCallback(() => {
     if (localStreamRef.current) {
       const videoTracks = localStreamRef.current.getVideoTracks()
       if (videoTracks.length > 0) {
         // Has video tracks - toggle them
+        const newEnabled = !videoTracks[0].enabled
         videoTracks.forEach((track) => {
-          track.enabled = !track.enabled
+          track.enabled = newEnabled
         })
-        setIsCameraOn((prev) => !prev)
+        setIsCameraOn(newEnabled)
+        webrtcRef.current?.sendDataMessage({ type: "camera-state", enabled: newEnabled })
       } else {
         // No video tracks - try to enable camera
         navigator.mediaDevices.getUserMedia({ video: true, audio: false })
@@ -340,6 +351,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
               }
               if (webrtcRef.current) {
                 webrtcRef.current.addLocalStream(localStreamRef.current)
+                webrtcRef.current.sendDataMessage({ type: "camera-state", enabled: true })
               }
               setIsCameraOn(true)
               console.log("[VideoCallRoom] Camera enabled")
@@ -351,7 +363,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
       }
     }
   }, [])
-
+ 
   // Toggle screen share
   const toggleScreenShare = useCallback(async () => {
     if (isScreenSharing) {
@@ -376,7 +388,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
       }
     }
   }, [isScreenSharing])
-
+ 
   // Toggle fullscreen
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
@@ -387,28 +399,29 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
       setIsFullscreen(false)
     }
   }, [])
-
+ 
   // End call
+  const hasEndedRef = useRef(false)
   const endCall = useCallback(() => {
     if (!sessionId) {
       console.error("No appointment ID provided!")
       return
     }
-
+ 
     // Stop local media tracks
     localStreamRef.current?.getTracks().forEach((track) => track.stop())
     screenStreamRef.current?.getTracks().forEach((track) => track.stop())
-
+ 
     // Close WebRTC peer connection
     webrtcRef.current?.close()
     webrtcRef.current = null
-
+ 
     // Leave signaling room
     videoSignalingService.leaveRoom(sessionId)
-
+ 
     // Clear timer
     if (timerRef.current) clearInterval(timerRef.current)
-
+ 
     // Update UI state
     setCallStatus("ended")
     setHasRemoteStream(false)
@@ -416,7 +429,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
       videoSessionId: sessionId
     })
   }, [endVideoCall, sessionId])
-
+ 
   // Listen for fullscreen change events
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -425,7 +438,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
     document.addEventListener("fullscreenchange", handleFullscreenChange)
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange)
   }, [])
-
+ 
   // Call error screen
   if (callStatus === "error") {
     return (
@@ -462,7 +475,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
       </div>
     )
   }
-
+ 
   // Call ended screen
   if (callStatus === "ended") {
     return (
@@ -496,7 +509,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
       </div>
     )
   }
-
+ 
   return (
     <TooltipProvider>
       <div ref={containerRef} className="flex flex-col h-screen bg-[#0a1a1a] overflow-hidden select-none">
@@ -511,7 +524,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
               <p className="text-xs text-gray-400">Appointment #{sessionId.slice(0, 8)}</p>
             </div>
           </div>
-
+ 
           <div className="flex items-center gap-4">
             {/* Call duration */}
             {callStatus === "connected" && (
@@ -520,7 +533,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
                 <span className="text-xs font-mono text-[#D2EFEC]">{formatDuration(callDuration)}</span>
               </div>
             )}
-
+ 
             {/* Connection status */}
             <div className="flex items-center gap-1.5">
               <div className={`h-2 w-2 rounded-full ${callStatus === "connected" ? "bg-green-400 animate-pulse" : "bg-yellow-400 animate-pulse"}`} />
@@ -528,7 +541,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
                 {callStatus === "connecting" ? "Connecting..." : "Connected"}
               </span>
             </div>
-
+ 
             {/* Participants count */}
             <div className="flex items-center gap-1 text-gray-400">
               <Users className="h-3.5 w-3.5" />
@@ -539,7 +552,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
             </div>
           </div>
         </div>
-
+ 
         {/* Main Content */}
         <div className="flex flex-1 overflow-hidden">
           {/* Video Area */}
@@ -563,13 +576,31 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
                 </div>
               ) : (
                 <>
-                  {/* Remote video placeholder - replace with actual WebRTC remote stream */}
+                  {/* Remote video — always mounted, hidden when camera off */}
                   <video
                     ref={remoteVideoRef}
                     autoPlay
                     playsInline
-                    className="w-full h-full object-cover"
+                    className={`w-full h-full object-cover ${hasRemoteStream && remoteCameraOn ? "" : "hidden"}`}
                   />
+                  {/* Remote camera off — show avatar */}
+                  {hasRemoteStream && !remoteCameraOn && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="text-center space-y-3">
+                        <Avatar className="h-28 w-28 mx-auto">
+                          <AvatarFallback className="bg-[#1E3D3D] text-[#D2EFEC] text-3xl">
+                            {participantName.slice(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <p className="text-white font-medium text-lg">{participantName}</p>
+                        <div className="flex items-center justify-center gap-2 mt-2">
+                          <VideoOff className="h-4 w-4 text-gray-400" />
+                          <span className="text-xs text-gray-400">Camera off</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {/* No remote stream yet — waiting */}
                   {!hasRemoteStream && !isScreenSharing && (
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className="text-center space-y-3">
@@ -597,19 +628,19 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
                 </>
               )}
             </div>
-
+ 
             {/* Local Video (Picture-in-Picture) */}
             <div className="absolute bottom-4 right-4 w-48 h-36 rounded-xl overflow-hidden border-2 border-[#1E3D3D]/50 shadow-2xl bg-[#0a1515] group cursor-move z-10">
-              {isCameraOn ? (
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover mirror"
-                  style={{ transform: "scaleX(-1)" }}
-                />
-              ) : (
+              {/* Always render video element so srcObject is preserved across camera toggles */}
+              <video
+                ref={localVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className={`w-full h-full object-cover mirror ${isCameraOn ? "" : "hidden"}`}
+                style={{ transform: "scaleX(-1)" }}
+              />
+              {!isCameraOn && (
                 <div className="w-full h-full flex items-center justify-center bg-[#0f1f1f]">
                   <Avatar className="h-14 w-14">
                     <AvatarFallback className="bg-[#1E3D3D] text-[#D2EFEC] text-lg">
@@ -626,7 +657,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
                 </div>
               </div>
             </div>
-
+ 
             {/* Screen sharing indicator */}
             {/* {isScreenSharing && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 rounded-full bg-[#1E3D3D] border border-[#D2EFEC]/30 z-10">
@@ -641,7 +672,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
               </div>
             )} */}
           </div>
-
+ 
           {/* Chat Sidebar */}
           {/* {isChatOpen && (
             <div className="w-80 border-l border-[#1E3D3D]/30 bg-[#0f2626] flex flex-col">
@@ -651,7 +682,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
               />
             </div>
           )} */}
-
+ 
           {/* Settings Sidebar */}
           {/* {isSettingsOpen && (
             <div className="w-80 border-l border-[#1E3D3D]/30 bg-[#0f2626] flex flex-col">
@@ -659,7 +690,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
             </div>
           )} */}
         </div>
-
+ 
         {/* Bottom Controls Bar */}
         <div className="flex items-center justify-center gap-2 px-4 py-3 bg-[#0f2626] border-t border-[#1E3D3D]/30">
           {/* Left group - secondary controls */}
@@ -682,7 +713,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
                 {isChatOpen ? "Close Chat" : "Open Chat"}
               </TooltipContent>
             </Tooltip>
-
+ 
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -702,7 +733,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
               </TooltipContent>
             </Tooltip>
           </div>
-
+ 
           {/* Center group - primary controls */}
           <div className="flex items-center gap-3">
             <Tooltip>
@@ -724,7 +755,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
                 {isMicOn ? "Mute Microphone" : "Unmute Microphone"}
               </TooltipContent>
             </Tooltip>
-
+ 
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -744,7 +775,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
                 {isCameraOn ? "Turn Off Camera" : "Turn On Camera"}
               </TooltipContent>
             </Tooltip>
-
+ 
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -764,7 +795,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
                 {isScreenSharing ? "Stop Sharing" : "Share Screen"}
               </TooltipContent>
             </Tooltip>
-
+ 
             {/* End Call Button */}
             <Tooltip>
               <TooltipTrigger asChild>
@@ -787,7 +818,7 @@ export default function VideoCallRoom({ sessionId }: VideoCallRoomProps) {
               </TooltipContent>
             </Tooltip>
           </div>
-
+ 
           {/* Right group - layout controls */}
           <div className="flex items-center gap-2 ml-4">
             <Tooltip>

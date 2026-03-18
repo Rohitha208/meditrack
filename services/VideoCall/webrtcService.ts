@@ -4,11 +4,16 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun1.l.google.com:19302" },
 ]
 
+export type DataChannelMessage =
+  | { type: "camera-state"; enabled: boolean }
+  | { type: "mic-state"; enabled: boolean }
+
 export type WebRTCCallbacks = {
   onRemoteStream?: (stream: MediaStream) => void
   onIceCandidate?: (candidate: RTCIceCandidate) => void
   onConnectionStateChange?: (state: RTCPeerConnectionState) => void
   onIceConnectionStateChange?: (state: RTCIceConnectionState) => void
+  onDataChannelMessage?: (message: DataChannelMessage) => void
 }
 
 export class WebRTCService {
@@ -16,6 +21,7 @@ export class WebRTCService {
   private callbacks: WebRTCCallbacks = {}
   private iceCandidateQueue: RTCIceCandidateInit[] = []
   private hasRemoteDescription = false
+  private dataChannel: RTCDataChannel | null = null
 
   constructor(
     callbacks: WebRTCCallbacks,
@@ -23,6 +29,16 @@ export class WebRTCService {
   ) {
     this.callbacks = callbacks
     this.pc = new RTCPeerConnection({ iceServers })
+
+    // Create data channel (initiator side — callee receives via ondatachannel)
+    this.dataChannel = this.pc.createDataChannel("metadata")
+    this.setupDataChannel(this.dataChannel)
+
+    // Listen for data channel from remote peer (callee side)
+    this.pc.ondatachannel = (event) => {
+      this.dataChannel = event.channel
+      this.setupDataChannel(this.dataChannel)
+    }
 
     this.pc.onicecandidate = (event) => {
       if (event.candidate && this.callbacks.onIceCandidate) {
@@ -46,6 +62,23 @@ export class WebRTCService {
       if (this.pc && this.callbacks.onIceConnectionStateChange) {
         this.callbacks.onIceConnectionStateChange(this.pc.iceConnectionState)
       }
+    }
+  }
+
+  private setupDataChannel(channel: RTCDataChannel) {
+    channel.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data) as DataChannelMessage
+        this.callbacks.onDataChannelMessage?.(msg)
+      } catch {
+        console.warn("[WebRTC] Invalid data channel message:", event.data)
+      }
+    }
+  }
+
+  sendDataMessage(message: DataChannelMessage) {
+    if (this.dataChannel && this.dataChannel.readyState === "open") {
+      this.dataChannel.send(JSON.stringify(message))
     }
   }
 
@@ -115,6 +148,10 @@ export class WebRTCService {
   }
 
   close() {
+    if (this.dataChannel) {
+      this.dataChannel.close()
+      this.dataChannel = null
+    }
     if (this.pc) {
       this.pc.close()
       this.pc = null
