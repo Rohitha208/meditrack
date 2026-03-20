@@ -19,6 +19,7 @@ interface CreateClientPayload {
   emergencyContactPhone?: string;
   notes?: string;
   isActive: boolean;
+  isPremium: boolean;
 }
 
 const createClient = async (clientData: CreateClientPayload): Promise<Client> => {

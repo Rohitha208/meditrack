@@ -38,6 +38,7 @@ const updateClientSchema = z.object({
   emergencyContactPhone: z.string().optional(),
   notes: z.string().optional(),
   isActive: z.boolean().default(true),
+  isPremium: z.boolean().default(false),
 });
 
 type UpdateClientFormValues = z.infer<typeof updateClientSchema>;
@@ -71,6 +72,7 @@ export function ClientUpdateForm({ client, onSuccess }: ClientUpdateFormProps) {
       emergencyContactPhone: client.emergencyContactPhone || "",
       notes: client.notes || "",
       isActive: client.isActive ?? true,
+      isPremium: client.isPremium ?? false,
     },
   });
 
@@ -96,7 +98,8 @@ export function ClientUpdateForm({ client, onSuccess }: ClientUpdateFormProps) {
         emergencyContactName: data.emergencyContactName || "",
         emergencyContactPhone: data.emergencyContactPhone || "",
         notes: data.notes || "",
-        isActive: data.isActive
+        isActive: data.isActive,
+        isPremium: data.isPremium
       });
       
       toast({
@@ -282,6 +285,24 @@ export function ClientUpdateForm({ client, onSuccess }: ClientUpdateFormProps) {
               </FormControl>
               <div className="space-y-1 leading-none">
                 <FormLabel>Active</FormLabel>
+              </div>
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="isPremium"
+          render={({ field }) => (
+            <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+              <FormControl>
+                <Checkbox
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                />
+              </FormControl>
+              <div className="space-y-1 leading-none">
+                <FormLabel>Premium Member</FormLabel>
               </div>
             </FormItem>
           )}
