@@ -3,6 +3,7 @@ import * as signalR from "@microsoft/signalr";
 
 let connection: signalR.HubConnection | null = null;
 let pendingCallbacks: ((n: any) => void)[] = [];
+let pendingEventHandlers: { event: string; callback: (...args: any[]) => void }[] = [];
 let isConnecting = false;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -16,6 +17,12 @@ const registerPendingCallbacks = () => {
       connection!.on("ReceiveNotification", callback);
     });
     pendingCallbacks = [];
+  }
+  if (connection && pendingEventHandlers.length > 0) {
+    pendingEventHandlers.forEach(({ event, callback }) => {
+      connection!.on(event, callback);
+    });
+    pendingEventHandlers = [];
   }
 };
 
@@ -154,6 +161,18 @@ export const notificationService = {
   // Check if connected
   isConnected() {
     return connection?.state === signalR.HubConnectionState.Connected;
+  },
+
+  // Register a handler for any SignalR event (e.g. IncomingVideoCall, CallAccepted)
+  onEvent(event: string, callback: (...args: any[]) => void) {
+    if (connection && connection.state === signalR.HubConnectionState.Connected) {
+      connection.on(event, callback);
+    } else {
+      pendingEventHandlers.push({ event, callback });
+      if (!isConnecting && (!connection || connection.state === signalR.HubConnectionState.Disconnected)) {
+        this.init();
+      }
+    }
   },
 
   stop() {

@@ -1,12 +1,12 @@
 "use client"
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CalendarDays, PawPrint, Heart, Calendar, LogOut, MapPin, Syringe } from "lucide-react";
-import { useContext } from "react";
+import { CalendarDays, PawPrint, Heart, Calendar, LogOut, MapPin, Syringe, Video } from "lucide-react";
+import { useContext, useMemo } from "react";
 import { PatientDashboardContext } from "./PatientDashboardProvider";
 import { Button } from "@/components/ui/button";
 
-const navItems = [
+const baseNavItems = [
   { href: "/patientdashboard/overview", label: "Overview", icon: CalendarDays },
   { href: "/patientdashboard/appointments", label: "Appointments", icon: Calendar },
   { href: "/patientdashboard/mypets", label: "My Pets", icon: PawPrint },
@@ -17,7 +17,15 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { handleLogout } = useContext(PatientDashboardContext);
+  const { handleLogout, clientData } = useContext(PatientDashboardContext);
+
+  const navItems = useMemo(() => {
+    const items = [...baseNavItems];
+    if (clientData?.isPremium) {
+      items.push({ href: "/patientdashboard/emergency", label: "Emergency", icon: Video });
+    }
+    return items;
+  }, [clientData?.isPremium]);
 
   return (
     <aside className="w-64 min-h-screen flex flex-col bg-gradient-to-b from-slate-50 to-[#D2EFEC]/30 dark:from-slate-900 dark:to-[#1E3D3D]/20 border-r border-[#1E3D3D]/30 dark:border-[#1E3D3D]/30 shadow-sm">
@@ -30,8 +38,12 @@ export default function Sidebar() {
         <ul className="space-y-1">
           {navItems.map(({ href, label, icon: Icon }) => {
             const isActive = pathname === href;
+            const isEmergency = href === "/patientdashboard/emergency";
             return (
               <li key={href}>
+                {isEmergency && (
+                  <div className="my-3 mx-3 border-t border-[#1E3D3D]/15 dark:border-[#1E3D3D]/20" />
+                )}
                 <Link href={href} legacyBehavior>
                   <a
                     className={`flex items-center gap-3 px-5 py-2.5 rounded-lg font-medium transition-all duration-200
@@ -42,6 +54,11 @@ export default function Sidebar() {
                   >
                     <Icon className={`h-5 w-5 ${isActive ? "text-[#1E3D3D] dark:text-[#D2EFEC]" : "text-[#1E3D3D]/60 dark:text-[#D2EFEC]/60"}`} />
                     <span className="truncate text-base">{label}</span>
+                    {isEmergency && (
+                      <span className="ml-auto text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#D2EFEC] dark:bg-[#1E3D3D]/40 text-[#1E3D3D] dark:text-[#D2EFEC]">
+                        Premium
+                      </span>
+                    )}
                   </a>
                 </Link>
               </li>
@@ -68,4 +85,4 @@ export default function Sidebar() {
       </div>
     </aside>
   );
-} 
+}

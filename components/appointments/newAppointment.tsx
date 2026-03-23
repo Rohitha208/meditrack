@@ -303,8 +303,8 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
         description: "Appointment has been created successfully",
         variant: "success",
       })
-      form.reset() // Clear the form after successful creation
-      setSelectedPatient(null) // Clear selected patient after creation
+      form.reset()
+      setSelectedPatient(null)
       // Notify rest of app to refresh appointments
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('appointments:refresh'))

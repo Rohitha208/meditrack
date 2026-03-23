@@ -280,7 +280,7 @@ export default function PatientAppointmentForm({ isOpen, onClose, clientId, pati
         roomSlotId: data.slotId, // For backward compatibility
         status: "requested", // Set status to requested for client-submitted appointments
         isRegistered: true, // Set isRegistered to true as requested
-        isActive: true
+        isActive: true,
       }
 
       createAppointment(formattedData)

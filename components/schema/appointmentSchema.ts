@@ -20,6 +20,7 @@ export const newAppointmentSchema = z.object({
   isActive: z.boolean().optional(),
   isRegistered: z.boolean().optional(),
   sendEmail: z.boolean().optional(),
+  isVideoCall: z.boolean().optional(),
 });
 
 export type NewAppointmentFormValues = z.infer<typeof newAppointmentSchema>;
