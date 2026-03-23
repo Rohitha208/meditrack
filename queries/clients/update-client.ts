@@ -20,6 +20,7 @@ interface UpdateClientPayload {
   emergencyContactPhone?: string;
   notes?: string;
   isActive: boolean;
+  isPremium: boolean;
 }
 
 const updateClient = async (clientData: UpdateClientPayload): Promise<Client> => {

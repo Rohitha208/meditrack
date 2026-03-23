@@ -515,7 +515,7 @@ function OrderModal({ isOpen, onClose, clinicId, initialProductId, initialQuanti
 
   return (
     <Sheet open={isOpen} onOpenChange={onClose}>
-      <SheetContent className="w-[90%] sm:!max-w-full md:!max-w-[70%] lg:!max-w-[70%]">
+      <SheetContent className="w-[80%] sm:!max-w-full md:!max-w-[60%] lg:!max-w-[60%]">
         <SheetHeader className="relative top-[-14px]">
           <SheetTitle>Create Purchase Order</SheetTitle>
         </SheetHeader>

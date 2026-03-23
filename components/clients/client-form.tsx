@@ -36,7 +36,14 @@ interface ClientFormProps {
 
   
 export function ClientForm({
-  defaultValues = {
+  defaultValues,
+  onSuccess,
+  nestedForm = false,
+  isUpdate = false,
+  onCancel,
+  isClientContext = false,
+}: ClientFormProps) {
+  const formDefaults = defaultValues || {
     id: "",
     firstName: "",
     lastName: "",
@@ -52,13 +59,8 @@ export function ClientForm({
     emergencyContactPhone: "",
     notes: "",
     isActive: true,
-  },
-  onSuccess,
-  nestedForm = false,
-  isUpdate = false,
-  onCancel,
-  isClientContext = false,
-}: ClientFormProps) {
+    isPremium: false,
+  };
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [audioModalOpen, setAudioModalOpen] = useState(false);
   const createClientMutation = useCreateClient();
@@ -82,7 +84,7 @@ export function ClientForm({
  
   const form = useForm<ClientFormValues>({
     resolver: zodResolver(clientFormSchema),
-    defaultValues: defaultValues,
+    defaultValues: formDefaults,
   });
   const isNewClient = !isUpdate && !nestedForm;
  
@@ -109,7 +111,7 @@ export function ClientForm({
       if (isUpdate) {
         console.log("Using UPDATE mutation - ID:", data.id);
         updatedClient = await updateClientMutation.mutateAsync({
-          id: (data.id || defaultValues.id || "") as string,  // Ensure we have the ID with string typecast
+          id: (data.id || formDefaults.id || "") as string,  // Ensure we have the ID with string typecast
           companyId: clientData.companyId,
           firstName: clientData.firstName,
           lastName: clientData.lastName,
@@ -124,7 +126,8 @@ export function ClientForm({
           emergencyContactName: clientData.emergencyContactName,
           emergencyContactPhone: clientData.emergencyContactPhone,
           notes: clientData.notes,
-          isActive: clientData.isActive
+          isActive: clientData.isActive,
+          isPremium: clientData.isPremium
         });
         toast({
           title: "Owner Updated",
@@ -385,6 +388,26 @@ export function ClientForm({
               </FormControl>
               <div className="space-y-1 leading-none">
                 <FormLabel>Active</FormLabel>
+              </div>
+            </FormItem>
+          )}
+        />
+      )}
+
+      {(isUpdate || !isUpdate) && (
+        <FormField
+          control={form.control}
+          name="isPremium"
+          render={({ field }) => (
+            <FormItem className={isUpdate ? "flex flex-row items-start space-x-3 space-y-0 pt-2" : "flex flex-row items-start space-x-3 space-y-0 pt-4"}>
+              <FormControl>
+                <Checkbox
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                />
+              </FormControl>
+              <div className="space-y-1 leading-none">
+                <FormLabel>Premium Member</FormLabel>
               </div>
             </FormItem>
           )}
