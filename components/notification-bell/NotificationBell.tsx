@@ -5,14 +5,28 @@ import { useUnreadNotificationCount } from '@/queries/notifications/get-notifcat
 import { Button } from '@/components/ui/button';
 import { useQueryStates, parseAsString } from 'nuqs';
 import { Suspense } from 'react';
+import { useRootContext } from '@/context/RootContext';
+import { getClientId } from '@/utils/clientCookie';
 
 const searchParamsParser = {
   notificationState: parseAsString,
 } as const;
 
 function NotificationBellContent() {
-  // Fetch unread count from API
-  const { data: unreadCount = 0, isLoading } = useUnreadNotificationCount();
+  const { clinic, userType } = useRootContext();
+  const clientId = getClientId();
+  
+  if (userType?.isAdmin) {
+    return null;
+  }
+  
+  // Use clientId for clients, clinicId for veterinarians/staff
+  const isClient = userType?.isClient;
+  // Fetch unread count from API with appropriate parameters
+  const { data: unreadCount = 0, isLoading } = useUnreadNotificationCount(
+    isClient ? undefined : (clinic?.id || undefined), // clinicId only for non-clients
+    isClient ? clientId : undefined // clientId only for clients
+  );
   const [, setNotificationState] = useQueryStates(searchParamsParser);
 
   const handleOpenNotifications = () => {

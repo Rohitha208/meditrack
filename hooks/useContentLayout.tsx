@@ -287,9 +287,10 @@ export const useContentLayout = () => {
                 setUserId(userData.id);
                 registerUser(userData);
             } else {
-                // This is client data, don't set it as user to avoid confusion
-                // Just set the clinic info and authorization
-                console.log("Client data loaded, not setting as user");
+                // This is client data, but we still need to set the user type for notifications
+                console.log("Client data loaded, setting user type for client");
+                // For clients, we need to manually set the user type since we don't call registerUser
+                setUserType((prev) => ({ ...userRolesObject, isClient: true }));
             }
             
             // Always set clinic info and authorization regardless of user/client type

@@ -2,10 +2,13 @@
 import { BreadcrumbNav } from "@/components/layout/breadcrumb-nav"
 import { useRootContext } from "@/context/RootContext"
 import { SidebarTrigger } from "../ui/sidebar"
-import { NotificationBell } from "@/components/notification-bell/NotificationBell" // Add this import
+import { NotificationBell } from "@/components/notification-bell/NotificationBell"
 
 export function Header() {
-  const { user } = useRootContext();
+  const { user, userType } = useRootContext();
+
+  const showNotificationBell = userType?.isClinicAdmin || userType?.isVeterinarian || userType?.isReceptionist;
+
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b bg-accent px-2 shadow-sm">
       <div className="flex items-center gap-4">
@@ -17,7 +20,7 @@ export function Header() {
 
 
       <div className="flex items-center gap-4">
-        <NotificationBell /> {/* Add the NotificationBell here */}
+        {showNotificationBell && <NotificationBell />}
         <div className="flex items-center gap-2 text-sm">
           <span className="text-muted-foreground">Welcome,</span>
           <span className="font-medium">{user?.firstName} {user?.lastName}</span>

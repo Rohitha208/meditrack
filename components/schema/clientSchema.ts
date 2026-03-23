@@ -38,6 +38,7 @@ export const clientFormSchema = z.object({
         ),
     notes: z.string().optional(),
     isActive: z.boolean().default(true),
+    isPremium: z.boolean().default(false),
 });
 
 export type ClientFormValues = z.infer<typeof clientFormSchema>;

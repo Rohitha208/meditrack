@@ -122,6 +122,13 @@ export const ClientsScreen = ({ onEditClient, showFilters, filters, setFilters, 
     { accessorKey: "email", header: "Email" },
     { accessorKey: "phonePrimary", header: "Phone" },
    {
+      accessorKey: "isPremium",
+      header: "Premium",
+      cell: ({ getValue }) => getValue() ? 
+        <Badge className="bg-[#1E3D3D] text-white hover:bg-[#1E3D3D]/80">Premium</Badge> : 
+        <Badge variant="secondary">Standard</Badge>
+    },
+   {
       accessorKey: "isActive",
       header: "Status",
       cell: ({ getValue }) => getValue() ? 

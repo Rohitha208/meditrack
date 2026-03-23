@@ -7,9 +7,13 @@ export async function GET(request: NextRequest) {
   const token = getJwtToken(request);
   const url = new URL(request.url);
   const isRead = url.searchParams.get('isRead');
+  const clinicId = url.searchParams.get('clinicId');
+  const clientId = url.searchParams.get('clientId');
 
   const params = new URLSearchParams();
   if (isRead) params.append('isRead', isRead);
+  if (clinicId) params.append('clinicId', clinicId);
+  if (clientId) params.append('clientId', clientId);
 
   const response = await fetch(`${apiUrl}/api/Notification?${params.toString()}`, {
     headers: {

@@ -239,7 +239,7 @@ export function PatientsTable({
       />
 
       <Sheet open={showEditSheet} onOpenChange={setShowEditSheet}>
-        <SheetContent side="right" className="w-full sm:w-full md:!max-w-[50%] lg:!max-w-[62%]">
+        <SheetContent side="right" className="w-full sm:w-full md:!max-w-[500px] lg:!max-w-[700px]">
           <SheetHeader className="relative top-[-14px]">
             <SheetTitle>Edit Patient</SheetTitle>
           </SheetHeader>
