@@ -9,7 +9,6 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
-import { useCreateNotification } from "@/queries/notifications/create-notification"
 import { useGetClinic } from "@/queries/clinic/get-clinic"
 import { useGetUsers } from "@/queries/users/get-users"
 import { useGetRole } from "@/queries/roles/get-role"
@@ -26,7 +25,6 @@ export default function EmergencyVideoCall() {
   const [emergencyNotes, setEmergencyNotes] = useState("")
   const [isCallStarting, setIsCallStarting] = useState(false)
   const [waitingSessionId, setWaitingSessionId] = useState<string | null>(null)
-  const { mutate: createNotification } = useCreateNotification()
 
   // Listen for CallAccepted event from the vet — then open the video window
   useEffect(() => {
@@ -184,29 +182,6 @@ export default function EmergencyVideoCall() {
     startVideoCall({
       userId: selectedVetId,
       patientId: selectedPetId
-    })
-
-    // Send notification to the selected veterinarian
-    createNotification({
-      userId: selectedVetId,
-      type: "emergency_video_call",
-      title: "Incoming Emergency Video Call",
-      message: `Emergency video call from ${clientData?.firstName || ""} ${clientData?.lastName || ""} for ${selectedPet?.name || "a pet"}${selectedPet?.species ? ` (${selectedPet.species})` : ""}.${emergencyNotes ? ` Notes: ${emergencyNotes}` : ""}`,
-      data: JSON.stringify({
-        patientId: selectedPetId,
-        clientId,
-        veterinarianId: selectedVetId,
-        clinicId: selectedClinicId,
-        isEmergency: true,
-        notes: emergencyNotes,
-      }),
-    }, {
-      onSuccess: () => {
-        toast.success("Notification sent", { description: `${selectedVet?.firstName} ${selectedVet?.lastName} has been notified.` })
-      },
-      onError: () => {
-        toast.error("Failed to notify veterinarian", { description: "Please try again." })
-      }
     })
   }
 
