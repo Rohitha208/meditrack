@@ -124,7 +124,7 @@ export function PatientSearchDropdown() {
     <Card className="border border-[#1E3D3D]/40 dark:border-[#1E3D3D]/60 shadow-sm 
   bg-gradient-to-r from-white to-[#D2EFEC]/30 
   dark:from-slate-900 dark:to-[#1E3D3D]/20">
-      <CardContent className="p-2">
+      <CardContent className="p-0">
         <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
           <div className="relative flex-1 w-full sm:w-auto" ref={dropdownRef}>
             <div className="flex flex-col sm:flex-row gap-1.5">

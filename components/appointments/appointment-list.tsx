@@ -596,7 +596,7 @@ export default function AppointmentList({
       header: "Status",
       cell: ({ row }) => (
         <Badge className={`${getStatusBadgeClass(row.original.status)} hover:bg-inherit hover:text-inherit`}>
-          {row.original.status}
+         {row.original.status === "cancelled" ? "Cancelled" : row.original.status}
         </Badge>
       ),
     },

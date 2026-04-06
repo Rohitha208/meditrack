@@ -199,10 +199,10 @@ export default function EmergencyVideoCall() {
 
       {/* Info Banner */}
       <Card className="bg-gradient-to-r from-[#1E3D3D] to-[#1E3D3D]/80 border-0 shadow-lg">
-        <CardContent className="p-6">
+        <CardContent className="p-4">
           <div className="flex items-start gap-4">
             <div className="p-3 bg-white/10 rounded-full shrink-0">
-              <AlertTriangle className="h-6 w-6 text-[#D2EFEC]" />
+              <AlertTriangle className="h-4 w-4 text-[#D2EFEC]" />
             </div>
             <div>
               <h3 className="text-white font-semibold mb-1">When to use Emergency Video Call</h3>
@@ -228,7 +228,7 @@ export default function EmergencyVideoCall() {
           {/* Step 1: Clinic Selection */}
           <div className="space-y-2">
             <Label className="text-sm font-medium text-[#1E3D3D] dark:text-[#D2EFEC] flex items-center gap-2">
-              <Building2 className="h-4 w-4" />
+              {/* <Building2 className="h-4 w-4" /> */}
               Select Clinic
             </Label>
             {isClinicsLoading ? (
@@ -244,7 +244,7 @@ export default function EmergencyVideoCall() {
                   {clinics.map((clinic: any) => (
                     <SelectItem key={clinic.id} value={clinic.id}>
                       <div className="flex items-center gap-2">
-                        <Building2 className="h-4 w-4 text-[#1E3D3D]" />
+                        {/* <Building2 className="h-4 w-4 text-[#1E3D3D]" /> */}
                         <span>{clinic.name}</span>
                         {clinic.city && (
                           <span className="text-xs text-gray-400">({clinic.city})</span>
@@ -260,16 +260,10 @@ export default function EmergencyVideoCall() {
           {/* Step 2: Veterinarian Selection */}
           <div className="space-y-2">
             <Label className="text-sm font-medium text-[#1E3D3D] dark:text-[#D2EFEC] flex items-center gap-2">
-              <Stethoscope className="h-4 w-4" />
+              {/* <Stethoscope className="h-4 w-4" /> */}
               Select Veterinarian
             </Label>
-            {!selectedClinicId ? (
-              <p className="text-sm text-gray-400 italic">Please select a clinic first</p>
-            ) : isVetsLoading ? (
-              <p className="text-sm text-gray-500">Loading veterinarians...</p>
-            ) : veterinarians.length === 0 ? (
-              <p className="text-sm text-red-500">No veterinarians available at this clinic.</p>
-            ) : (
+            {selectedClinicId ? (
               <Select value={selectedVetId} onValueChange={setSelectedVetId}>
                 <SelectTrigger className="border-[#1E3D3D]/20 dark:border-[#1E3D3D]/30">
                   <SelectValue placeholder="Choose a veterinarian" />
@@ -278,11 +272,22 @@ export default function EmergencyVideoCall() {
                   {veterinarians.map((vet: any) => (
                     <SelectItem key={vet.id} value={vet.id}>
                       <div className="flex items-center gap-2">
-                        <Stethoscope className="h-4 w-4 text-[#1E3D3D]" />
+                        {/* <Stethoscope className="h-4 w-4 text-[#1E3D3D]" /> */}
                         <span>Dr. {vet.firstName} {vet.lastName}</span>
                       </div>
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Select value={selectedVetId} onValueChange={() => { }}>
+                <SelectTrigger className="border-[#1E3D3D]/20 dark:border-[#1E3D3D]/30">
+                  <SelectValue placeholder="Choose a veterinarian" />
+                </SelectTrigger>
+                <SelectContent>
+                  <div className="p-2 text-center text-sm text-gray-500">
+                    Please select a clinic first
+                  </div>
                 </SelectContent>
               </Select>
             )}
@@ -291,7 +296,7 @@ export default function EmergencyVideoCall() {
           {/* Step 3: Pet Selection */}
           <div className="space-y-2">
             <Label className="text-sm font-medium text-[#1E3D3D] dark:text-[#D2EFEC] flex items-center gap-2">
-              <PawPrint className="h-4 w-4" />
+              {/* <PawPrint className="h-4 w-4" /> */}
               Select Pet
             </Label>
             {pets.length === 0 ? (
@@ -305,7 +310,7 @@ export default function EmergencyVideoCall() {
                   {pets.map((pet: any) => (
                     <SelectItem key={pet.id} value={pet.id}>
                       <div className="flex items-center gap-2">
-                        <PawPrint className="h-4 w-4 text-[#1E3D3D]" />
+                        {/* <PawPrint className="h-4 w-4 text-[#1E3D3D]" /> */}
                         <span>{pet.name}</span>
                         {pet.species && (
                           <span className="text-xs text-gray-400">({pet.species})</span>
@@ -321,7 +326,7 @@ export default function EmergencyVideoCall() {
           {/* Selected Summary */}
           {isFormComplete && (
             <div className="p-4 rounded-lg bg-[#D2EFEC]/30 dark:bg-[#1E3D3D]/20 border border-[#1E3D3D]/10 space-y-2">
-              <p className="text-xs font-semibold text-[#1E3D3D] dark:text-[#D2EFEC] uppercase tracking-wide">Call Summary</p>
+              <p className="text-xs font-semibold text-[#162A2A] dark:text-[#C2E6E2] uppercase tracking-wide">Call Summary</p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="flex items-center gap-2">
                   <Building2 className="h-4 w-4 text-[#1E3D3D]/60 dark:text-[#D2EFEC]/60" />
@@ -342,19 +347,6 @@ export default function EmergencyVideoCall() {
               </div>
             </div>
           )}
-
-          {/* Emergency Notes */}
-          <div className="space-y-2">
-            <Label className="text-sm font-medium text-[#1E3D3D] dark:text-[#D2EFEC]">
-              Describe the Emergency (Optional)
-            </Label>
-            <Textarea
-              value={emergencyNotes}
-              onChange={(e) => setEmergencyNotes(e.target.value)}
-              placeholder="Briefly describe what's happening with your pet..."
-              className="min-h-[80px] border-[#1E3D3D]/20 dark:border-[#1E3D3D]/30"
-            />
-          </div>
 
           {/* Waiting for vet overlay */}
           {waitingSessionId && (
@@ -381,26 +373,27 @@ export default function EmergencyVideoCall() {
             </div>
           )}
 
-          {/* Start Call Button */}
-          <Button
-            onClick={handleStartCall}
-            disabled={!isFormComplete || isCallStarting || isVideoCallLoading || !!waitingSessionId}
-            className="w-full h-14 bg-[#1E3D3D] hover:bg-[#1E3D3D]/90 text-white text-base font-semibold shadow-lg disabled:opacity-50"
-          >
-            <Video className="h-5 w-5 mr-3" />
-            {waitingSessionId ? "Waiting for response..." : isCallStarting || isVideoCallLoading ? "Connecting..." : "Start Emergency Video Call"}
-          </Button>
-
           {/* Footer Info */}
-          <div className="flex items-center justify-center gap-4 pt-2 text-xs text-gray-500 dark:text-gray-400">
-            <div className="flex items-center gap-1">
-              <Clock className="h-3.5 w-3.5" />
-              <span>Available 24/7</span>
+          <div className="flex items-center justify-between pt-2 text-xs text-gray-500 dark:text-gray-400">
+            <div></div>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-1">
+                <Clock className="h-3.5 w-3.5" />
+                <span>Available 24/7</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Shield className="h-3.5 w-3.5" />
+                <span>Premium only</span>
+              </div>
             </div>
-            <div className="flex items-center gap-1">
-              <Shield className="h-3.5 w-3.5" />
-              <span>Premium only</span>
-            </div>
+            <Button
+              onClick={handleStartCall}
+              disabled={!isFormComplete || isCallStarting || isVideoCallLoading || !!waitingSessionId}
+              className="h-9 bg-[#1E3D3D] hover:bg-[#1E3D3D]/90 text-white text-sm font-semibold shadow-lg disabled:opacity-50"
+            >
+              <Video className="h-4 w-4 mr-2" />
+              {waitingSessionId ? "Waiting..." : isCallStarting || isVideoCallLoading ? "Connecting..." : "Start Call"}
+            </Button>
           </div>
         </CardContent>
       </Card>

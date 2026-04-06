@@ -74,9 +74,14 @@ const MemoizedTableRow = memo(
         data-row-id={row.id}
         className={cn(
           "hover:bg-muted/30 h-4",
-          onRowClick && "cursor-pointer"
+          onRowClick && "cursor-pointer",
+          row.original.status === "cancelled" && "opacity-50 cursor-not-allowed"
         )}
-        onClick={() => onRowClick?.(row.original)}
+        onClick={() => {
+          if (row.original.status !== "cancelled") {
+            onRowClick?.(row.original)
+          }
+        }}
       >
         {row.getVisibleCells().map((cell: Cell<any, unknown>) => (
           <TableCell key={cell.id} className={cn("text-sm py-0", (cell.column.columnDef.meta as any)?.className)}>

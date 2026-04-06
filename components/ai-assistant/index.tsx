@@ -140,7 +140,9 @@ function AiAssistantContent() {
       <div className="flex-1 flex flex-col gap-2 p-2 overflow-hidden bg-gradient-to-br from-[#D2EFEC]/50 via-[#D2EFEC]/30 to-[#D2EFEC]/50 dark:from-[#1E3D3D]/20 dark:via-[#1E3D3D]/10 dark:to-[#1E3D3D]/20 resize-container">
         {/* Header Section - Patient Search */}
         <div className="flex-shrink-0">
-          <PatientSearchDropdown />
+          <div className="pt-2">
+            <PatientSearchDropdown />
+          </div>
         </div>
 
         {/* Chat Tabs */}
