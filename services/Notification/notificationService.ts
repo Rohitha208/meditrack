@@ -9,6 +9,38 @@ let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+const LOG_PREFIX = "[NotificationService]";
+
+const toErrorInfo = (error: unknown) => {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+  return { message: String(error) };
+};
+
+const resolveHubBaseUrl = () => {
+  const trimmedUrl = API_URL.trim();
+  if (!trimmedUrl) return trimmedUrl;
+
+  // Prevent mixed-content errors when the app is served over HTTPS.
+  if (typeof window !== "undefined" && window.location.protocol === "https:") {
+    try {
+      const parsed = new URL(trimmedUrl);
+      if (parsed.protocol === "http:") {
+        parsed.protocol = "https:";
+        return parsed.toString().replace(/\/$/, "");
+      }
+    } catch {
+      // Keep original value if URL parsing fails.
+    }
+  }
+
+  return trimmedUrl.replace(/\/$/, "");
+};
 
 const registerPendingCallbacks = () => {
   if (connection && pendingCallbacks.length > 0) {
@@ -28,31 +60,45 @@ const registerPendingCallbacks = () => {
 
 export const notificationService = {
   async init() {
+    console.log(`${LOG_PREFIX} init() called`, {
+      isConnecting,
+      hasConnection: !!connection,
+      connectionState: connection?.state,
+      pageProtocol: typeof window !== "undefined" ? window.location.protocol : "server",
+      rawApiUrl: API_URL,
+    });
+
     if (connection && connection.state !== signalR.HubConnectionState.Disconnected) {
-      console.log("[NotificationService] Already connected or connecting, state:", connection.state);
+      console.log(`${LOG_PREFIX} Already connected or connecting`, { state: connection.state });
       registerPendingCallbacks();
       return;
     }
 
     if (isConnecting) {
-      console.log("[NotificationService] Connection already in progress");
+      console.log(`${LOG_PREFIX} Connection already in progress`);
       return;
     }
 
     const token = Cookies.get("jwtToken");
     if (!token) {
-      console.warn("[NotificationService] No JWT token found in cookies.");
+      console.warn(`${LOG_PREFIX} No JWT token found in cookies.`);
       return;
     }
 
-    console.log("[NotificationService] Initializing SignalR connection to:", API_URL);
+    const hubBaseUrl = resolveHubBaseUrl();
+    const hubUrl = `${hubBaseUrl}/notificationHub`;
+    console.log(`${LOG_PREFIX} Initializing SignalR connection`, {
+      hubBaseUrl,
+      hubUrl,
+      tokenPresent: !!token,
+    });
     isConnecting = true;
 
     connection = new signalR.HubConnectionBuilder()
-      .withUrl(`${API_URL}/notificationHub`, {
+      .withUrl(hubUrl, {
         accessTokenFactory: () => {
           const t = Cookies.get("jwtToken");
-          console.log("[SignalR] Providing auth token:", !!t);
+          console.log(`${LOG_PREFIX} accessTokenFactory invoked`, { tokenPresent: !!t });
           return t || "";
         },
         skipNegotiation: false,
@@ -62,11 +108,16 @@ export const notificationService = {
         nextRetryDelayInMilliseconds: (retryContext) => {
           // Custom reconnection delay strategy
           if (retryContext.previousRetryCount >= MAX_RECONNECT_ATTEMPTS) {
-            console.error("[NotificationService] Max reconnection attempts reached");
+            console.error(`${LOG_PREFIX} Max reconnection attempts reached`);
             return null; // Stop reconnecting
           }
           const delay = Math.min(1000 * Math.pow(2, retryContext.previousRetryCount), 30000);
-          console.log(`[NotificationService] Reconnecting in ${delay}ms (attempt ${retryContext.previousRetryCount + 1})`);
+          console.log(`${LOG_PREFIX} Reconnecting scheduled`, {
+            delayMs: delay,
+            attempt: retryContext.previousRetryCount + 1,
+            elapsedMs: retryContext.elapsedMilliseconds,
+            retryReason: toErrorInfo(retryContext.retryReason),
+          });
           return delay;
         }
       })
@@ -75,40 +126,53 @@ export const notificationService = {
 
     // Connection event handlers
     connection.onclose((error) => {
-      console.error("[NotificationService] Connection closed:", error);
+      console.error(`${LOG_PREFIX} Connection closed`, {
+        error: toErrorInfo(error),
+        finalState: connection?.state,
+      });
       isConnecting = false;
       reconnectAttempts = 0;
     });
 
     connection.onreconnecting((error) => {
-      console.warn("[NotificationService] Reconnecting...", error);
+      console.warn(`${LOG_PREFIX} onreconnecting`, {
+        error: toErrorInfo(error),
+        reconnectAttempts,
+      });
       reconnectAttempts++;
     });
 
     connection.onreconnected((connectionId) => {
-      console.log("[NotificationService] Reconnected! Connection ID:", connectionId);
+      console.log(`${LOG_PREFIX} Reconnected`, { connectionId });
       reconnectAttempts = 0;
       // Re-register callbacks after reconnection
       registerPendingCallbacks();
     });
 
     try {
+      console.log(`${LOG_PREFIX} Calling connection.start()`);
       await connection.start();
-      console.log("[NotificationService] SignalR connected successfully! Connection ID:", connection.connectionId);
+      console.log(`${LOG_PREFIX} SignalR connected successfully`, { connectionId: connection.connectionId });
       isConnecting = false;
       reconnectAttempts = 0;
       
       // Register any callbacks that were registered before connection was established
       registerPendingCallbacks();
     } catch (err) {
-      console.error("[NotificationService] SignalR connection error:", err);
+      console.error(`${LOG_PREFIX} SignalR connection error`, {
+        error: toErrorInfo(err),
+        attemptedHubUrl: hubUrl,
+      });
       isConnecting = false;
       connection = null;
       
       // Retry connection after a delay
       if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         const retryDelay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-        console.log(`[NotificationService] Retrying connection in ${retryDelay}ms...`);
+        console.log(`${LOG_PREFIX} Retrying init after start failure`, {
+          retryDelayMs: retryDelay,
+          nextAttempt: reconnectAttempts + 1,
+        });
         setTimeout(() => {
           reconnectAttempts++;
           this.init();
