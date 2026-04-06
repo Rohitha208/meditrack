@@ -2,6 +2,38 @@ import Cookies from "js-cookie"
 import * as signalR from "@microsoft/signalr"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
+const LOG_PREFIX = "[VideoSignaling]"
+
+const toErrorInfo = (error: unknown) => {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    }
+  }
+  return { message: String(error) }
+}
+
+const resolveHubBaseUrl = () => {
+  const trimmedUrl = API_URL.trim()
+  if (!trimmedUrl) return trimmedUrl
+
+  // Prevent mixed-content errors when the app is served over HTTPS.
+  if (typeof window !== "undefined" && window.location.protocol === "https:") {
+    try {
+      const parsed = new URL(trimmedUrl)
+      if (parsed.protocol === "http:") {
+        parsed.protocol = "https:"
+        return parsed.toString().replace(/\/$/, "")
+      }
+    } catch {
+      // Keep original value if URL parsing fails.
+    }
+  }
+
+  return trimmedUrl.replace(/\/$/, "")
+}
 
 type SignalingCallback = (...args: any[]) => void
 
@@ -23,6 +55,14 @@ const registerPendingHandlers = () => {
 
 export const videoSignalingService = {
   async init() {
+    console.log(`${LOG_PREFIX} init() called`, {
+      isConnecting,
+      hasConnection: !!connection,
+      connectionState: connection?.state,
+      pageProtocol: typeof window !== "undefined" ? window.location.protocol : "server",
+      rawApiUrl: API_URL,
+    })
+
     if (connection && connection.state !== signalR.HubConnectionState.Disconnected) {
       registerPendingHandlers()
       return
@@ -32,15 +72,27 @@ export const videoSignalingService = {
 
     const token = Cookies.get("jwtToken")
     if (!token) {
-      console.warn("[VideoSignaling] No JWT token found.")
+      console.warn(`${LOG_PREFIX} No JWT token found.`)
       return
     }
 
     isConnecting = true
 
+    const hubBaseUrl = resolveHubBaseUrl()
+    const hubUrl = `${hubBaseUrl}/videoHub`
+    console.log(`${LOG_PREFIX} Initializing SignalR connection`, {
+      hubBaseUrl,
+      hubUrl,
+      tokenPresent: !!token,
+    })
+
     connection = new signalR.HubConnectionBuilder()
-      .withUrl(`${API_URL}/videoHub`, {
-        accessTokenFactory: () => Cookies.get("jwtToken") || "",
+      .withUrl(hubUrl, {
+        accessTokenFactory: () => {
+          const t = Cookies.get("jwtToken")
+          console.log(`${LOG_PREFIX} accessTokenFactory invoked`, { tokenPresent: !!t })
+          return t || ""
+        },
         skipNegotiation: false,
         transport:
           signalR.HttpTransportType.WebSockets |
@@ -56,12 +108,20 @@ export const videoSignalingService = {
       .configureLogging(signalR.LogLevel.Warning)
       .build()
 
-    connection.onclose(() => {
+    connection.onclose((error) => {
+      console.error(`${LOG_PREFIX} Connection closed`, {
+        error: toErrorInfo(error),
+        finalState: connection?.state,
+      })
       isConnecting = false
       reconnectAttempts = 0
     })
 
-    connection.onreconnecting(() => {
+    connection.onreconnecting((error) => {
+      console.warn(`${LOG_PREFIX} onreconnecting`, {
+        error: toErrorInfo(error),
+        reconnectAttempts,
+      })
       reconnectAttempts++
     })
 
@@ -71,17 +131,25 @@ export const videoSignalingService = {
     })
 
     try {
+      console.log(`${LOG_PREFIX} Calling connection.start()`)
       await connection.start()
-      console.log("[VideoSignaling] Connected, ID:", connection.connectionId)
+      console.log(`${LOG_PREFIX} Connected`, { connectionId: connection.connectionId })
       isConnecting = false
       reconnectAttempts = 0
       registerPendingHandlers()
     } catch (err) {
-      console.error("[VideoSignaling] Connection error:", err)
+      console.error(`${LOG_PREFIX} Connection error`, {
+        error: toErrorInfo(err),
+        attemptedHubUrl: hubUrl,
+      })
       isConnecting = false
       connection = null
       if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000)
+        console.log(`${LOG_PREFIX} Retrying init after start failure`, {
+          retryDelayMs: delay,
+          nextAttempt: reconnectAttempts + 1,
+        })
         setTimeout(() => {
           reconnectAttempts++
           this.init()
