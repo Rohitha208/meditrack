@@ -1,4 +1,4 @@
-import Clinic from "@/components/clinic";
+import Clinic from "@/components/pawtrack/clinic";
 import { promises } from "dns";
 import { Metadata } from "next";
 

@@ -1,4 +1,6 @@
-import RegisteredAppointment from "@/components/appointments/RegisteredAppointment";
+import RegisteredAppointment from "@/components/pawtrack/appointments/RegisteredAppointment";
+
+ 
 
     export default function page() {
     return (

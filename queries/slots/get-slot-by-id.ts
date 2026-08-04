@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Slot } from "@/components/appointments/appointment-details";
+import { Slot } from "@/components/pawtrack/appointments/appointment-details";
 
 export const useGetSlotById = (slotId: string) => {
   return useQuery<Slot>({

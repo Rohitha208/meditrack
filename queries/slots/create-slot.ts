@@ -1,4 +1,4 @@
-import { Slot } from "@/components/appointments/appointment-details";
+import { Slot } from "@/components/pawtrack/appointments/appointment-details";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
  
 

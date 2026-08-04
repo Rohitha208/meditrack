@@ -2,14 +2,15 @@ import type React from "react"
 import "@/app/globals.css"
 import { NuqsAdapter } from 'nuqs/adapters/next/app'
 import localFont from "next/font/local";
-import QueryWrapper from "@/components/layout/queryWrapper";
+ import QueryWrapper from "@/components/pawtrack/layout/queryWrapper";
 import { Toaster } from "@/components/ui/toaster";
 import AuthProvider from "@/provider/AuthProvider";
-import PWAInstallPrompt from "@/components/pwa-install-prompt";
+import PWAInstallPrompt from "@/components/pawtrack/pwa-install-prompt";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { NotificationInitializer } from "@/components/notification-bell/NotificationInitializer";
-import { NotificationListener } from "@/components/notification-bell/NotificationListener";
-import VideoCallListener from "@/components/video-call/VideoCallListener";
+import VideoCallListener from "@/components/pawtrack/video-call/VideoCallListener";
+import { NotificationInitializer } from "@/components/pawtrack/notification-bell/NotificationInitializer";
+import { NotificationListener } from "@/components/pawtrack/notification-bell/NotificationListener";
+
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",

@@ -1,4 +1,4 @@
-import Products from "@/components/products";
+import Products from "@/components/pawtrack/products";
 
 export default function ProductsPage() {
     return (

@@ -1,7 +1,7 @@
 "use client"
 
 import { useParams } from "next/navigation"
-import VideoCallRoom from "@/components/video-call/VideoCallRoom"
+import VideoCallRoom from "@/components/pawtrack/video-call/VideoCallRoom"
 
 export default function VideoCallPage() {
   const params = useParams()

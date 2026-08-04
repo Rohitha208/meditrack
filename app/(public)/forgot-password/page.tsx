@@ -14,7 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
-import { PasswordResetFlow } from "@/components/auth/password-reset"
+import { PasswordResetFlow } from "@/components/pawtrack/auth/password-reset"
 
 
 export default function ForgotPasswordPage() {

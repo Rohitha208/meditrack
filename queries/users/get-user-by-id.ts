@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { User } from "@/components/users";
+import { User } from "@/components/pawtrack/users";
 
 const getUserById = async (id: string) => {
     const response = await fetch(`/api/user/${id}`);

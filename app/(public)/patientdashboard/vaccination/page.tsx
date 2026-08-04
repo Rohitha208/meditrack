@@ -1,5 +1,5 @@
 
-import VaccinationPage from "@/components/patientDashboard/vaccination";
+import VaccinationPage from "@/components/pawtrack/patientDashboard/vaccination";
 import { Suspense } from "react";
 
 export default function Vaccination() {

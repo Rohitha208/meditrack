@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useRootContext } from "@/context/RootContext";
-import VeterinarianSlots from "@/components/veterinarian/veterinarian-slots";
+import VeterinarianSlots from "@/components/pawtrack/veterinarian/veterinarian-slots";
 import withAuth from "@/utils/privateRouter";
 
 function MySlotsPage() {

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { IntakeDetail } from "@/components/appointments/Patient-Information/types/intake";
+import { IntakeDetail } from "@/components/pawtrack/appointments/Patient-Information/types/intake";
 
 const getIntakeById = async (id: string): Promise<IntakeDetail> => {
   try {

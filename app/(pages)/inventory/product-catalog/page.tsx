@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { InventoryBreadcrumb } from "@/components/inventory/inventory-breadcrumb"
+import { InventoryBreadcrumb } from "@/components/pawtrack/inventory/inventory-breadcrumb"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -13,7 +13,7 @@ import {
   PaginationLink,
   PaginationNext,
 } from "@/components/ui/pagination"
-import { ProductDrawer } from "@/components/inventory/product-drawer"
+import { ProductDrawer } from "@/components/pawtrack/inventory/product-drawer"
 
 // Sample product data
 const products = [

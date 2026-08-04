@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useRootContext } from "@/context/RootContext";
-import DoctorComponent from "@/components/clinic/details/doctors";
+import DoctorComponent from "@/components/pawtrack/clinic/details/doctors";
 import withAuth from "@/utils/privateRouter";
 
 function DoctorsPage() {

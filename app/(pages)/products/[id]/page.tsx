@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Edit } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import ProductCodes from '@/components/products/ProductCodes';
+import ProductCodes from '@/components/pawtrack/products/ProductCodes';
 
 export default function ProductDetailPage() {
   const params = useParams();

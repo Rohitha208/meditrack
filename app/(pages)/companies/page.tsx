@@ -1,5 +1,5 @@
 'use client'
-import CompaniesPage from '@/components/companies';
+import CompaniesPage from '@/components/pawtrack/companies';
 
 export default function Companies() {
   return (

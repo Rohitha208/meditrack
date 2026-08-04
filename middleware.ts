@@ -2,11 +2,14 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 export function middleware(request: NextRequest) {
-  const { pathname, hostname } = request.nextUrl;
+  const { pathname } = request.nextUrl;
+  // request.nextUrl.hostname does not reflect the incoming Host header in
+  // some dev setups, so read it directly from the request headers instead.
+  const hostname = (request.headers.get('host') || '').split(':')[0];
 
   // Skip middleware for API routes and static files
-  if (pathname.startsWith('/_next') || 
-      pathname.startsWith('/api') || 
+  if (pathname.startsWith('/_next') ||
+      pathname.startsWith('/api') ||
       pathname.startsWith('/static') ||
       pathname.includes('.')) {
     return NextResponse.next();
@@ -31,9 +34,15 @@ export function middleware(request: NextRequest) {
 }
 
 function getSubdomain(hostname: string): string | null {
-  // Handle localhost for development
+  // Handle bare localhost / IP for development (no subdomain)
   if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    return 'dev'; // Default demo subdomain for development
+    return null;
+  }
+
+  // Handle product subdomains on localhost, e.g. meditrack.localhost, pawtrack.localhost
+  if (hostname.endsWith('.localhost')) {
+    const parts = hostname.split('.');
+    return parts[0];
   }
 
   // Handle your specific domain structure: subdomain.xcdify.com

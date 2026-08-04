@@ -3,7 +3,7 @@ import dynamic from "next/dynamic";
 import { Suspense } from "react";
 import { MapPin, Search, Info, Phone, Clock } from "lucide-react";
 
-const NearestClinicMap = dynamic(() => import("@/components/patients/nearest-clinic-map"), {
+const NearestClinicMap = dynamic(() => import("@/components/pawtrack/patients/nearest-clinic-map"), {
     ssr: false,
 })
 

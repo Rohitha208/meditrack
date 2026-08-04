@@ -1,4 +1,4 @@
-import { appointmentSearchParamsParser, appointmentSearchParamsSerializer, AppointmentSearchParamsType } from "@/components/appointments/hooks/useAppointmentFilter";
+import { appointmentSearchParamsParser, appointmentSearchParamsSerializer, AppointmentSearchParamsType } from "@/components/pawtrack/appointments/hooks/useAppointmentFilter";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 

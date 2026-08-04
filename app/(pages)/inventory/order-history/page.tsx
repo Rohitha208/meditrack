@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { InventoryBreadcrumb } from "@/components/inventory/inventory-breadcrumb"
+import { InventoryBreadcrumb } from "@/components/pawtrack/inventory/inventory-breadcrumb"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"

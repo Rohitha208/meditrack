@@ -1,4 +1,4 @@
-import Inventory from "@/components/newInventory";
+import Inventory from "@/components/pawtrack/newInventory";
 
 export default function InventoryPage() {
   return (

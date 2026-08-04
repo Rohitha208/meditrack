@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Product } from "@/components/products";
+import { Product } from "@/components/pawtrack/products";
 
 const getProductById = async (id: string) => {
     const response = await fetch(`/api/products/${id}`);

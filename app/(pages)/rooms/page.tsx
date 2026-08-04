@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useRootContext } from "@/context/RootContext";
-import Room from "@/components/clinic/details/rooms";
+import Room from "@/components/pawtrack/clinic/details/rooms";
 import withAuth from "@/utils/privateRouter";
 
 function RoomsPage() {

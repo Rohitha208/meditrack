@@ -1,4 +1,4 @@
-import OverviewPage from "@/components/patientDashboard/overview";
+import OverviewPage from "@/components/pawtrack/patientDashboard/overview";
 import { Suspense } from "react";
 
 export default function Overview() {

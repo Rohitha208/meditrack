@@ -1,10 +1,10 @@
-import Header from "@/components/patientDashboard/Header";
-import MobileHeader from "@/components/patientDashboard/MobileHeader";
-import { PatientDashboardProvider } from "@/components/patientDashboard/PatientDashboardProvider";
-import Sidebar from "@/components/patientDashboard/Sidebar";
-import { SidebarWrapper } from "@/components/patientDashboard/SidebarWrapper";
-import { NotificationInitializer } from "@/components/notification-bell/NotificationInitializer";
-import { NotificationListener } from "@/components/notification-bell/NotificationListener";
+import Header from "@/components/pawtrack/patientDashboard/Header";
+import MobileHeader from "@/components/pawtrack/patientDashboard/MobileHeader";
+import { PatientDashboardProvider } from "@/components/pawtrack/patientDashboard/PatientDashboardProvider";
+import Sidebar from "@/components/pawtrack/patientDashboard/Sidebar";
+import { SidebarWrapper } from "@/components/pawtrack/patientDashboard/SidebarWrapper";
+import { NotificationInitializer } from "@/components/pawtrack/notification-bell/NotificationInitializer";
+import { NotificationListener } from "@/components/pawtrack/notification-bell/NotificationListener";
 
 
 

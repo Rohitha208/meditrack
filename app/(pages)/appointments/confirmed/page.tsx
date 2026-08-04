@@ -1,4 +1,4 @@
-import Appointments from "@/components/appointments"
+import Appointments from "@/components/pawtrack/appointments"
 
 export default function page() {
   return (

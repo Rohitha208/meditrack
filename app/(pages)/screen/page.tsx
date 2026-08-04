@@ -1,6 +1,6 @@
 "use client"
 
-import RBAMScreen from "@/components/roles/rbam-screen";
+import RBAMScreen from "@/components/pawtrack/roles/rbam-screen";
 
 export default function ScreenRBAMPage() {
   return <RBAMScreen />;

@@ -1,5 +1,5 @@
 'use client'
-import Room from "@/components/clinic/details/rooms";
+import Room from "@/components/pawtrack/clinic/details/rooms";
 import { useParams } from "next/navigation";
  
 export default function RoomPage() {

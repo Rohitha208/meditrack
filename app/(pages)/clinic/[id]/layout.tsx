@@ -1,7 +1,7 @@
 'use client';
  
 import React, { use } from "react";
-import DetailsLayout from "@/components/clinic/details/layout";
+import DetailsLayout from "@/components/pawtrack/clinic/details/layout";
 import { usePathname } from "next/navigation";
  
 function Layout({

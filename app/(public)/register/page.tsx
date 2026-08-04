@@ -6,12 +6,11 @@ import {
   DropdownMenu,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-
 import { Button } from "@/components/ui/button"
-import { RegistrationForm } from "@/components/auth/register/registration-form"
 import { getCompanySubdomain } from "@/utils/subdomain";
 import { useGetCompanyBySubdomain } from "@/queries/companies";
-import { CompanyLogo } from "@/components/company-logo";
+import { CompanyLogo } from "@/components/pawtrack/company-logo";
+import { RegistrationForm } from "@/components/pawtrack/auth/register/registration-form";
 
 export default function RegisterPage() {
   // Get company information based on subdomain

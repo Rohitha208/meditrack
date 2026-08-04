@@ -1,6 +1,6 @@
 "use client"
 
-import { PatientsScreen } from "@/components/patients/patients-screen"
+import { PatientsScreen } from "@/components/pawtrack/patients/patients-screen"
 
 export default function PatientsPage() {
   return <PatientsScreen />

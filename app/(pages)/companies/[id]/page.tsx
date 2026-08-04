@@ -1,6 +1,6 @@
 'use client'
 
-import CompanyView from '@/components/companies/company-view';
+import CompanyView from '@/components/pawtrack/companies/company-view';
 import { useSearchParams } from 'next/navigation';
 
 export default function CompanyPage() {

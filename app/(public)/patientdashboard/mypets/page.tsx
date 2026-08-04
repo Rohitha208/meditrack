@@ -1,8 +1,8 @@
-//  import MyPetsPage from "@/components/patientDashboard/mypets";
+//  import MyPetsPage from "@/components/pawtrack/patientDashboard/mypets";
 import dynamic from "next/dynamic";
 import { Suspense } from "react";
  
-const MyPetsPage = dynamic(() => import("@/components/patientDashboard/mypets"))
+const MyPetsPage = dynamic(() => import("@/components/pawtrack/patientDashboard/mypets"))
  
  
 export default function MyPets() {

@@ -3,9 +3,9 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { LocationData } from '@/components/map/hooks/useMapAdvanced';
-import Map from '@/components/map';
-import AdvancedMap from '@/components/map/advanced-map';
+import { LocationData } from '@/components/pawtrack/map/hooks/useMapAdvanced';
+import Map from '@/components/pawtrack/map';
+import AdvancedMap from '@/components/pawtrack/map/advanced-map';
 
 export default function MapTestPage() {
   const [basicLocation, setBasicLocation] = useState<LocationData | null>(null);

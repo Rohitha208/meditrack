@@ -1,4 +1,4 @@
-import { LocationData } from "@/components/map/hooks/useMapAdvanced"
+import { LocationData } from "@/components/pawtrack/map/hooks/useMapAdvanced"
 import { useState, useEffect } from "react"
 
 export const useGetLocation = () => {

@@ -1,5 +1,5 @@
 'use client'
-import AppointmentTypeComponent from "@/components/clinic/details/appointmentType";
+import AppointmentTypeComponent from "@/components/pawtrack/clinic/details/appointmentType";
 import { useParams } from "next/navigation";
  
 export default function AppointmentTypePage() {

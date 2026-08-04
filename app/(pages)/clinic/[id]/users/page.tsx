@@ -1,6 +1,6 @@
 'use client'
 import React from 'react'
-import UserComponent from '@/components/clinic/details/users'
+import UserComponent from '@/components/pawtrack/clinic/details/users'
 import { useParams } from "next/navigation";
 
 export default function UserPage() {

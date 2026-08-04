@@ -1,6 +1,6 @@
 'use client'
 import React from 'react'
-import DoctorComponent from '@/components/clinic/details/doctors'
+import DoctorComponent from '@/components/pawtrack/clinic/details/doctors'
 import { useParams } from "next/navigation";
 
 export default function DoctorPage() {

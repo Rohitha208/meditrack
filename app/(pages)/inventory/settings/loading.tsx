@@ -1,4 +1,4 @@
-import { InventoryBreadcrumb } from "@/components/inventory/inventory-breadcrumb"
+import { InventoryBreadcrumb } from "@/components/pawtrack/inventory/inventory-breadcrumb"
 import { Skeleton } from "@/components/ui/skeleton"
 
 

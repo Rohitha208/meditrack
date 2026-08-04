@@ -1,8 +1,9 @@
 'use client'
 
-import ClientDetails from "@/components/clients/client-details";
+ 
 import { useParams } from "next/navigation";
 import { useRootContext } from "@/context/RootContext";
+import ClientDetails from "@/components/pawtrack/clients/client-details";
 
 export default function ClientDetailsPage() {
     const params = useParams();

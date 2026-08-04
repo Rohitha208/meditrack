@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
-import { Product } from "@/components/products";
-import { ProductSearchParamsType, proudctSearchParser } from "@/components/products/hooks/useFilter";
+import { Product } from "@/components/pawtrack/products";
+import { ProductSearchParamsType, proudctSearchParser } from "@/components/pawtrack/products/hooks/useFilter";
 
 export interface PaginatedResponse<T> {
     items: T[];

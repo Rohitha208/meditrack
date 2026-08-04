@@ -1,5 +1,5 @@
 import { Skeleton } from "@/components/ui/skeleton"
-import PatientSidebar from "@/components/patient-sidebar"
+import PatientSidebar from "@/components/pawtrack/patient-sidebar"
 
 export default function PrescriptionsLoading() {
   return (

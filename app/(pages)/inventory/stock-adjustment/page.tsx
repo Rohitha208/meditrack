@@ -1,4 +1,4 @@
-import StockAdjustment from "@/components/inventory/stock-adjustment";
+import StockAdjustment from "@/components/pawtrack/inventory/stock-adjustment";
 
 export default function StockAdjustmentPage() {
   return (

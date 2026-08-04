@@ -1,7 +1,7 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import ProductDetails from '@/components/products/productsDetails';
+import ProductDetails from '@/components/pawtrack/products/productsDetails';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
 

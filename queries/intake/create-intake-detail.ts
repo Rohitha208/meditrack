@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CreateIntakeDetailRequest, IntakeDetail } from "@/components/appointments/Patient-Information/types/intake";
+import { CreateIntakeDetailRequest, IntakeDetail } from "@/components/pawtrack/appointments/Patient-Information/types/intake";
 
 const createIntakeDetail = async (data: CreateIntakeDetailRequest): Promise<IntakeDetail> => {
   try {

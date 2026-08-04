@@ -1,4 +1,4 @@
-import ExpenseTracker from "@/components/expense-tracker";
+import ExpenseTracker from "@/components/pawtrack/expense-tracker";
 
 export default function ExpenseTrackerPage() {
     return (

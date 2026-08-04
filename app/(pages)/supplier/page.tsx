@@ -1,4 +1,4 @@
-import Supplier from "@/components/supplier";
+import Supplier from "@/components/pawtrack/supplier";
 
 export default function ClinicPage() {
     return (

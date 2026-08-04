@@ -6,11 +6,11 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { InventoryBreadcrumb } from "@/components/inventory/inventory-breadcrumb"
-import { UsageReport } from "@/components/inventory/reports/usage-report"
-import { ExpirationReport } from "@/components/inventory/reports/expiration-report"
-import { LowStockReport } from "@/components/inventory/reports/low-stock-report"
-import { OrderSpendingReport } from "@/components/inventory/reports/order-spending-report"
+import { InventoryBreadcrumb } from "@/components/pawtrack/inventory/inventory-breadcrumb"
+import { UsageReport } from "@/components/pawtrack/inventory/reports/usage-report"
+import { ExpirationReport } from "@/components/pawtrack/inventory/reports/expiration-report"
+import { LowStockReport } from "@/components/pawtrack/inventory/reports/low-stock-report"
+import { OrderSpendingReport } from "@/components/pawtrack/inventory/reports/order-spending-report"
 
 export default function InventoryReportsPage() {
   const [reportType, setReportType] = useState("valuation")
