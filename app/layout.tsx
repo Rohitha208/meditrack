@@ -2,6 +2,8 @@ import type React from "react"
 import "@/app/globals.css"
 import { NuqsAdapter } from 'nuqs/adapters/next/app'
 import localFont from "next/font/local";
+import { headers } from "next/headers";
+import { getBrandName } from "@/utils/appMode";
  import QueryWrapper from "@/components/pawtrack/layout/queryWrapper";
 import { Toaster } from "@/components/ui/toaster";
 import AuthProvider from "@/provider/AuthProvider";
@@ -24,19 +26,22 @@ const geistMono = localFont({
 });
 
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
+  const headersList = await headers();
+  const brandName = getBrandName(headersList.get("x-subdomain"));
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-        <meta name="apple-mobile-web-app-title" content="PawTrack" />
+        <meta name="apple-mobile-web-app-title" content={brandName} />
         <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="application-name" content="PawTrack" />
+        <meta name="application-name" content={brandName} />
         <meta name="msapplication-TileColor" content="#000000" />
         <meta name="msapplication-tap-highlight" content="no" />
         <link rel="manifest" href="/manifest.json" />
@@ -62,19 +67,24 @@ export default function RootLayout({
   )
 }
 
-export const metadata = {
-  title: "PawTrack - Clinic Management System",
-  description: "Clinic Management System",
-  icons: {
-    icon: "/images/logo.png",
-  },
-  manifest: "/manifest.json",
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "default",
-    title: "PawTrack",
-  },
-};
+export async function generateMetadata() {
+  const headersList = await headers();
+  const brandName = getBrandName(headersList.get("x-subdomain"));
+
+  return {
+    title: `${brandName} - Clinic Management System`,
+    description: "Clinic Management System",
+    icons: {
+      icon: "/images/logo.png",
+    },
+    manifest: "/manifest.json",
+    appleWebApp: {
+      capable: true,
+      statusBarStyle: "default",
+      title: brandName,
+    },
+  };
+}
 
 export const viewport = {
   width: "device-width",

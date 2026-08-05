@@ -1,13 +1,16 @@
 import { getRedirectUrl } from '@/services/auth/redirectService';
 import { NextResponse } from 'next/server';
-
-
+import { getProductTypeFromSubdomain, getSubdomainFromHost } from '@/utils/appMode';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/login`, {
+   
+    const subdomain = getSubdomainFromHost(request.headers.get('host'));
+    const appMode = getProductTypeFromSubdomain(subdomain);
+
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/login?appMode=${appMode}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

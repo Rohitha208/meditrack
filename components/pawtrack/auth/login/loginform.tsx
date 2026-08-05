@@ -29,6 +29,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useRootContext } from '@/context/RootContext';
 import { getCompanySubdomain } from "@/utils/subdomain"
 import { useGetCompanyBySubdomain } from "@/queries/companies"
+import { getBrandName, getSubdomainFromHost } from "@/utils/appMode"
 
 const loginSchema = z.object({
   email: z.string().min(2, {
@@ -46,7 +47,7 @@ interface LoginFormProps {
 }
 
 export function LoginForm({ hideRegisterLink }: LoginFormProps) {
-  const { setUser, fetchUser } = useRootContext();
+  const { setUser, fetchUser, setProductType } = useRootContext();
   const { toast } = useToast();
   const router = useRouter();
   const form = useForm<LoginFormValues>({
@@ -58,6 +59,12 @@ export function LoginForm({ hideRegisterLink }: LoginFormProps) {
   })
   const subdomain = getCompanySubdomain()
   const { data: company, isLoading: companyLoading, error: companyError } = useGetCompanyBySubdomain(subdomain)
+  // Note: `subdomain` above is the company-tenant subdomain (e.g. a clinic's
+  // slug), unrelated to the meditrack/pawtrack product subdomain - derive
+  // the brand name from the actual host instead.
+  const productBrandName = getBrandName(
+    typeof window !== "undefined" ? getSubdomainFromHost(window.location.host) : null
+  );
 
   const loginMutation = useLoginMutation({
     onSuccess: (data: any) => {
@@ -75,11 +82,18 @@ export function LoginForm({ hideRegisterLink }: LoginFormProps) {
       if(data.user.roleName === "Client"){
         setClientId(data.user.id);
       }
+
+      // Store the company's productType (veterinary/human) so it's available
+      // app-wide via useRootContext(). Prefer the login response if the API
+      // includes it there; otherwise fall back to the company record we
+      // already fetched by subdomain for this login page.
+      setProductType(data.user.productType || data.user.companyProductType || company?.productType);
+
       fetchUser(data, data.user.roleName);
       router.push(data.redirectUrl ? data.redirectUrl : "/dashboard");
       toast({
         title: "Login Successful",
-        description: "Welcome to the PawTrack",
+        description: `Welcome to ${productBrandName}`,
         variant: "success",
       })
     },

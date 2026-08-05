@@ -119,3 +119,18 @@ export const removeCompanyId = (): void => {
   Cookies.remove('companyId');
 };
 
+export const setProductType = (productType: string): void => {
+  if (!isBrowser) return;
+  Cookies.set('productType', productType); // Set cookie to no expiration
+};
+
+export const getProductType = (): string | undefined => {
+  if (!isBrowser) return undefined;
+  return Cookies.get('productType');
+};
+
+export const removeProductType = (): void => {
+  if (!isBrowser) return;
+  Cookies.remove('productType');
+};
+

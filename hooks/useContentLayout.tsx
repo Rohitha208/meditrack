@@ -18,10 +18,15 @@ import {
     setClinicName,
     removeClinicName,
     setCompanyId,
-    getClientId
+    getClientId,
+    setProductType,
+    getProductType,
+    removeProductType
 } from "../utils/clientCookie";
 import { isTokenExpired, getTokenExpiration } from "../utils/jwtToken";
+import { isHumanProductType, type ProductType } from "../utils/appMode";
 
+export type { ProductType };
 
 export type User = {
     id: string;
@@ -39,6 +44,11 @@ export type User = {
     lastLogin: string | null;
     createdAt: string;
     updatedAt: string;
+    companyId?: string | null;
+    // The logged-in user's company mode. May arrive as either property
+    // name depending on how the API shapes the payload.
+    productType?: ProductType | null;
+    companyProductType?: ProductType | null;
 }
 
 export type UserType = {
@@ -78,6 +88,11 @@ export const useContentLayout = () => {
     });
     const [collapsed, setCollapsed] = useState(false);
     const [user, setUser] = useState<User | null>(null);
+    // Hydrate from the cookie synchronously so the mode is known immediately
+    // on refresh, before any user/company fetch resolves.
+    const [productType, setProductTypeState] = useState<ProductType | null>(
+        () => (getProductType() as ProductType) || null
+    );
     const [roles, setRoles] = useState<string[] | null>(null);
     const [IsAdmin, setIsAdmin] = useState<boolean | null>(null);
     const [userType, setUserType] = useState<typeof userRolesObject>(userRolesObject);
@@ -111,6 +126,16 @@ export const useContentLayout = () => {
                 setUser(userData); // Update the user state as well
             }
         }
+    };
+
+    // Updates productType in state + cookie so it's readable throughout the
+    // app (via RootContext -> useRootContext().productType) and survives a
+    // page refresh.
+    const updateProductType = (newProductType?: ProductType | string | null) => {
+        if (!newProductType) return;
+        const normalized = newProductType as ProductType;
+        setProductTypeState(normalized);
+        setProductType(normalized);
     };
 
     // Check token expiration periodically and on mount
@@ -180,13 +205,25 @@ export const useContentLayout = () => {
             return;
         }
 
+        // The API may put productType at any of these spots depending on how
+        // it shapes the login payload - check them all.
+        const productTypeFromLoginData =
+            data?.productType ||
+            data?.company?.productType ||
+            data?.user?.productType ||
+            data?.user?.companyProductType ||
+            null;
+        if (productTypeFromLoginData) {
+            updateProductType(productTypeFromLoginData);
+        }
+
         if (role === "Client") {
             setUser(data?.user);
             setAuthorized(true);
             setLoading(false);
             return;
         }
-        
+
         // If we have login data, use it immediately to avoid blocking UI
         // Then fetch full profile in background
         if (data?.user) {
@@ -195,13 +232,13 @@ export const useContentLayout = () => {
             setUser(loginUser);
             setAuthorized(true);
             setLoading(false); // Allow UI to render immediately
-            
+
             // Extract clinic info from login data if available
             // Set company ID from login response if available
             if (loginUser.companyId) {
                 setCompanyId(loginUser.companyId);
             }
-            
+
             if (loginUser.clinicId || loginUser.clinicName) {
                 setClinicId(loginUser.clinicId);
                 setClinicName(loginUser.clinicName);
@@ -249,7 +286,10 @@ export const useContentLayout = () => {
                 if (clientId) {
                     response = await fetch(`/api/clients/${clientId}`);
                 } else {
-                    console.error("No userid or clientId available for fetch");
+                    // Reaching here means pathname was one of the public
+                    // paths exempted above (/login, /register,
+                    // /login/internal, /) - nobody is logged in yet, which
+                    // is expected on those pages, not an error condition.
                     return;
                 }
             }
@@ -275,10 +315,15 @@ export const useContentLayout = () => {
             let effectiveClinicId = userData.clinicId || (userData as any)?.clinics?.[0]?.clinicId || (userData as any)?.clinics?.[0]?.id;
             let effectiveClinicName = userData.clinicName || (userData as any)?.clinics?.[0]?.clinicName || (userData as any)?.clinics?.[0]?.name;
             let effectiveCompanyId = (userData as any)?.companyId ?? (userData as any)?.clinicCompanyId ?? null;
+            let effectiveProductType = (userData as any)?.productType ?? (userData as any)?.companyProductType ?? null;
 
             // Set company ID in cookies if available
             if (effectiveCompanyId) {
                 setCompanyId(effectiveCompanyId);
+            }
+
+            if (effectiveProductType) {
+                updateProductType(effectiveProductType);
             }
 
             // Update user with complete data only if this is actual user data (not client data)
@@ -344,8 +389,6 @@ export const useContentLayout = () => {
 
         setRoles(null)
         setUser(null);
-        queryClient.removeQueries();
-        queryClient.removeQueries({ queryKey: ["projects"] });
         localStorage.removeItem('user');
         localStorage.removeItem('role');
         localStorage.removeItem('lastVisitedUrls');
@@ -359,7 +402,17 @@ export const useContentLayout = () => {
         removeUserId();
         removeClinicId();
         removeClinicName();
+        removeProductType();
+        setProductTypeState(null);
         setTimeout(() => {
+            // Deferred until the /login navigation has had a chance to
+            // unmount the previous page's components. Clearing the query
+            // cache immediately (same tick as router.push) would still
+            // find their query observers mounted and enabled, so React
+            // Query would refetch them right away - now with the JWT
+            // cookie already removed above, producing spurious 401s
+            // (e.g. "API Error fetching appointments: {}") during logout.
+            queryClient.clear();
             setAuthorized(false);
             //window.location.reload();
         }, 1000)
@@ -380,7 +433,14 @@ export const useContentLayout = () => {
         fetchUser,
         IsAdmin,
         userType,
-        setClinic: updateClinicAndCookies // Use the custom update function here
+        setClinic: updateClinicAndCookies, // Use the custom update function here
+        // Company mode: "veterinary" (PawTrack) or "human" (MediTrack).
+        // Defaults to "veterinary" when unknown so existing pet-focused
+        // screens keep behaving the same until productType is known.
+        productType,
+        setProductType: updateProductType,
+        isHumanMode: isHumanProductType(productType),
+        isVeterinaryMode: !isHumanProductType(productType),
     };
 };
 
