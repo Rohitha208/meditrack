@@ -20,7 +20,7 @@ function mobileTabletCheck() {
     );
     return check;
 }
-const isMobileOrTablet = mobileTabletCheck();
+const isMobileOrTablet = typeof navigator !== "undefined" ? mobileTabletCheck() : false;
 export default {
     SAMPLING_RATE: 16000,
     DEFAULT_AUDIO_URL: `https://huggingface.co/datasets/Xenova/transformers.js-docs/resolve/main/${
