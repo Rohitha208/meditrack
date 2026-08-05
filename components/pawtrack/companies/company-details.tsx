@@ -33,6 +33,7 @@ const companySchema = z.object({
     country: z.string().min(1, "Country is required"),
   }),
   status: z.string().min(1, "Status is required"),
+  product_type: z.string().min(1, "Type is required"),
   privacyPolicy: z.string().optional(),
   termsOfUse: z.string().optional(),
 });
@@ -72,6 +73,7 @@ export default function CompanyDetails({ companyId, onSuccess }: CompanyDetailsP
         country: "",
       },
       status: "active",
+      product_type:"",
       privacyPolicy: "",
       termsOfUse: "",
     },
@@ -301,11 +303,12 @@ export default function CompanyDetails({ companyId, onSuccess }: CompanyDetailsP
                 control={form.control}
                 name="status"
                 render={({ field }) => (
-                  <FormItem className="">
+                  
+                    <FormItem className="mb-4">
                     <FormLabel>Status*</FormLabel>
-                    <Select key={field.value || 'status-select'} onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
-                        <SelectTrigger>
+                        <SelectTrigger className="w-full h-10">
                           <SelectValue placeholder="Select status" />
                         </SelectTrigger>
                       </FormControl>
@@ -318,6 +321,29 @@ export default function CompanyDetails({ companyId, onSuccess }: CompanyDetailsP
                   </FormItem>
                 )}
               />
+
+             <FormField
+                control={form.control}
+                name="product_type"
+                render={({ field }) => (
+                    <FormItem className="mb-4">
+                    <FormLabel>Product type*</FormLabel>
+                    <Select key={field.value || 'Veterinarian'} onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger className="w-full h-10">
+                          <SelectValue placeholder="Select type" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="veterinarian">Veterinarian</SelectItem>
+                        <SelectItem value="human">Human</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
             </div>
           </div>
         </div>
