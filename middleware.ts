@@ -4,8 +4,6 @@ import { getSubdomainFromHost } from './utils/appMode';
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  // request.nextUrl.hostname does not reflect the incoming Host header in
-  // some dev setups, so read it directly from the request headers instead.
   const hostHeader = request.headers.get('host');
 
   // Skip middleware for API routes and static files

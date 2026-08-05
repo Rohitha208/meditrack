@@ -45,8 +45,6 @@ export type User = {
     createdAt: string;
     updatedAt: string;
     companyId?: string | null;
-    // The logged-in user's company mode. May arrive as either property
-    // name depending on how the API shapes the payload.
     productType?: ProductType | null;
     companyProductType?: ProductType | null;
 }
@@ -88,8 +86,6 @@ export const useContentLayout = () => {
     });
     const [collapsed, setCollapsed] = useState(false);
     const [user, setUser] = useState<User | null>(null);
-    // Hydrate from the cookie synchronously so the mode is known immediately
-    // on refresh, before any user/company fetch resolves.
     const [productType, setProductTypeState] = useState<ProductType | null>(
         () => (getProductType() as ProductType) || null
     );
@@ -128,9 +124,6 @@ export const useContentLayout = () => {
         }
     };
 
-    // Updates productType in state + cookie so it's readable throughout the
-    // app (via RootContext -> useRootContext().productType) and survives a
-    // page refresh.
     const updateProductType = (newProductType?: ProductType | string | null) => {
         if (!newProductType) return;
         const normalized = newProductType as ProductType;
@@ -205,8 +198,6 @@ export const useContentLayout = () => {
             return;
         }
 
-        // The API may put productType at any of these spots depending on how
-        // it shapes the login payload - check them all.
         const productTypeFromLoginData =
             data?.productType ||
             data?.company?.productType ||
@@ -286,10 +277,6 @@ export const useContentLayout = () => {
                 if (clientId) {
                     response = await fetch(`/api/clients/${clientId}`);
                 } else {
-                    // Reaching here means pathname was one of the public
-                    // paths exempted above (/login, /register,
-                    // /login/internal, /) - nobody is logged in yet, which
-                    // is expected on those pages, not an error condition.
                     return;
                 }
             }
@@ -405,13 +392,6 @@ export const useContentLayout = () => {
         removeProductType();
         setProductTypeState(null);
         setTimeout(() => {
-            // Deferred until the /login navigation has had a chance to
-            // unmount the previous page's components. Clearing the query
-            // cache immediately (same tick as router.push) would still
-            // find their query observers mounted and enabled, so React
-            // Query would refetch them right away - now with the JWT
-            // cookie already removed above, producing spurious 401s
-            // (e.g. "API Error fetching appointments: {}") during logout.
             queryClient.clear();
             setAuthorized(false);
             //window.location.reload();
@@ -434,9 +414,6 @@ export const useContentLayout = () => {
         IsAdmin,
         userType,
         setClinic: updateClinicAndCookies, // Use the custom update function here
-        // Company mode: "veterinary" (PawTrack) or "human" (MediTrack).
-        // Defaults to "veterinary" when unknown so existing pet-focused
-        // screens keep behaving the same until productType is known.
         productType,
         setProductType: updateProductType,
         isHumanMode: isHumanProductType(productType),

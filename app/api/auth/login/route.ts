@@ -6,7 +6,6 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-   
     const subdomain = getSubdomainFromHost(request.headers.get('host'));
     const appMode = getProductTypeFromSubdomain(subdomain);
 

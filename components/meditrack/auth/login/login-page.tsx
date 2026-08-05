@@ -2,9 +2,6 @@
 
 import { LoginForm } from "@/components/pawtrack/auth/login/loginform";
 
-// MediTrack's login screen. The auth flow (API call, cookies, productType,
-// redirect) is identical to PawTrack's - only the branding/shell around the
-// shared <LoginForm /> differs, so the two never drift out of sync.
 export function MediTrackLoginPage() {
   return (
     <div

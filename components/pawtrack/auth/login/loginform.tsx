@@ -59,9 +59,6 @@ export function LoginForm({ hideRegisterLink }: LoginFormProps) {
   })
   const subdomain = getCompanySubdomain()
   const { data: company, isLoading: companyLoading, error: companyError } = useGetCompanyBySubdomain(subdomain)
-  // Note: `subdomain` above is the company-tenant subdomain (e.g. a clinic's
-  // slug), unrelated to the meditrack/pawtrack product subdomain - derive
-  // the brand name from the actual host instead.
   const productBrandName = getBrandName(
     typeof window !== "undefined" ? getSubdomainFromHost(window.location.host) : null
   );
@@ -83,10 +80,6 @@ export function LoginForm({ hideRegisterLink }: LoginFormProps) {
         setClientId(data.user.id);
       }
 
-      // Store the company's productType (veterinary/human) so it's available
-      // app-wide via useRootContext(). Prefer the login response if the API
-      // includes it there; otherwise fall back to the company record we
-      // already fetched by subdomain for this login page.
       setProductType(data.user.productType || data.user.companyProductType || company?.productType);
 
       fetchUser(data, data.user.roleName);

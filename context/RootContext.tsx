@@ -28,7 +28,6 @@ export type RootContextType = {
     handleLogout: any
     fetchUser: (data: any, role? :any) => any,
     userType: any,
-    // Company mode: "veterinary" (PawTrack) or "human" (MediTrack).
     productType: ProductType | null
     setProductType: (productType?: ProductType | string | null) => void
     isHumanMode: boolean
