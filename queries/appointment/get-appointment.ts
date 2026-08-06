@@ -1,6 +1,7 @@
 import { appointmentSearchParamsParser, appointmentSearchParamsSerializer, AppointmentSearchParamsType } from "@/components/pawtrack/appointments/hooks/useAppointmentFilter";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
+import { getJwtToken } from "@/utils/clientCookie";
 
 interface AppointmentResponse {
   items: any[];
@@ -13,7 +14,15 @@ interface AppointmentResponse {
   isRegistered?: boolean;
 }
 
+const EMPTY_APPOINTMENTS_RESULT: AppointmentResponse = {
+  items: [], totalCount: 0, pageNumber: 1, pageSize: 10, totalPages: 0,
+  hasPreviousPage: false, hasNextPage: false,
+};
+
 const getAppointments = async (searchParams: AppointmentSearchParamsType) => {
+  if (typeof window !== 'undefined' && !getJwtToken()) {
+    return EMPTY_APPOINTMENTS_RESULT;
+  }
   try {
     // Directly build URLSearchParams object instead of relying on serialization
     const params = new URLSearchParams();

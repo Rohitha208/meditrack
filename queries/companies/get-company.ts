@@ -1,4 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
+import type { ProductType } from "@/utils/appMode";
+
+export type { ProductType };
 
 export interface Company {
   id: string;
@@ -9,6 +12,7 @@ export interface Company {
   email: string;
   phone: string;
   domainName: string; // Added domain field
+  productType?: ProductType; // veterinary (PawTrack) or human (MediTrack) mode
   address: {
     street: string;
     city: string;

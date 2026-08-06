@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useState, useMemo, useContext } from 'react';
-import { useContentLayout, UserType } from '../hooks/useContentLayout';
+import { useContentLayout, UserType, ProductType } from '../hooks/useContentLayout';
 
 
 interface RootContextTypeProps {
@@ -28,6 +28,10 @@ export type RootContextType = {
     handleLogout: any
     fetchUser: (data: any, role? :any) => any,
     userType: any,
+    productType: ProductType | null
+    setProductType: (productType?: ProductType | string | null) => void
+    isHumanMode: boolean
+    isVeterinaryMode: boolean
 
 };
 
@@ -53,6 +57,10 @@ const RootPageContext: React.FC<RootContextTypeProps> = ({ children }) => {
         handleLogout: contentLayout.handleLogout,
         fetchUser: contentLayout.fetchUser,
         userType: contentLayout.userType,
+        productType: contentLayout.productType,
+        setProductType: contentLayout.setProductType,
+        isHumanMode: contentLayout.isHumanMode,
+        isVeterinaryMode: contentLayout.isVeterinaryMode,
 
     }), [
         contentLayout.user,
@@ -60,6 +68,7 @@ const RootPageContext: React.FC<RootContextTypeProps> = ({ children }) => {
         contentLayout.IsAdmin,
         contentLayout.authorized,
         contentLayout.collapsed,
+        contentLayout.productType,
         contentLayout.loading,
         contentLayout.clinic,
     ]);

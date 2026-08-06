@@ -1,9 +1,10 @@
 // Export all company-related queries and mutations
-export { 
-  useGetCompanies, 
-  useGetCompanyById, 
+export {
+  useGetCompanies,
+  useGetCompanyById,
   getCompanyById,
-  type Company 
+  type Company,
+  type ProductType
 } from './get-company';
 
 export { 
