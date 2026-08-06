@@ -332,10 +332,8 @@ if (!isFormReady) {
              <FormField
   control={form.control}
   name="productType"
-  render={({ field }) => {
-  console.log("productType field value:", field.value);
-
-  return (
+  render={({ field }) => (
+ 
     <FormItem className="mb-4">
       <FormLabel>Product type*</FormLabel>
 
@@ -357,26 +355,9 @@ if (!isFormReady) {
 
       <FormMessage />
     </FormItem>
-  );
-}}
 
-  // render={({ field }) => (
-  //   <FormItem className="mb-4"> 
-  //     <FormLabel>Product type*</FormLabel>
-  //     <Select onValueChange={field.onChange} value={field.value}>
-  //       <FormControl>
-  //         <SelectTrigger className="w-full h-10">
-  //           <SelectValue placeholder="Select type" />
-  //         </SelectTrigger>
-  //       </FormControl>
-  //       <SelectContent>
-  //         <SelectItem value="veterinary">Veterinary</SelectItem>
-  //         <SelectItem value="human">Human</SelectItem>
-  //       </SelectContent>
-  //     </Select>
-  //     <FormMessage />
-  //   </FormItem>
-  // )}
+  )}
+
 />
 
             </div>
