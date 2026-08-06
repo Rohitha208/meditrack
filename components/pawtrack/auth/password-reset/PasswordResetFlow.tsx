@@ -12,9 +12,10 @@ import { SuccessStep } from "@/components/pawtrack/auth/password-reset/SuccessSt
 
 interface PasswordResetFlowProps {
   initialEmail?: string;
+  hideLogo?: boolean;
 }
 
-export function PasswordResetFlow({ initialEmail = "" }: PasswordResetFlowProps) {
+export function PasswordResetFlow({ initialEmail = "", hideLogo = false }: PasswordResetFlowProps) {
   const [step, setStep] = useState(1);
   const [email, setEmail] = useState(initialEmail);
   const [otp, setOtp] = useState("");
@@ -209,12 +210,14 @@ export function PasswordResetFlow({ initialEmail = "" }: PasswordResetFlowProps)
     <div className="w-full max-w-md mx-auto">
       {step < 4 && (
         <>
-          <div className="flex justify-center mb-6">
-            <div className="relative w-28 h-28">
-              <Image src="/images/logo.png" alt="PawTrack Logo" fill className="object-contain" priority />
+          {!hideLogo && (
+            <div className="flex justify-center mb-6">
+              <div className="relative w-28 h-28">
+                <Image src="/images/logo.png" alt="PawTrack Logo" fill className="object-contain" priority />
+              </div>
             </div>
-          </div>
-          
+          )}
+
           <div className="text-center mb-6">
             <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
               {step === 1 && "Reset your password"}
