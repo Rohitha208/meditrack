@@ -29,7 +29,7 @@ const companySchema = z.object({
     country: z.string().min(1, "Country is required"),
   }),
   status: z.string().min(1, "Status is required"),
-  product_type: z.string().min(1, "Type is required"),
+  productType: z.string().min(1, "Type is required"),
   privacyPolicy: z.string().optional(),
   termsOfUse: z.string().optional(),
 });
@@ -63,7 +63,7 @@ export default function NewCompany({ onSuccess }: NewCompanyProps) {
         country: "",
       },
       status: "active",
-      product_type:"",
+      productType:"",
       privacyPolicy: "",
       termsOfUse: "",
     },
@@ -233,7 +233,7 @@ export default function NewCompany({ onSuccess }: NewCompanyProps) {
 
   <FormField
     control={form.control}
-    name="product_type"
+    name="productType"
     render={({ field }) => (
       <FormItem className="mb-4">
         <FormLabel>Product Type*</FormLabel>
@@ -244,7 +244,7 @@ export default function NewCompany({ onSuccess }: NewCompanyProps) {
             </SelectTrigger>
           </FormControl>
           <SelectContent>
-            <SelectItem value="veterinarian">Veterinarian</SelectItem>
+            <SelectItem value="veterinary">Veterinary</SelectItem>
             <SelectItem value="human">Human</SelectItem>
            
           </SelectContent>

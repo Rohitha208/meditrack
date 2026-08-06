@@ -16,6 +16,7 @@ export interface CreateCompanyRequest {
     country: string;
   };
   status: string;
+  productType: string;
   privacyPolicy?: string; // Base64 encoded PDF
   termsOfUse?: string; // Base64 encoded PDF
   /** Optional logo file. Sent as multipart/form-data to `/api/company/upload`. */
@@ -37,6 +38,7 @@ const createCompany = async (companyData: CreateCompanyRequest): Promise<Company
   form.set("privacyPolicy", rest.privacyPolicy ?? "");
   form.set("termsOfUse", rest.termsOfUse ?? "");
   form.set("status", rest.status ?? "active");
+  form.set("productType", rest.productType ?? "veterinary");
   if (logoFile instanceof File && logoFile.size > 0) {
     form.set("file", logoFile, logoFile.name);
   }

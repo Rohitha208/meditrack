@@ -18,6 +18,7 @@ export interface UpdateCompanyRequest {
     country: string;
   };
   status: string;
+  productType: string;
   privacyPolicy?: string; // Base64 encoded PDF
   termsOfUse?: string; // Base64 encoded PDF
   /** Optional logo file. When provided, uses multipart/form-data update route. */
@@ -45,6 +46,7 @@ const updateCompany = async (companyData: UpdateCompanyRequest): Promise<Company
         form.set("privacyPolicy", rest.privacyPolicy ?? "");
         form.set("termsOfUse", rest.termsOfUse ?? "");
         form.set("status", rest.status ?? "active");
+        form.set("productType", rest.productType ?? "veterinary");
         form.set("file", logoFile, logoFile.name);
         return fetch(`/api/companies/${id}`, {
           method: "PUT",
