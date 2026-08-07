@@ -33,6 +33,7 @@ const companySchema = z.object({
     country: z.string().min(1, "Country is required"),
   }),
   status: z.string().min(1, "Status is required"),
+  productType: z.string().min(1, "Type is required"),
   privacyPolicy: z.string().optional(),
   termsOfUse: z.string().optional(),
 });
@@ -72,6 +73,7 @@ export default function CompanyDetails({ companyId, onSuccess }: CompanyDetailsP
         country: "",
       },
       status: "active",
+      productType:"",
       privacyPolicy: "",
       termsOfUse: "",
     },
@@ -101,6 +103,7 @@ export default function CompanyDetails({ companyId, onSuccess }: CompanyDetailsP
           country: company.address.country,
         },
         status,
+        productType: String(company.productType || "veterinary").trim().toLowerCase(),
         privacyPolicy: company.privacyPolicy || "",
         termsOfUse: company.termsOfUse || "",
       });
@@ -162,7 +165,13 @@ export default function CompanyDetails({ companyId, onSuccess }: CompanyDetailsP
       </div>
     );
   }
-
+if (!isFormReady) {
+  return (
+    <div className="flex items-center justify-center h-64">
+      <p className="text-muted-foreground">Preparing form...</p>
+    </div>
+  );
+}
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6">
@@ -301,11 +310,12 @@ export default function CompanyDetails({ companyId, onSuccess }: CompanyDetailsP
                 control={form.control}
                 name="status"
                 render={({ field }) => (
-                  <FormItem className="">
+                  
+                    <FormItem className="mb-4">
                     <FormLabel>Status*</FormLabel>
-                    <Select key={field.value || 'status-select'} onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
-                        <SelectTrigger>
+                        <SelectTrigger className="w-full h-10">
                           <SelectValue placeholder="Select status" />
                         </SelectTrigger>
                       </FormControl>
@@ -318,6 +328,38 @@ export default function CompanyDetails({ companyId, onSuccess }: CompanyDetailsP
                   </FormItem>
                 )}
               />
+
+             <FormField
+  control={form.control}
+  name="productType"
+  render={({ field }) => (
+ 
+    <FormItem className="mb-4">
+      <FormLabel>Product type*</FormLabel>
+
+      <Select
+        value={field.value}
+        onValueChange={field.onChange}
+      >
+        <FormControl>
+          <SelectTrigger className="w-full h-10">
+            <SelectValue placeholder="Select type" />
+          </SelectTrigger>
+        </FormControl>
+
+        <SelectContent>
+          <SelectItem value="veterinary">Veterinary</SelectItem>
+          <SelectItem value="human">Human</SelectItem>
+        </SelectContent>
+      </Select>
+
+      <FormMessage />
+    </FormItem>
+
+  )}
+
+/>
+
             </div>
           </div>
         </div>

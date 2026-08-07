@@ -29,6 +29,7 @@ const companySchema = z.object({
     country: z.string().min(1, "Country is required"),
   }),
   status: z.string().min(1, "Status is required"),
+  productType: z.string().min(1, "Type is required"),
   privacyPolicy: z.string().optional(),
   termsOfUse: z.string().optional(),
 });
@@ -62,6 +63,7 @@ export default function NewCompany({ onSuccess }: NewCompanyProps) {
         country: "",
       },
       status: "active",
+      productType:"",
       privacyPolicy: "",
       termsOfUse: "",
     },
@@ -205,27 +207,53 @@ export default function NewCompany({ onSuccess }: NewCompanyProps) {
             />
           </div>
 
-          <FormField
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormField
             control={form.control}
-            name="status"
-            render={({ field }) => (
-              <FormItem className="mb-4">
-                <FormLabel>Status*</FormLabel>
-                <Select onValueChange={field.onChange} value={field.value}>
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select status" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="inactive">Inactive</SelectItem>
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+    name="status"
+    render={({ field }) => (
+      <FormItem className="mb-4">
+        <FormLabel>Status*</FormLabel>
+        <Select onValueChange={field.onChange} value={field.value}>
+          <FormControl>
+            <SelectTrigger>
+              <SelectValue placeholder="Select status" />
+            </SelectTrigger>
+          </FormControl>
+          <SelectContent>
+            <SelectItem value="active">Active</SelectItem>
+            <SelectItem value="inactive">Inactive</SelectItem>
+          </SelectContent>
+        </Select>
+        <FormMessage />
+      </FormItem>
+    )}
+  />
+
+  <FormField
+    control={form.control}
+    name="productType"
+    render={({ field }) => (
+      <FormItem className="mb-4">
+        <FormLabel>Product Type*</FormLabel>
+        <Select onValueChange={field.onChange} value={field.value}>
+          <FormControl>
+            <SelectTrigger>
+              <SelectValue placeholder="Select type" />
+            </SelectTrigger>
+          </FormControl>
+          <SelectContent>
+            <SelectItem value="veterinary">Veterinary</SelectItem>
+            <SelectItem value="human">Human</SelectItem>
+           
+          </SelectContent>
+        </Select>
+        <FormMessage />
+      </FormItem>
+    )}
+  />
+</div>
         </div>
         </div>
 
