@@ -345,7 +345,8 @@ Provide a clear, structured summary that captures all important medical informat
   let processedMessages;
   try {
     // convertToModelMessages expects messages in the format from useChat hook with 'parts' array
-    processedMessages = convertToModelMessages(validMessages as any);
+    // AI SDK 6+: convertToModelMessages is async
+    processedMessages = await convertToModelMessages(validMessages as any);
   } catch (error: any) {
     // If conversion fails, provide better error message
     const errorMsg = error?.message || 'Unknown error';
@@ -428,7 +429,7 @@ Provide a clear, structured summary that captures all important medical informat
 
   // Save assistant message after streaming completes
   if (patientId) {
-    result.text.then(async (assistantText) => {
+    Promise.resolve(result.text).then(async (assistantText) => {
       if (assistantText && assistantText.trim()) {
         const token = getJwtToken(req);
         if (!token) {

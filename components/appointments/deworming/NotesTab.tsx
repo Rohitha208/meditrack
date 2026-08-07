@@ -48,7 +48,11 @@ export default function NotesTab({ patientId, appointmentId, visitId, onComplete
   const isReadOnly = appointmentData?.status === "completed";
 
   // Extract the first note if data is an array
-  const data = Array.isArray(noteData) ? noteData[0] : noteData;
+  const data = Array.isArray(noteData)
+    ? noteData[0]
+    : noteData && !Array.isArray(noteData)
+      ? noteData
+      : undefined;
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 const [isChatMode, setIsChatMode] = useState(false);
 const [analysisResult, setAnalysisResult] = useState("");

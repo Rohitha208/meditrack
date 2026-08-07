@@ -120,7 +120,7 @@ export function AudioManager(props: AudioManagerProps) {
                 <div className='space-y-4'>
                     <div className='flex flex-col justify-center items-center rounded-lg'>
                         <div className='flex flex-row space-x-2 py-2 w-full px-2'>
-                            {navigator.mediaDevices && (
+                            {typeof navigator !== "undefined" && navigator.mediaDevices && (
                                 <div className="space-y-4 w-full">
                                     <AudioRecorder onRecordingComplete={onRecordingComplete} />
                                 </div>

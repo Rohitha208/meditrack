@@ -86,7 +86,11 @@ export default function CheckoutTab({
   const isAppointmentCompleted = appointmentData?.status === "completed";
 
   // Extract the first checkout if data is an array
-  const data = Array.isArray(checkoutData) ? checkoutData[0] : checkoutData;
+  const data = Array.isArray(checkoutData)
+    ? checkoutData[0]
+    : checkoutData && !Array.isArray(checkoutData)
+      ? checkoutData
+      : undefined;
 
   // Notify parent component when data is loaded
   useEffect(() => {
