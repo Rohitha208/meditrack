@@ -13,71 +13,64 @@ interface ImportPatientsModalProps {
   onImported?: () => void
 }
 
-// Columns for the veterinary patient import template. Order/labels mirror the
-// patient export so a user can round-trip data.
+// Columns for the veterinary patient import template. Header names and order
+// MUST exactly match what the backend CSV parser (bulk-create) expects —
+// owner columns first, then pet columns, PascalCase with no spaces.
 const TEMPLATE_HEADERS = [
-  "Patient Name",
+  "OwnerFirstName",
+  "OwnerLastName",
+  "OwnerEmail",
+  "OwnerPhone",
+  "OwnerAddress",
+  "OwnerCity",
+  "OwnerState",
+  "OwnerPostalCode",
+  "Name",
   "Species",
   "Breed",
-  "Secondary Breed",
+  "SecondaryBreed",
   "Color",
   "Gender",
-  "Neutered",
-  "Date of Birth",
-  "Weight (Kg)",
-  "Microchip Number",
-  "Registration Number",
-  "Insurance Provider",
-  "Insurance Policy Number",
+  "IsNeutered",
+  "DateOfBirth",
+  "WeightKg",
+  "MicrochipNumber",
+  "RegistrationNumber",
+  "InsuranceProvider",
+  "InsurancePolicyNumber",
   "Allergies",
-  "Medical Conditions",
-  "Behavioral Notes",
-  "Client First Name",
-  "Client Last Name",
-  "Client Email",
-  "Client Phone Primary",
-  "Client Phone Secondary",
-  "Client Address Line 1",
-  "Client Address Line 2",
-  "Client City",
-  "Client State",
-  "Client Postal Code",
-  "Client Emergency Contact Name",
-  "Client Emergency Contact Phone",
-  "Client Notes",
+  "MedicalConditions",
+  "BehavioralNotes",
+  "IsActive",
 ]
 
 // A single example row to guide the user on expected formats.
 const EXAMPLE_ROW = {
-  "Patient Name": "Bella",
+  OwnerFirstName: "Rakesh",
+  OwnerLastName: "Mishra",
+  OwnerEmail: "rakesh.mishra@example.com",
+  OwnerPhone: "+919876543501",
+  OwnerAddress: "11 Green Park Road",
+  OwnerCity: "Bengaluru",
+  OwnerState: "Karnataka",
+  OwnerPostalCode: "560027",
+  Name: "Shadow",
   Species: "Dog",
-  Breed: "German Shepherd",
-  "Secondary Breed": "",
+  Breed: "Doberman",
+  SecondaryBreed: "",
   Color: "Black & Tan",
-  Gender: "Female",
-  Neutered: "Yes",
-  "Date of Birth": "2021-05-14",
-  "Weight (Kg)": 28.5,
-  "Microchip Number": "985141000123456",
-  "Registration Number": "REG-00123",
-  "Insurance Provider": "PetSecure",
-  "Insurance Policy Number": "POL-556677",
+  Gender: "Male",
+  IsNeutered: "TRUE",
+  DateOfBirth: "2020-02-14",
+  WeightKg: 31.2,
+  MicrochipNumber: "985141000123456",
+  RegistrationNumber: "REG-DOG-001",
+  InsuranceProvider: "PetCare Insurance",
+  InsurancePolicyNumber: "PCI-031",
   Allergies: "None",
-  "Medical Conditions": "None",
-  "Behavioral Notes": "Friendly",
-  "Client First Name": "John",
-  "Client Last Name": "Doe",
-  "Client Email": "john.doe@example.com",
-  "Client Phone Primary": "+230 5123 4567",
-  "Client Phone Secondary": "",
-  "Client Address Line 1": "12 Royal Road",
-  "Client Address Line 2": "",
-  "Client City": "Curepipe",
-  "Client State": "Plaines Wilhems",
-  "Client Postal Code": "74210",
-  "Client Emergency Contact Name": "Jane Doe",
-  "Client Emergency Contact Phone": "+230 5987 6543",
-  "Client Notes": "",
+  MedicalConditions: "None",
+  BehavioralNotes: "Alert and active",
+  IsActive: "TRUE",
 }
 
 export function ImportPatientsModal({
@@ -118,28 +111,44 @@ export function ImportPatientsModal({
       try {
         const result = await mutateAsync({ file, companyId })
 
-        const imported = typeof result?.imported === "number" ? result.imported : undefined
-        const skipped = typeof result?.skipped === "number" ? result.skipped : undefined
-        const failed = typeof result?.failed === "number" ? result.failed : undefined
+        // Backend (BulkImportResultDto) returns successCount / failedCount /
+        // results[]. Fall back to the simpler imported/failed shape if present.
+        const imported =
+          typeof result?.successCount === "number"
+            ? result.successCount
+            : typeof result?.imported === "number"
+              ? result.imported
+              : undefined
+        const failed =
+          typeof result?.failedCount === "number"
+            ? result.failedCount
+            : typeof result?.failed === "number"
+              ? result.failed
+              : undefined
 
-        // Build a human-readable summary from whatever counts the backend returns,
-        // e.g. "8 imported, 2 skipped (duplicates), 1 failed."
+        // Collect row-level error messages from results[] (or the errors[] alias).
+        const rowErrors: string[] = Array.isArray(result?.results)
+          ? result.results
+              .filter((r) => r && r.success === false)
+              .map((r) =>
+                `Row ${r.rowNumber ?? "?"}: ${r.errorMessage ?? "failed"}`.trim()
+              )
+          : Array.isArray(result?.errors)
+            ? result.errors
+            : []
+
+        // Build a human-readable summary, e.g. "8 imported, 2 failed."
         const parts: string[] = []
         if (imported != null) parts.push(`${imported} imported`)
-        if (skipped != null && skipped > 0) parts.push(`${skipped} skipped (duplicates)`)
         if (failed != null && failed > 0) parts.push(`${failed} failed`)
-
         const summary =
           parts.length > 0 ? parts.join(", ") + "." : "Patients imported successfully."
 
-        // First few row-level errors, if the backend returned any.
+        // First few row-level errors appended to the toast.
         const errorDetail =
-          Array.isArray(result?.errors) && result.errors.length > 0
-            ? " " + result.errors.slice(0, 3).join(" ")
-            : ""
+          rowErrors.length > 0 ? " " + rowErrors.slice(0, 3).join(" ") : ""
 
-        // Nothing imported but rows failed → treat as a hard failure so the
-        // catch block surfaces it and the modal stays open for a retry.
+        // Nothing imported but rows failed → hard failure; keep the modal open.
         const isTotalFailure = imported === 0 && (failed ?? 0) > 0
         if (isTotalFailure) {
           throw new Error((result?.message || "No patients were imported.") + errorDetail)

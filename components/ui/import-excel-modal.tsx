@@ -177,16 +177,21 @@ export function ImportExcelModal({
           />
 
           {file ? (
-            <div className="flex items-center gap-2 text-sm">
-              <FileSpreadsheet className="h-5 w-5 text-primary" />
-              <span className="font-medium text-foreground">{file.name}</span>
+            <div className="flex w-full min-w-0 items-center gap-2 text-sm">
+              <FileSpreadsheet className="h-5 w-5 shrink-0 text-primary" />
+              <span
+                className="min-w-0 flex-1 truncate text-left font-medium text-foreground"
+                title={file.name}
+              >
+                {file.name}
+              </span>
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation()
                   reset()
                 }}
-                className="text-muted-foreground hover:text-foreground"
+                className="shrink-0 text-muted-foreground hover:text-foreground"
                 aria-label="Remove file"
               >
                 <X className="h-4 w-4" />
@@ -203,7 +208,7 @@ export function ImportExcelModal({
           )}
         </div>
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex justify-center gap-2 pt-2">
           <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={isImporting}>
             Cancel
           </Button>

@@ -1,8 +1,23 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { getMessageFromErrorBody } from "@/utils/apiErrorHandler"
 
+// Per-row result returned by the backend bulk-create endpoint.
+export interface PatientImportRowResult {
+  rowNumber?: number
+  success?: boolean
+  microchipNumber?: string
+  patientId?: string
+  errorMessage?: string
+}
+
+// Response shape from POST /api/Patient/bulk-create (BulkImportResultDto).
 export interface ImportPatientsResult {
   message?: string
+  totalRows?: number
+  successCount?: number
+  failedCount?: number
+  results?: PatientImportRowResult[]
+  // Back-compat aliases in case the backend returns a simpler shape.
   imported?: number
   failed?: number
   errors?: string[]
