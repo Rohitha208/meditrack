@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Combobox } from "@/components/ui/combobox"
-import { Plus, Download, Filter } from "lucide-react"
+import { Plus, Download, Filter, Upload } from "lucide-react"
 import { 
   Sheet, 
   SheetContent, 
@@ -15,6 +15,7 @@ import {
   SheetTrigger 
 } from "@/components/ui/sheet"
 import { NewPatientForm } from "@/components/patients/new-patient-form"
+import { ImportPatientsModal } from "@/components/patients/import-patients-modal"
 import { useGetPatients } from "@/queries/patients/get-patients"
 import { useDebounce } from "@/hooks/use-debounce"
 import { useRootContext } from "@/context/RootContext"
@@ -43,6 +44,7 @@ const defaultFilters: PatientFilters = {
 
 export const PatientsScreen = () => {
   const [openNew, setOpenNew] = useState(false)
+  const [openImport, setOpenImport] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
@@ -312,6 +314,19 @@ export const PatientsScreen = () => {
             <Download className="h-4 w-4" />
             {isExporting ? "Exporting..." : "Export to Excel"}
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => setOpenImport(true)}
+            className="flex items-center gap-2"
+          >
+            <Upload className="h-4 w-4" />
+            Import
+          </Button>
+          <ImportPatientsModal
+            open={openImport}
+            onOpenChange={setOpenImport}
+            companyId={companyId}
+          />
           <Sheet open={openNew} onOpenChange={setOpenNew}>
             <SheetTrigger asChild>
               <Button className={`theme-button text-white`}>
