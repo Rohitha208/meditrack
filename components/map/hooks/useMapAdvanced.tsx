@@ -32,6 +32,12 @@ const useMapAdvanced = (props?: UseMapAdvancedProps) => {
   
   const mapRef = useRef<any>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const selectedLocationRef = useRef<LocationData | null>(null);
+  const lastAppliedInitialRef = useRef<{ lat: number; lng: number } | null>(null);
+
+  useEffect(() => {
+    selectedLocationRef.current = selectedLocation;
+  }, [selectedLocation]);
   
   // Check if geolocation is supported
   useEffect(() => {
@@ -111,7 +117,7 @@ const useMapAdvanced = (props?: UseMapAdvancedProps) => {
       setLocationPermission('granted');
       
       // If no initial location is set, use current location as default
-      if (!initialLocation && !selectedLocation) {
+      if (!initialLocation && !selectedLocationRef.current) {
         setMapCenter([latitude, longitude]);
         setSelectedLocation(locationData);
       }
@@ -124,15 +130,32 @@ const useMapAdvanced = (props?: UseMapAdvancedProps) => {
     } finally {
       setIsGettingLocation(false);
     }
-  }, [reverseGeocode, initialLocation, selectedLocation]);
+  }, [reverseGeocode, initialLocation]);
 
-  // Initialize with initial location if provided, otherwise try to get current location
+  // Apply parent initial location only when coords actually change.
+  // Avoid resetting on every render (new object reference) or after map clicks.
   useEffect(() => {
-    if (initialLocation) {
-      setSelectedLocation(initialLocation);
-      setMapCenter([initialLocation.lat, initialLocation.lng]);
-    } else if (locationPermission === 'granted' && !currentLocation) {
-      // If permission is already granted, get current location
+    if (!initialLocation) return;
+
+    const alreadyApplied =
+      lastAppliedInitialRef.current &&
+      lastAppliedInitialRef.current.lat === initialLocation.lat &&
+      lastAppliedInitialRef.current.lng === initialLocation.lng;
+
+    if (alreadyApplied) return;
+
+    lastAppliedInitialRef.current = {
+      lat: initialLocation.lat,
+      lng: initialLocation.lng,
+    };
+    setSelectedLocation(initialLocation);
+    setMapCenter([initialLocation.lat, initialLocation.lng]);
+  }, [initialLocation?.lat, initialLocation?.lng, initialLocation?.address]);
+
+  // If no initial location, try current location once permission is granted
+  useEffect(() => {
+    if (initialLocation) return;
+    if (locationPermission === 'granted' && !currentLocation) {
       requestLocationPermission();
     }
   }, [initialLocation, locationPermission, currentLocation, requestLocationPermission]);
@@ -175,12 +198,21 @@ const useMapAdvanced = (props?: UseMapAdvancedProps) => {
 
   // Handle map click to select location
   const handleMapClick = useCallback((latlng: LatLng) => {
+    // Optimistic update so the pin moves immediately
+    const pendingLocation: LocationData = {
+      lat: latlng.lat,
+      lng: latlng.lng,
+      address: `${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)}`,
+    };
+    setSelectedLocation(pendingLocation);
+    setMapCenter([latlng.lat, latlng.lng]);
+
     // Reverse geocode to get address
     reverseGeocode(latlng.lat, latlng.lng).then((address) => {
       const locationData: LocationData = {
         lat: latlng.lat,
         lng: latlng.lng,
-        address: address || `${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)}`
+        address: address || pendingLocation.address,
       };
       setSelectedLocation(locationData);
     });
