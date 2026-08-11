@@ -9,7 +9,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Eye, Download, Printer, Plus } from "lucide-react"
 import { useGetPatientInvoices, type PatientInvoice } from "@/queries/invoice/get-patient-invoices"
 import InvoiceViewSheet from "@/components/invoice/InvoiceViewSheet"
-import NewInvoiceForm from "@/components/billing/new-invoice-form"
 import { formatDate } from "@/lib/utils"
 import InvoiceSheet from "@/components/invoice/InvoiceSheet"
 import { useGetVisitById } from "@/queries/visit/get-visit-by-id"
@@ -317,10 +316,10 @@ export default function PatientInvoices({ patientId }: PatientInvoicesProps) {
         />
       )}
 
-      {/* Add Invoice Sheet */}
+      {/* Add Invoice Sheet — same UI as appointment Create Invoice */}
       {isAddInvoiceSheetOpen && (
-        <NewInvoiceForm
-          open={isAddInvoiceSheetOpen}
+        <InvoiceSheet
+          isOpen={isAddInvoiceSheetOpen}
           onClose={handleCloseAddInvoiceSheet}
           patientId={patientId}
         />

@@ -50,8 +50,9 @@ export function useCreatePatient() {
     mutationFn: (newPatient: CreatePatientRequest) => createPatient(newPatient),
     retry: false,
     onSuccess: () => {
-      // Invalidate and refetch the patients list
+      // Invalidate all patient list/search caches so new patient appears in search
       queryClient.invalidateQueries({ queryKey: ["patients"] });
+      queryClient.invalidateQueries({ queryKey: ["patient"] });
     },
   });
 }

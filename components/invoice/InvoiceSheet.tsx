@@ -23,6 +23,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { printPdfBlob, downloadPdfBlob } from "@/utils/pdf"
 import { createInvoicePdfBlob } from "./invoicePdf"
 import { useGetInvoiceById } from "@/queries/invoice/get-invoice-by-id"
+import { useGetPatientById } from "@/queries/patients/get-patient-by-id"
+import { useContentLayout } from "@/hooks/useContentLayout"
+import { useGetClinic } from "@/queries/clinic/get-clinic"
 
 
 interface InvoiceSheetProps {
@@ -32,9 +35,12 @@ interface InvoiceSheetProps {
   appointmentId?: string
   visitId?: string
   invoiceId?: string
+  /** Pre-selected clinic for patient-only invoice create (no appointment) */
+  clinicId?: string
 }
 
-export default function InvoiceSheet({ isOpen, onClose, patientId, appointmentId, visitId, invoiceId }: InvoiceSheetProps) {
+export default function InvoiceSheet({ isOpen, onClose, patientId, appointmentId, visitId, invoiceId, clinicId }: InvoiceSheetProps) {
+  const { userType, clinic: userClinic } = useContentLayout()
   const [invoiceNumber, setInvoiceNumber] = useState("")
   const [consultationFee, setConsultationFee] = useState(0)
   const [discountAmount, setDiscountAmount] = useState(0)
@@ -50,10 +56,21 @@ export default function InvoiceSheet({ isOpen, onClose, patientId, appointmentId
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "card" | "online" | "upi" | "cheque" | "bank_transfer">("cash")
   const [currentInvoiceId, setCurrentInvoiceId] = useState<string | undefined>(invoiceId)
   const [invoiceItems, setInvoiceItems] = useState<any[]>([])
+  const [selectedClinicId, setSelectedClinicId] = useState<string>(clinicId || userClinic?.id || "")
+
+  const isPatientOnlyMode = !appointmentId && !visitId && !invoiceId
 
   // Get visit and appointment data
   const { data: visitData } = useGetVisitByAppointmentId(appointmentId || "", !!appointmentId)
   const { data: appointmentData } = useGetAppointmentById(appointmentId || "")
+  const { data: patientData } = useGetPatientById(patientId || "")
+  const { data: clinicsData } = useGetClinic(
+    1,
+    100,
+    userType?.isAdmin && userClinic?.companyId ? (userClinic.companyId ?? null) : null,
+    userType?.isAdmin && isPatientOnlyMode,
+    undefined
+  )
   
   // Check if visit is completed
   const isVisitCompleted = appointmentData?.status === "completed"
@@ -61,6 +78,54 @@ export default function InvoiceSheet({ isOpen, onClose, patientId, appointmentId
   const { data: existingInvoice, refetch: refetchInvoice } = invoiceId
     ? useGetInvoiceById(invoiceId, isOpen) 
     : useGetInvoiceByVisit(visitId || "", !!visitId)
+
+  useEffect(() => {
+    if (clinicId) {
+      setSelectedClinicId(clinicId)
+    } else if (!userType?.isAdmin && userClinic?.id) {
+      setSelectedClinicId(userClinic.id)
+    }
+  }, [clinicId, userType?.isAdmin, userClinic?.id])
+
+  const resolvedClinicId =
+    appointmentData?.clinicId ||
+    existingInvoice?.clinicId ||
+    selectedClinicId ||
+    clinicId ||
+    userClinic?.id ||
+    ""
+
+  const displayClient = existingInvoice?.client
+    ? existingInvoice.client
+    : appointmentData?.client
+      ? appointmentData.client
+      : patientData
+        ? {
+            firstName: patientData.clientFirstName || "",
+            lastName: patientData.clientLastName || "",
+            email: patientData.clientEmail,
+            phonePrimary: patientData.clientPhonePrimary,
+            phoneSecondary: patientData.clientPhoneSecondary,
+          }
+        : null
+
+  const displayPatient = existingInvoice?.patient
+    ? existingInvoice.patient
+    : appointmentData?.patient
+      ? appointmentData.patient
+      : patientData || null
+
+  const resolvedClientId =
+    existingInvoice?.clientId ||
+    appointmentData?.patient?.clientId ||
+    appointmentData?.clientId ||
+    patientData?.clientId
+
+  const resolvedPatientId =
+    existingInvoice?.patientId ||
+    appointmentData?.patientId ||
+    patientData?.id ||
+    patientId
 
   // Force refetch when sheet opens to ensure fresh data
   useEffect(() => {
@@ -279,8 +344,19 @@ export default function InvoiceSheet({ isOpen, onClose, patientId, appointmentId
   const totalAmount = Math.max(0, subtotal - finalOverallProductDiscount)
 
   const handleSave = async () => {
-    if (!visitId || !appointmentId) {
+    const hasAppointmentContext = !!(visitId && appointmentId && appointmentData)
+    if (!hasAppointmentContext && !isPatientOnlyMode && !currentInvoiceId) {
       toast.error("Missing required data")
+      return
+    }
+
+    if (!resolvedClientId || !resolvedPatientId) {
+      toast.error("Patient or client information is missing")
+      return
+    }
+
+    if (!resolvedClinicId) {
+      toast.error("Please select a clinic")
       return
     }
   
@@ -296,15 +372,16 @@ export default function InvoiceSheet({ isOpen, onClose, patientId, appointmentId
         numberOfDays: item.numberOfDays || "-",
       }))
   
-    if (itemsTotal === 0 && products.length === 0) {
-      toast.error("Please add at least one item or prescription product to the invoice")
+    if (itemsTotal === 0 && products.length === 0 && consultationFee <= 0) {
+      toast.error("Please add at least one item or a consultation fee to the invoice")
       return
     }
   
     const invoiceData = {
-      visitId,
-      clientId: appointmentData.patient.clientId, 
-      patientId: appointmentData.patientId,
+      visitId: visitId || null,
+      clientId: resolvedClientId, 
+      patientId: resolvedPatientId,
+      clinicId: resolvedClinicId,
       invoiceNumber,
       itemsTotal,
       consultationFee,
@@ -321,12 +398,11 @@ export default function InvoiceSheet({ isOpen, onClose, patientId, appointmentId
     }
   
     if (currentInvoiceId) {
-      const { visitId, clientId, patientId, ...updateData } = invoiceData
+      const { visitId: _visitId, clientId: _clientId, patientId: _patientId, ...updateData } = invoiceData
       await updateInvoiceMutation.mutateAsync({
         id: currentInvoiceId,
         request: { 
           ...updateData, 
-          clinicId: appointmentData.clinicId,
           products: products.map(p => ({
             ...p,
             isGiven: status === "paid"
@@ -397,27 +473,24 @@ export default function InvoiceSheet({ isOpen, onClose, patientId, appointmentId
             <Card className="p-4">
               <div className="space-y-2">
                 <h3 className="font-semibold text-sm text-gray-700">Client</h3>
-                {(existingInvoice?.client || appointmentData?.client) ? (
+                {displayClient ? (
                   <div className="space-y-1">
                     <p className="font-medium text-sm">
-                      {existingInvoice?.client 
-                        ? `${existingInvoice.client.firstName} ${existingInvoice.client.lastName}`
-                        : `${appointmentData?.client?.firstName} ${appointmentData?.client?.lastName}`
-                      }
+                      {`${displayClient.firstName || ""} ${displayClient.lastName || ""}`.trim() || "Client"}
                     </p>
-                    {(existingInvoice?.client?.email || appointmentData?.client?.email) && (
+                    {displayClient.email && (
                       <p className="text-xs text-gray-500">
-                        {existingInvoice?.client?.email || appointmentData?.client?.email}
+                        {displayClient.email}
                       </p>
                     )}
-                    {(existingInvoice?.client?.phonePrimary || appointmentData?.client?.phonePrimary) && (
+                    {displayClient.phonePrimary && (
                       <p className="text-xs text-gray-500">
-                        {existingInvoice?.client?.phonePrimary || appointmentData?.client?.phonePrimary}
+                        {displayClient.phonePrimary}
                       </p>
                     )}
-                    {(existingInvoice?.client?.phoneSecondary || appointmentData?.client?.phoneSecondary) && (
+                    {displayClient.phoneSecondary && (
                       <p className="text-xs text-gray-500">
-                        {existingInvoice?.client?.phoneSecondary || appointmentData?.client?.phoneSecondary}
+                        {displayClient.phoneSecondary}
                       </p>
                     )}
                   </div>
@@ -431,18 +504,18 @@ export default function InvoiceSheet({ isOpen, onClose, patientId, appointmentId
             <Card className="p-4">
               <div className="space-y-2">
                 <h3 className="font-semibold text-sm text-gray-700">Patient</h3>
-                {(existingInvoice?.patient || appointmentData?.patient) ? (
+                {displayPatient ? (
                   <div className="space-y-1">
                     <p className="font-medium text-sm">
-                      {existingInvoice?.patient?.name || appointmentData?.patient?.name}
+                      {displayPatient.name}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {existingInvoice?.patient?.species || appointmentData?.patient?.species} • {existingInvoice?.patient?.breed || appointmentData?.patient?.breed}
-                      {(existingInvoice?.patient?.gender || appointmentData?.patient?.gender) && ` • ${existingInvoice?.patient?.gender || appointmentData?.patient?.gender}`}
+                      {displayPatient.species} • {displayPatient.breed}
+                      {displayPatient.gender && ` • ${displayPatient.gender}`}
                     </p>
-                    {(existingInvoice?.patient?.dateOfBirth || appointmentData?.patient?.dateOfBirth) && (
+                    {displayPatient.dateOfBirth && (
                       <p className="text-xs text-gray-500">
-                        DOB: {new Date(existingInvoice?.patient?.dateOfBirth || appointmentData?.patient?.dateOfBirth).toLocaleDateString()}
+                        DOB: {new Date(displayPatient.dateOfBirth).toLocaleDateString()}
                       </p>
                     )}
                   </div>
@@ -452,6 +525,40 @@ export default function InvoiceSheet({ isOpen, onClose, patientId, appointmentId
               </div>
             </Card>
           </div>
+
+          {/* Clinic (patient-only create) */}
+          {isPatientOnlyMode && (
+            <Card className="p-4">
+              <div className="space-y-2">
+                <Label htmlFor="clinic-select">
+                  Clinic <span className="text-red-500">*</span>
+                </Label>
+                {userType?.isAdmin ? (
+                  <Select
+                    value={selectedClinicId}
+                    onValueChange={setSelectedClinicId}
+                  >
+                    <SelectTrigger id="clinic-select">
+                      <SelectValue placeholder="Select a clinic" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(clinicsData?.items || []).map((clinic: { id: string; name: string }) => (
+                        <SelectItem key={clinic.id} value={clinic.id}>
+                          {clinic.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id="clinic-select"
+                    value={userClinic?.name || "Current clinic"}
+                    disabled
+                  />
+                )}
+              </div>
+            </Card>
+          )}
 
           {/* Invoice Information */}
           <Card>

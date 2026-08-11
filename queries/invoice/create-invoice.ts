@@ -4,7 +4,7 @@ interface CreateInvoiceRequest {
   visitId?: string | null
   clientId: string
   patientId: string
-  clinicId?: string
+  clinicId: string
   invoiceNumber: string
   itemsTotal: number
   consultationFee: number
@@ -12,6 +12,7 @@ interface CreateInvoiceRequest {
   consultationDiscount: number
   consultationFeeAfterDiscount: number
   overallProductDiscount?: number
+  overallProductDiscountPercentage?: number
   notes: string
   total: number
   status: string

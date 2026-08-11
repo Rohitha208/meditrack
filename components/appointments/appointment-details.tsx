@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import * as z from "zod"
-import { Pencil, ClipboardList, Search, X, Loader2, Mic, FileText } from "lucide-react"
+import { Pencil, ClipboardList, Search, X, Loader2, Mic } from "lucide-react"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet"
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
 import { Combobox } from "@/components/ui/combobox"
@@ -754,39 +754,15 @@ export default function AppointmentDetails({ appointmentId, onClose }: Appointme
                 )}
                 {(appointment?.status === "in_progress" || appointment?.status === "completed") && (
                   <div className="flex gap-2 mt-2">
-                    {appointment?.appointmentType?.name?.toLowerCase().includes("certification") ||
-                    appointment?.appointmentType?.name?.toLowerCase().includes("certificate") ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="theme-button-outline bg-transparent"
-                        onClick={handleCertificateClick}
-                      >
-                        <FileText className="h-4 w-4 mr-1" />
-                        Generate Certificates
-                      </Button>
-                    ) : (
-                      <>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="theme-button-outline bg-transparent"
-                          onClick={handlePatientInfoClick}
-                        >
-                          <ClipboardList className="h-4 w-4 mr-1" />
-                          Open Visit Summary
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="theme-button-outline bg-transparent"
-                          onClick={handleCertificateClick}
-                        >
-                          <FileText className="h-4 w-4 mr-1" />
-                          Generate Certificates
-                        </Button>
-                      </>
-                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="theme-button-outline bg-transparent"
+                      onClick={handlePatientInfoClick}
+                    >
+                      <ClipboardList className="h-4 w-4 mr-1" />
+                      Open Visit Summary
+                    </Button>
                   </div>
                 )}
               </div>

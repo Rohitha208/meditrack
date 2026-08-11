@@ -552,23 +552,46 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
     }
   }
 
-  const handlePatientCreated = async () => {
-    await refetchPatients()
-    const latestPatient = patientsResponse?.items?.[patientsResponse.items?.length - 1]
+  const handlePatientCreated = async (createdPatient?: Patient) => {
+    // Prefer the patient returned from create API (list refetch is async/stale)
+    if (createdPatient?.id) {
+      form.setValue("patientId", createdPatient.id, { shouldValidate: true })
+      if ((form as any).clearErrors) {
+        (form as any).clearErrors("patientId")
+      }
+
+      setSelectedPatient({
+        id: createdPatient.id,
+        name: createdPatient.name,
+        clientId: createdPatient.clientId,
+        isActive: createdPatient.isActive,
+      })
+      setPatientSearchQuery("")
+      setIsSearchDropdownOpen(false)
+
+      toast({
+        title: "Patient added",
+        description: `${createdPatient.name} has been added successfully.`,
+        variant: "success",
+      })
+      setShowNewPatientForm(false)
+      return
+    }
+
+    // Fallback: refetch list if create response had no patient payload
+    const { data: refreshed } = await refetchPatients()
+    const latestPatient = refreshed?.items?.[refreshed.items.length - 1]
     if (latestPatient) {
       form.setValue("patientId", latestPatient.id, { shouldValidate: true })
       if ((form as any).clearErrors) {
-        (form as any).clearErrors("patientId");
+        (form as any).clearErrors("patientId")
       }
-
-      // Update the selected patient state
       setSelectedPatient({
         id: latestPatient.id,
         name: latestPatient.name,
         clientId: latestPatient.clientId,
-        isActive: latestPatient.isActive
-      });
-
+        isActive: latestPatient.isActive,
+      })
       toast({
         title: "Patient added",
         description: `${latestPatient.name} has been added successfully.`,
@@ -577,12 +600,11 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
     } else {
       toast({
         title: "Patient added",
-        description: "Patient has been added successfully, refreshing patient list.",
+        description: "Patient has been added successfully. Search by name to select them.",
         variant: "success",
       })
     }
 
-    // Always close the form regardless of patient data availability
     setShowNewPatientForm(false)
   }
 
@@ -833,7 +855,7 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
                         name="clinicId"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Clinic</FormLabel>
+                            <FormLabel>Clinic <span className="text-red-500">*</span></FormLabel>
                             <FormControl>
                               <Combobox
                                 options={clinicOptions}
@@ -853,7 +875,7 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
                       name="patientId"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Patient</FormLabel>
+                          <FormLabel>Patient <span className="text-red-500">*</span></FormLabel>
                           <FormControl>
                             <div className="flex gap-2">
                               <div className="relative flex-grow">
@@ -990,7 +1012,7 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
                         name="veterinarianId"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Veterinarian</FormLabel>
+                            <FormLabel>Veterinarian <span className="text-red-500">*</span></FormLabel>
                             <FormControl>
                               <Combobox
                                 options={veterinarianOptions}
@@ -1010,7 +1032,7 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
                       name="roomId"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Room</FormLabel>
+                          <FormLabel>Room <span className="text-red-500">*</span></FormLabel>
                           <FormControl>
                             <Combobox
                               options={roomOptions}
@@ -1029,7 +1051,7 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
                       name="appointmentTypeId"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Appointment Type</FormLabel>
+                          <FormLabel>Appointment Type <span className="text-red-500">*</span></FormLabel>
                           <FormControl>
                             <Combobox
                               options={appointmentTypeOptions}
@@ -1053,7 +1075,7 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
 
                         return (
                           <FormItem className="flex flex-col">
-                            <FormLabel className="mb-1">Date</FormLabel>
+                            <FormLabel className="mb-1">Date <span className="text-red-500">*</span></FormLabel>
                             <FormControl>
                               <DatePicker
                                 selected={field.value}
@@ -1082,7 +1104,7 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>
-                            Available Slots
+                            Available Slots <span className="text-red-500">*</span>
                           </FormLabel>
                           <FormControl>
                             <div className="mt-2">
@@ -1130,7 +1152,7 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
                       render={({ field }) => (
                         <FormItem>
                           <div className="flex items-center gap-2">
-                            <FormLabel className="mb-0">Reason</FormLabel>
+                            <FormLabel className="mb-0">Reason <span className="text-red-500">*</span></FormLabel>
                             <Button
                               type="button"
                               size="icon"
@@ -1244,7 +1266,10 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
           {showNewPatientForm && (
             <div className="w-2/3 border-l pl-6">
               <h3 className="text-lg font-semibold relative top-[-14px]">Add New Patient</h3>
-              <NewPatientForm onSuccess={handlePatientCreated} />
+              <NewPatientForm
+                onSuccess={handlePatientCreated}
+                onCancel={() => setShowNewPatientForm(false)}
+              />
             </div>
           )}
         </div>
