@@ -29,6 +29,7 @@ import { format } from "date-fns"
 import { Plus, Mic, Loader2, Search, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useCreatePatient } from "@/queries/patients/create-patients"
+import { Patient } from "@/queries/patients/get-patients"
 import { ClientForm } from "@/components/clients/client-form"
 import { Separator } from "@/components/ui/separator"
 import { Client } from "@/queries/clients/get-client"
@@ -42,12 +43,13 @@ import { patientFormSchema, PatientFormValues, defaultPatientValues } from "@/co
 import "react-datepicker/dist/react-datepicker.css"
 
 interface NewPatientFormProps {
-  onSuccess: () => void;
+  onSuccess: (patient?: Patient) => void;
+  onCancel?: () => void;
   defaultClientId?: string;
   hideOwnerSection?: boolean;
 }
 
-export function NewPatientForm({ onSuccess, defaultClientId, hideOwnerSection = false }: NewPatientFormProps) {
+export function NewPatientForm({ onSuccess, onCancel, defaultClientId, hideOwnerSection = false }: NewPatientFormProps) {
   const [isPending, setIsPending] = useState(false)
   const [showClientForm, setShowClientForm] = useState(false)
   const { user, userType, clinic } = useRootContext()
@@ -115,7 +117,7 @@ export function NewPatientForm({ onSuccess, defaultClientId, hideOwnerSection = 
         dateOfBirth: format(data.dateOfBirth, "yyyy-MM-dd'T'HH:mm:ss.SSSxxx"),
       }
 
-      await createPatientMutation.mutateAsync(patientData)
+      const createdPatient = await createPatientMutation.mutateAsync(patientData)
       
       toast({
         title: "Pet registered",
@@ -123,7 +125,7 @@ export function NewPatientForm({ onSuccess, defaultClientId, hideOwnerSection = 
         variant: "success", 
       })
       
-      onSuccess()
+      onSuccess(createdPatient)
       form.reset(initialValues)
     } catch (error) {
       toast({
@@ -534,7 +536,11 @@ export function NewPatientForm({ onSuccess, defaultClientId, hideOwnerSection = 
         </div>
 
         <div className="flex justify-end space-x-4">
-          <Button type="button" variant="outline" onClick={() => onSuccess()}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => (onCancel ? onCancel() : onSuccess())}
+          >
             Cancel
           </Button>
           <Button 
