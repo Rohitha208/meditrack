@@ -8,7 +8,7 @@ import { Button } from "../ui/button";
 import { useGetClinic } from "@/queries/clinic/get-clinic";
 import { useUpdateClinic } from "@/queries/clinic/update-clinic";
 import { toast } from "@/hooks/use-toast";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Switch } from "../ui/switch";
 import { Clinic } from ".";
 import { useGetClinicById } from "@/queries/clinic/get-clinic-by-id";
@@ -139,6 +139,20 @@ export default function ClinicDetails({ clinicId, onSuccess }: ClinicDetailsProp
       form.setValue('companyId', user.companyId);
     }
   }, [user, form]);
+
+  const locationLat = form.watch("location.lat");
+  const locationLng = form.watch("location.lng");
+  const locationAddress = form.watch("location.address");
+  const addressLine1 = form.watch("addressLine1");
+
+  const mapInitialLocation = useMemo(() => {
+    if (!locationLat || !locationLng) return undefined;
+    return {
+      lat: locationLat,
+      lng: locationLng,
+      address: locationAddress || addressLine1 || "",
+    };
+  }, [locationLat, locationLng, locationAddress, addressLine1]);
 
   // Handle location selection from map
   const handleLocationSelect = (location: LocationData) => {
@@ -460,12 +474,12 @@ export default function ClinicDetails({ clinicId, onSuccess }: ClinicDetailsProp
                 </p>
 
                 {/* Display current location data if set */}
-                {form.watch('location.lat') !== 0 && form.watch('location.lng') !== 0 && (
+                {mapInitialLocation && (
                   <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
                     <p className="text-sm font-medium text-blue-900">Current Location</p>
-                    <p className="text-sm text-blue-700">{form.watch('location.address') || form.watch('addressLine1')}</p>
+                    <p className="text-sm text-blue-700">{mapInitialLocation.address}</p>
                     <p className="text-xs text-blue-600">
-                      Lat: {form.watch('location.lat').toFixed(6)}, Lng: {form.watch('location.lng').toFixed(6)}
+                      Lat: {mapInitialLocation.lat.toFixed(6)}, Lng: {mapInitialLocation.lng.toFixed(6)}
                     </p>
                   </div>
                 )}
@@ -473,11 +487,7 @@ export default function ClinicDetails({ clinicId, onSuccess }: ClinicDetailsProp
                 <AdvancedMap
                   onSaveLocation={handleLocationSelect}
                   className="h-[400px]"
-                  initialLocation={form.watch('location.lat') !== 0 && form.watch('location.lng') !== 0 ? {
-                    lat: form.watch('location.lat'),
-                    lng: form.watch('location.lng'),
-                    address: form.watch('location.address') || form.watch('addressLine1') || ""
-                  } : undefined}
+                  initialLocation={mapInitialLocation}
                 />
               </div>
             </div>

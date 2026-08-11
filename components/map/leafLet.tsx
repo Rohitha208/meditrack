@@ -78,6 +78,21 @@ const MapEvents: React.FC<{
   return null;
 };
 
+// Keep map view in sync when center/selected location changes after mount
+const MapViewUpdater: React.FC<{
+  center: [number, number];
+  zoom: number;
+}> = ({ center, zoom }) => {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!center || Number.isNaN(center[0]) || Number.isNaN(center[1])) return;
+    map.setView(center, zoom, { animate: true });
+  }, [map, center[0], center[1], zoom]);
+
+  return null;
+};
+
 const LeafletMap: React.FC<MapComponentProps> = ({
   center,
   zoom,
@@ -107,6 +122,7 @@ const LeafletMap: React.FC<MapComponentProps> = ({
         />
         
         <MapEvents onMapClick={onMapClick} onMapRef={onMapRef} />
+        <MapViewUpdater center={center} zoom={zoom} />
         
         {/* Current Location Marker */}
         {currentLocation && (
