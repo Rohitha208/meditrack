@@ -423,10 +423,10 @@ ${clientAcknowledged === true
               <div className="text-green-600 text-sm">Checkout saved successfully!</div>
             )}
           </div>
-          {/* AI Emergency Procedures Analysis */}
+          {/* AI Deworming Checkout Analysis */}
           <div className="mt-8 border-t pt-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-md font-semibold">AI Emergency Procedures Analysis</h3>
+              <h3 className="text-md font-semibold">AI Deworming Checkout Analysis</h3>
               {!isChatMode && (
                 <Button
                   type="button"
@@ -446,7 +446,7 @@ ${clientAcknowledged === true
                       Analyzing...
                     </>
                   ) : (
-                    "Analyze Procedures"
+                    "Analyze Deworming Checkout"
                   )}
                 </Button>
               )}
@@ -460,7 +460,7 @@ ${clientAcknowledged === true
                       <Bot className="h-3 w-3 text-white" />
                     </div>
                     <h4 className="text-sm text-purple-700 dark:text-purple-300 font-semibold">
-                      AI Emergency Procedures Assistant
+                      AI Deworming Checkout Assistant
                     </h4>
                   </div>
                 </div>
@@ -553,8 +553,8 @@ ${clientAcknowledged === true
                 {!analysisResult && !isAnalyzing && (
                   <div className="p-4 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md text-center text-gray-500 dark:text-gray-400 text-sm">
                     {!hasAnyInput()
-                      ? "Enter emergency procedures data to enable AI analysis"
-                      : "Click 'Analyze Procedures' to get AI-powered insights"}
+                      ? "Enter Deworming Checkout data to enable AI analysis"
+                      : "Click 'Analyze Deworming Checkout' to get AI-powered insights"}
                   </div>
                 )}
               </>

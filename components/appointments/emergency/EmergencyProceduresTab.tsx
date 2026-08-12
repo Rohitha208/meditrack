@@ -12,6 +12,7 @@ import { EmergencyVisitProcedure } from "@/queries/emergency/procedures/get-emer
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { useGetAppointmentById } from "@/queries/appointment/get-appointment-by-id";
+import { useGetPatientById } from "@/queries/patients/get-patient-by-id";
 import { useUpdateVisit } from "@/queries/visit/update-visit";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
@@ -65,16 +66,19 @@ export default function EmergencyProceduresTab({ patientId, appointmentId, onNex
   const [isChatMode, setIsChatMode] = useState(false);
   const [analysisResult, setAnalysisResult] = useState("");
   const [chatInput, setChatInput] = useState("");
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
+  const { data: patientData } = useGetPatientById(patientId);
   const proceduresContextRef = useRef("");
 
   const buildProceduresContext = () => {
     const checksSummary =
       procedureChecks.length > 0 ? procedureChecks.join(", ") : "None selected";
 
+    const species = patientData?.species ?? appointmentData?.patient?.species ?? "Unknown";
+
     const procedureInfo = `
 Current Emergency Procedures Data:
+- Species: ${species}
 - Procedures Performed: ${checksSummary}
 - Other Procedure Details: ${procedure || "Not specified"}
 - Procedure Time: ${procedureTime ? procedureTime.toISOString() : "Not recorded"}
@@ -89,7 +93,7 @@ ${notes ? `- Notes: ${notes}` : ""}
 
   useEffect(() => {
     proceduresContextRef.current = buildProceduresContext();
-  }, [procedureChecks, procedure, procedureTime, performedBy, fluids, response, notes]);
+  }, [procedureChecks, procedure, procedureTime, performedBy, fluids, response, notes, patientData?.species, appointmentData?.patient?.species]);
 
   const { messages, sendMessage, status, setMessages } = useChat({
     id: `emergency-procedures-${patientId}-${appointmentId}`,
@@ -161,7 +165,7 @@ ${notes ? `- Notes: ${notes}` : ""}
   };
 
   const handleAnalyze = async () => {
-    const species = appointmentData?.patient?.species;
+    const species = patientData?.species ?? appointmentData?.patient?.species;
 
     if (!species) {
       toast({
@@ -213,11 +217,6 @@ ${notes ? `- Notes: ${notes}` : ""}
         description: "Emergency procedures analysis completed",
         variant: "success"
       });
-      toast({
-        title: "Error",
-        description: "Patient species information is required for analysis",
-        variant: "destructive"
-      });
     } catch (error) {
       toast({
         title: "Error",
@@ -238,11 +237,6 @@ ${notes ? `- Notes: ${notes}` : ""}
     await sendMessage({ text: chatInput });
     setChatInput("");
   };
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
 
   const isProcedureComplete = (): boolean => {
     const areAllCheckboxesUnchecked = procedureChecks.length === 0;
@@ -346,104 +340,106 @@ ${notes ? `- Notes: ${notes}` : ""}
   return (
     <Card>
       <CardContent className="p-0">
-      <div className="h-[calc(100vh-23rem)] overflow-y-auto p-6">
-        <div className={isReadOnly ? "pointer-events-none opacity-60" : ""}>
-          <div className="space-y-6">
-          <div className="border-b pb-4">
-            <Label>Common Emergency Procedures</Label>
-            <div className="flex flex-wrap gap-4 mt-2">
-              {commonProcedures.map(proc => (
-                <div key={proc} className="flex items-center space-x-2">
-                  <Checkbox id={proc} checked={procedureChecks.includes(proc)} onCheckedChange={() => handleProcedureCheck(proc)} />
-                  <Label htmlFor={proc}>{proc}</Label>
+        <div className="h-[calc(100vh-20.5rem)] overflow-y-auto p-6">
+          <div className={isReadOnly ? "pointer-events-none opacity-60" : ""}>
+            <div className="space-y-6">
+              <div className="border-b pb-4">
+                <Label>Common Emergency Procedures</Label>
+                <div className="flex flex-wrap gap-4 mt-2">
+                  {commonProcedures.map(proc => (
+                    <div key={proc} className="flex items-center space-x-2">
+                      <Checkbox id={proc} checked={procedureChecks.includes(proc)} onCheckedChange={() => handleProcedureCheck(proc)} />
+                      <Label htmlFor={proc}>{proc}</Label>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="procedure">Other Procedure Performed</Label>
+                  <Input
+                    id="procedure"
+                    placeholder="Describe the emergency procedure"
+                    value={procedure}
+                    onChange={e => setProcedure(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="procedureTime">Procedure Time</Label>
+                  <DatePicker
+                    selected={procedureTime}
+                    onChange={(date) => {
+                      if (date instanceof Date && !isNaN(date.getTime())) {
+                        setProcedureTime(date);
+                      }
+                    }}
+                    showTimeSelect
+                    timeIntervals={5}
+                    showYearDropdown
+                    showMonthDropdown
+                    dropdownMode="select"
+                    dateFormat="dd/MM/yyyy h:mm aa"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="performedBy">Performed By</Label>
+                <Input
+                  id="performedBy"
+                  placeholder="Name of clinician"
+                  value={performedBy}
+                  onChange={e => setPerformedBy(e.target.value)}
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <Label htmlFor="fluidType">Fluids Administered (Type)</Label>
+                  <Input
+                    id="fluidType"
+                    placeholder="e.g. Saline, LRS"
+                    value={fluids.type}
+                    onChange={e => setFluids({ ...fluids, type: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="fluidVolume">Volume (ml)</Label>
+                  <Input
+                    id="fluidVolume"
+                    placeholder="e.g. 500"
+                    value={fluids.volume}
+                    onChange={e => setFluids({ ...fluids, volume: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="fluidRate">Rate (ml/hr)</Label>
+                  <Input
+                    id="fluidRate"
+                    placeholder="e.g. 100"
+                    value={fluids.rate}
+                    onChange={e => setFluids({ ...fluids, rate: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="response">Response to Treatment</Label>
+                <Textarea
+                  id="response"
+                  placeholder="Describe patient response"
+                  value={response}
+                  onChange={e => setResponse(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label htmlFor="procedureNotes">Notes</Label>
+                <Textarea
+                  id="procedureNotes"
+                  placeholder="Additional notes on procedures"
+                  value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                />
+              </div>
             </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="procedure">Other Procedure Performed</Label>
-              <Input
-                id="procedure"
-                placeholder="Describe the emergency procedure"
-                value={procedure}
-                onChange={e => setProcedure(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="procedureTime">Procedure Time</Label>
-              <DatePicker
-                selected={procedureTime}
-                onChange={(date) => {
-                  if (date instanceof Date && !isNaN(date.getTime())) {
-                    setProcedureTime(date);
-                  }
-                }}
-                showTimeSelect
-                timeIntervals={5}
-                showYearDropdown
-                showMonthDropdown
-                dropdownMode="select"
-                dateFormat="dd/MM/yyyy h:mm aa"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            </div>
-          </div>
-          <div>
-            <Label htmlFor="performedBy">Performed By</Label>
-            <Input
-              id="performedBy"
-              placeholder="Name of clinician"
-              value={performedBy}
-              onChange={e => setPerformedBy(e.target.value)}
-            />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <Label htmlFor="fluidType">Fluids Administered (Type)</Label>
-              <Input
-                id="fluidType"
-                placeholder="e.g. Saline, LRS"
-                value={fluids.type}
-                onChange={e => setFluids({ ...fluids, type: e.target.value })}
-              />
-            </div>
-            <div>
-              <Label htmlFor="fluidVolume">Volume (ml)</Label>
-              <Input
-                id="fluidVolume"
-                placeholder="e.g. 500"
-                value={fluids.volume}
-                onChange={e => setFluids({ ...fluids, volume: e.target.value })}
-              />
-            </div>
-            <div>
-              <Label htmlFor="fluidRate">Rate (ml/hr)</Label>
-              <Input
-                id="fluidRate"
-                placeholder="e.g. 100"
-                value={fluids.rate}
-                onChange={e => setFluids({ ...fluids, rate: e.target.value })}
-              />
-            </div>
-          </div>
-          <div>
-            <Label htmlFor="response">Response to Treatment</Label>
-            <Textarea
-              id="response"
-              placeholder="Describe patient response"
-              value={response}
-              onChange={e => setResponse(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label htmlFor="procedureNotes">Notes</Label>
-            <Textarea
-              id="procedureNotes"
-              placeholder="Additional notes on procedures"
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-            />
           </div>
 
           {/* AI Emergency Procedures Analysis */}
@@ -542,7 +538,6 @@ ${notes ? `- Notes: ${notes}` : ""}
                           </div>
                         </div>
                       )}
-                      <div ref={messagesEndRef} />
                     </div>
                   </ScrollArea>
                   <div className="flex-shrink-0 border-t p-2">
@@ -583,10 +578,8 @@ ${notes ? `- Notes: ${notes}` : ""}
               </>
             )}
           </div>
-          </div>
-        </div>
-        </div>
-        <div className="mt-6 flex justify-end mb-4 mx-4">
+
+          <div className="mt-6 flex justify-end mb-4 mx-4">
             <Button
               onClick={handleSubmit}
               disabled={isSubmitting || visitLoading || proceduresLoading || !hasAnyInput() || isReadOnly}
@@ -595,6 +588,7 @@ ${notes ? `- Notes: ${notes}` : ""}
               {proceduresData && proceduresData.length > 0 ? "Update & Next" : "Save & Next"}
             </Button>
           </div>
+        </div>
       </CardContent>
     </Card>
   );

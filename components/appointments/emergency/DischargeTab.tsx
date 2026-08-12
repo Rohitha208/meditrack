@@ -1,4 +1,4 @@
-import { useState,useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { Input } from "@/components/ui/input";
@@ -20,7 +20,7 @@ import { useCreateAppointment } from '@/queries/appointment/create-appointment';
 import { useGetRole } from "@/queries/roles/get-role";
 import { Card, CardContent } from "@/components/ui/card";
 import { useGetEmergencyDischargeByVisitId } from '@/queries/emergency/discharge/get-emergency-discharge-by-visit-id';
-import { useEffect } from 'react';
+import { useGetPatientById } from "@/queries/patients/get-patient-by-id";
 import { useUpdateAppointment } from "@/queries/appointment/update-appointment";
 import { useGetAppointmentById } from "@/queries/appointment/get-appointment-by-id";
 import { useUpdateVisit } from "@/queries/visit/update-visit";
@@ -68,21 +68,25 @@ export default function DischargeTab({ patientId, appointmentId, onClose, extern
   const { clinic, user } = useRootContext();
   const { data: apptTypes = [] } = useGetAppointmentType(1, 100, '', true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-const [isChatMode, setIsChatMode] = useState(false);
-const [analysisResult, setAnalysisResult] = useState("");
-const [chatInput, setChatInput] = useState("");
+  const [isChatMode, setIsChatMode] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState("");
+  const [chatInput, setChatInput] = useState("");
 
-const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const { data: patientData } = useGetPatientById(patientId);
+  const { data: appointmentData } = useGetAppointmentById(appointmentId);
 
-const dischargeContextRef = useRef("");
+  const dischargeContextRef = useRef("");
 
-const buildDischargeContext = () => {
-  const dischargeInfo = `
+  const buildDischargeContext = () => {
+    const species = patientData?.species ?? appointmentData?.patient?.species ?? "Unknown";
+
+    const dischargeInfo = `
 Current Discharge Data:
+- Species: ${species}
 - Discharge Status: ${status || "Not specified"}
 - Discharge Time: ${
-    dischargeTime ? dischargeTime.toISOString() : "Not recorded"
-  }
+      dischargeTime ? dischargeTime.toISOString() : "Not recorded"
+    }
 - Responsible Clinician: ${clinician || "Not specified"}
 
 - Discharge Summary:
@@ -95,49 +99,53 @@ ${instructions || "Not provided"}
 ${followUp || "Not provided"}
 
 - Follow-up Date: ${
-    followUpDate ? followUpDate.toISOString() : "Not scheduled"
-  }
+      followUpDate ? followUpDate.toISOString() : "Not scheduled"
+    }
 
 - Reviewed With Client: ${
-    confirmed === true
-      ? "Yes"
-      : confirmed === false
-      ? "No"
-      : "Not recorded"
-  }
-  `.trim();
+      confirmed === true
+        ? "Yes"
+        : confirmed === false
+        ? "No"
+        : "Not recorded"
+    }
+    `.trim();
 
-  return dischargeInfo;
-};
-useEffect(() => {
-  dischargeContextRef.current = buildDischargeContext();
-}, [
-  status,
-  dischargeTime,
-  clinician,
-  summary,
-  instructions,
-  followUp,
-  followUpDate,
-  confirmed,
-]);
-const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
-  id: `discharge-analysis-${patientId}-${appointmentId}`,
-  transport: new DefaultChatTransport({
-    prepareSendMessagesRequest: ({ id, messages }) => {
-      const dischargeContext = dischargeContextRef.current;
+    return dischargeInfo;
+  };
 
-      return {
-        body: {
-          id,
-          messages,
-          patientId: patientId ?? null,
-          dischargeContext: dischargeContext || undefined,
-        },
-      };
-    },
-  }),
-});
+  useEffect(() => {
+    dischargeContextRef.current = buildDischargeContext();
+  }, [
+    status,
+    dischargeTime,
+    clinician,
+    summary,
+    instructions,
+    followUp,
+    followUpDate,
+    confirmed,
+    patientData?.species,
+    appointmentData?.patient?.species,
+  ]);
+
+  const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
+    id: `discharge-analysis-${patientId}-${appointmentId}`,
+    transport: new DefaultChatTransport({
+      prepareSendMessagesRequest: ({ id, messages }) => {
+        const dischargeContext = dischargeContextRef.current;
+
+        return {
+          body: {
+            id,
+            messages,
+            patientId: patientId ?? null,
+            dischargeContext: dischargeContext || undefined,
+          },
+        };
+      },
+    }),
+  });
 
 
   const { data: rolesData } = useGetRole();
@@ -203,7 +211,6 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
     }
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { data: appointmentData } = useGetAppointmentById(appointmentId);
   const updateVisit = useUpdateVisit();
   const updateAppointmentMutation = useUpdateAppointment({
     onSuccess: () => {
@@ -252,7 +259,7 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
   }, [externalFollowUpDate]);
 
   const handleAnalyze = async () => {
-    const species = appointmentData?.patient?.species;
+    const species = patientData?.species ?? appointmentData?.patient?.species;
   
     if (!species) {
       toast({
@@ -323,10 +330,6 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
     await sendMessage({ text: chatInput });
     setChatInput("");
   };
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-    
 
   const isDischargeComplete = (): boolean => {
     return (
@@ -371,10 +374,7 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
     );
   };
 
-  // Get appointment data
-  const { data: emergencyData } = useGetAppointmentById(appointmentId);
-
-  const isReadOnly = emergencyData?.status === "completed";
+  const isReadOnly = appointmentData?.status === "completed";
   // Using Date objects and ISO strings for consistency
 
   const toLocalDateStartString = (d: Date) => {
@@ -500,101 +500,102 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
   return (
     <Card>
       <CardContent className="p-0">
-      <div className="h-[calc(100vh-26rem)] overflow-y-auto p-6">
-        <div className={isReadOnly ? "pointer-events-none opacity-60" : ""}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="mb-4">
-            <Label htmlFor="status">Discharge Status</Label>
-            <Select value={status} onValueChange={setStatus}>
-              <SelectTrigger id="status">
-                <SelectValue placeholder="Select status" />
-              </SelectTrigger>
-              <SelectContent>
-                {dischargeStatuses.map(opt => (
-                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        <div className="h-[calc(100vh-20.5rem)] overflow-y-auto p-6">
+          <div className={isReadOnly ? "pointer-events-none opacity-60" : ""}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="mb-4">
+                <Label htmlFor="status">Discharge Status</Label>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger id="status">
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {dischargeStatuses.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="mb-4">
+                <Label htmlFor="dischargeTime">Discharge Time</Label>
+                <DatePicker
+                  selected={dischargeTime}
+                  onChange={(date) => date && setDischargeTime(date)}
+                  showTimeSelect
+                  timeIntervals={5}
+                  showYearDropdown
+                  showMonthDropdown
+                  dropdownMode="select"
+                  dateFormat="dd/MM/yyyy h:mm aa"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+            <div className="mb-4">
+              <Label htmlFor="clinician">Responsible Clinician</Label>
+              <Input
+                id="clinician"
+                placeholder="Name of clinician"
+                value={clinician}
+                onChange={e => setClinician(e.target.value)}
+              />
+            </div>
+            <div className="mb-4">
+              <Label htmlFor="dischargeSummary">Discharge Summary</Label>
+              <Textarea
+                id="dischargeSummary"
+                placeholder="Summarize the emergency care provided"
+                value={summary}
+                onChange={e => setSummary(e.target.value)}
+              />
+            </div>
+            <div className="mb-4">
+              <Label htmlFor="instructions">Home Care Instructions</Label>
+              <Textarea
+                id="instructions"
+                placeholder="Discharge instructions for the client"
+                value={instructions}
+                onChange={e => setInstructions(e.target.value)}
+              />
+            </div>
+            <div className="mb-4">
+              <Label htmlFor="followUpDate">Follow-up Date</Label>
+              <DatePicker
+                selected={followUpDate}
+                onChange={(date) => {
+                  setFollowUpDate(date);
+                  if (onExternalFollowUpDateChange) {
+                    onExternalFollowUpDateChange(date ? date.toISOString() : "");
+                  }
+                }}
+                minDate={new Date()}
+                showYearDropdown
+                showMonthDropdown
+                dropdownMode="select"
+                dateFormat="dd/MM/yyyy"
+                placeholderText="dd/mm/yyyy"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div className="mb-4">
+              <Label htmlFor="followUp">Follow-up Instructions</Label>
+              <Textarea
+                id="followUp"
+                placeholder="Follow-up instructions for the client"
+                value={followUp}
+                onChange={e => setFollowUp(e.target.value)}
+              />
+            </div>
+            <div className="flex items-center space-x-2 mb-4">
+              <Checkbox id="confirmed" checked={confirmed} onCheckedChange={val => setConfirmed(val === true)} />
+              <Label htmlFor="confirmed">Reviewed with client / Signature</Label>
+            </div>
           </div>
-          <div className="mb-4">
-            <Label htmlFor="dischargeTime">Discharge Time</Label>
-            <DatePicker
-              selected={dischargeTime}
-              onChange={(date) => date && setDischargeTime(date)}
-              showTimeSelect
-              timeIntervals={5}
-              showYearDropdown
-              showMonthDropdown
-              dropdownMode="select"
-              dateFormat="dd/MM/yyyy h:mm aa"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-        </div>
-        <div className="mb-4">
-          <Label htmlFor="clinician">Responsible Clinician</Label>
-          <Input
-            id="clinician"
-            placeholder="Name of clinician"
-            value={clinician}
-            onChange={e => setClinician(e.target.value)}
-          />
-        </div>
-        <div className="mb-4">
-          <Label htmlFor="dischargeSummary">Discharge Summary</Label>
-          <Textarea
-            id="dischargeSummary"
-            placeholder="Summarize the emergency care provided"
-            value={summary}
-            onChange={e => setSummary(e.target.value)}
-          />
-        </div>
-        <div className="mb-4">
-          <Label htmlFor="instructions">Home Care Instructions</Label>
-          <Textarea
-            id="instructions"
-            placeholder="Discharge instructions for the client"
-            value={instructions}
-            onChange={e => setInstructions(e.target.value)}
-          />
-        </div>
-        <div className="mb-4">
-          <Label htmlFor="followUpDate">Follow-up Date</Label>
-          <DatePicker
-            selected={followUpDate}
-            onChange={(date) => {
-              setFollowUpDate(date);
-              if (onExternalFollowUpDateChange) {
-                onExternalFollowUpDateChange(date ? date.toISOString() : "");
-              }
-            }}
-            minDate={new Date()}
-            showYearDropdown
-            showMonthDropdown
-            dropdownMode="select"
-            dateFormat="dd/MM/yyyy"
-            placeholderText="dd/mm/yyyy"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-        </div>
-        <div className="mb-4">
-          <Label htmlFor="followUp">Follow-up Instructions</Label>
-          <Textarea
-            id="followUp"
-            placeholder="Follow-up instructions for the client"
-            value={followUp}
-            onChange={e => setFollowUp(e.target.value)}
-          />
-        </div>
-        <div className="flex items-center space-x-2 mb-4">
-          <Checkbox id="confirmed" checked={confirmed} onCheckedChange={val => setConfirmed(val === true)} />
-          <Label htmlFor="confirmed">Reviewed with client / Signature</Label>
-        </div>
-        </div>
-        {/* AI Emergency Procedures Analysis */}
-        <div className="mt-8 border-t pt-6">
+
+          {/* AI Emergency Discharge Analysis */}
+          <div className="mt-8 border-t pt-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-md font-semibold">AI Emergency Procedures Analysis</h3>
+              <h3 className="text-md font-semibold">AI Emergency Discharge Analysis</h3>
               {!isChatMode && (
                 <Button
                   type="button"
@@ -614,7 +615,7 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
                       Analyzing...
                     </>
                   ) : (
-                    "Analyze Procedures"
+                    "Analyze Discharge"
                   )}
                 </Button>
               )}
@@ -628,7 +629,7 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
                       <Bot className="h-3 w-3 text-white" />
                     </div>
                     <h4 className="text-sm text-purple-700 dark:text-purple-300 font-semibold">
-                      AI Emergency Procedures Assistant
+                      AI Emergency Discharge Assistant
                     </h4>
                   </div>
                 </div>
@@ -675,7 +676,7 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
                           )}
                         </div>
                       ))}
-                      {status === "submitted" && (
+                      {chatStatus === "submitted" && (
                         <div className="flex gap-2 justify-start">
                           <Avatar className="h-6 w-6 flex-shrink-0">
                             <AvatarFallback className="bg-gradient-to-br from-purple-500 to-pink-500 text-white">
@@ -687,7 +688,6 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
                           </div>
                         </div>
                       )}
-                      <div ref={messagesEndRef} />
                     </div>
                   </ScrollArea>
                   <div className="flex-shrink-0 border-t p-2">
@@ -697,13 +697,13 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
                         onChange={(e) => setChatInput(e.target.value)}
                         placeholder="Ask about the emergency discharge analysis..."
                         className="flex-1 h-9 text-sm"
-                        disabled={status === "submitted" || isReadOnly}
+                        disabled={chatStatus === "submitted" || isReadOnly}
                       />
                       <Button
                         type="submit"
                         disabled={
                           !chatInput.trim() ||
-                          status === "submitted" ||
+                          chatStatus === "submitted" ||
                           isReadOnly
                         }
                         size="icon"
@@ -721,29 +721,30 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
                 {!analysisResult && !isAnalyzing && (
                   <div className="p-4 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md text-center text-gray-500 dark:text-gray-400 text-sm">
                     {!hasAnyInput()
-                      ? "Enter emergency procedures data to enable AI analysis"
-                      : "Click 'Analyze Procedures' to get AI-powered insights"}
+                      ? "Enter emergency discharge data to enable AI analysis"
+                      : "Click 'Analyze Discharge' to get AI-powered insights"}
                   </div>
                 )}
               </>
             )}
           </div>
-      </div>
-        <div className="flex justify-end gap-2 my-4 mx-4">
-          <Button
-            onClick={handleSubmit}
-            disabled={isSubmitting || visitLoading || !hasAnyInput() || isReadOnly}
-            className="ml-2 bg-[#1E3D3D] text-white hover:bg-[#1E3D3D] hover:text-white"
-          >
-            {isSubmitting ? "Saving..." : (isDischargeSaved ? "Update Discharge" : "Save Discharge")}
-          </Button>
-          <Button
-            onClick={handleCheckout}
-            disabled={isSubmitting || visitLoading || !isAnyEmergencyTabCompleted() || isReadOnly}
-            className="ml-2 bg-[#1E3D3D] hover:bg-[#1E3D3D] text-white"
-          >
-            {isSubmitting ? "Processing..." : "Checkout"}
-          </Button>
+
+          <div className="mt-6 flex justify-end gap-2 mb-4 mx-4">
+            <Button
+              onClick={handleSubmit}
+              disabled={isSubmitting || visitLoading || !hasAnyInput() || isReadOnly}
+              className="ml-2 bg-[#1E3D3D] text-white hover:bg-[#1E3D3D] hover:text-white"
+            >
+              {isSubmitting ? "Saving..." : (isDischargeSaved ? "Update Discharge" : "Save Discharge")}
+            </Button>
+            <Button
+              onClick={handleCheckout}
+              disabled={isSubmitting || visitLoading || !isAnyEmergencyTabCompleted() || isReadOnly}
+              className="ml-2 bg-[#1E3D3D] hover:bg-[#1E3D3D] text-white"
+            >
+              {isSubmitting ? "Processing..." : "Checkout"}
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>

@@ -3,12 +3,12 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import DatePicker from "react-datepicker";
-import "react-datepicker/dist/react-datepicker.css";
 import { useGetVisitByAppointmentId } from "@/queries/visit/get-visit-by-appointmentId";
 import { useGetSurgeryDetailByVisitId } from "@/queries/surgery/detail/get-surgery-detail-by-visit-id";
 import { useCreateSurgeryDetail } from "@/queries/surgery/detail/create-surgery-detail";
 import { useUpdateSurgeryDetail } from "@/queries/surgery/detail/update-surgery-detail";
 import { Card, CardContent } from "@/components/ui/card";
+import { useGetPatientById } from "@/queries/patients/get-patient-by-id";
 import { useGetAppointmentById } from "@/queries/appointment/get-appointment-by-id";
 import { useTabCompletion } from "@/context/TabCompletionContext";
 import { useChat } from "@ai-sdk/react";
@@ -44,14 +44,14 @@ export default function SurgeryTab({ patientId, appointmentId, onNext }: Surgery
   const createDetail = useCreateSurgeryDetail()
   const updateDetail = useUpdateSurgeryDetail()
   const { markTabAsCompleted } = useTabCompletion()
+  const { data: patientData } = useGetPatientById(patientId)
   const { data: appointmentData } = useGetAppointmentById(appointmentId)
   const isReadOnly = appointmentData?.status === "completed"
   const [timeError, setTimeError] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-const [isChatMode, setIsChatMode] = useState(false);
-const [analysisResult, setAnalysisResult] = useState("");
-const [chatInput, setChatInput] = useState("");
-const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const [isChatMode, setIsChatMode] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState("");
+  const [chatInput, setChatInput] = useState("");
 
   // Track original values (for detecting changes on Update)
   const [originalValues, setOriginalValues] = useState<any>(null)
@@ -98,7 +98,7 @@ const messagesEndRef = useRef<HTMLDivElement | null>(null);
   }, [surgeryType, surgeon, anesthesiologist, startTime, endTime, anesthesiaProtocol, findings, complications, notes])
 
   const hasChanges = useMemo(() => {
-    if (!detailData || detailData.length === 0 || !originalValues) return true
+    if (!originalValues) return true
     return (
       surgeryType !== originalValues.surgeryType ||
       surgeon !== originalValues.surgeon ||
@@ -111,7 +111,6 @@ const messagesEndRef = useRef<HTMLDivElement | null>(null);
       notes !== originalValues.notes
     )
   }, [
-    detailData,
     originalValues,
     surgeryType,
     surgeon,
@@ -126,152 +125,154 @@ const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const surgeryContextRef = useRef("");
 
-const buildSurgeryContext = () => {
-  const surgeryInfo = `
+  const buildSurgeryContext = () => {
+    const species = patientData?.species ?? appointmentData?.patient?.species ?? "Unknown";
+
+    const surgeryInfo = `
 Current Surgery Details:
+- Species: ${species}
 - Surgery Type: ${surgeryType || "Not specified"}
 - Surgeon: ${surgeon || "Not specified"}
 - Anesthesiologist: ${anesthesiologist || "Not specified"}
 - Surgery Start Time: ${
-    startTime ? new Date(startTime).toISOString() : "Not recorded"
-  }
+      startTime ? new Date(startTime).toISOString() : "Not recorded"
+    }
 - Surgery End Time: ${
-    endTime ? new Date(endTime).toISOString() : "Not recorded"
-  }
+      endTime ? new Date(endTime).toISOString() : "Not recorded"
+    }
 - Anesthesia Protocol: ${anesthesiaProtocol || "Not documented"}
 - Surgical Findings: ${findings || "Not documented"}
 - Complications: ${complications || "None reported"}
 ${notes ? `- Notes: ${notes}` : ""}
-  `.trim();
+    `.trim();
 
-  return surgeryInfo;
-};
+    return surgeryInfo;
+  };
 
-useEffect(() => {
-  surgeryContextRef.current = buildSurgeryContext();
-}, [
-  surgeryType,
-  surgeon,
-  anesthesiologist,
-  startTime,
-  endTime,
-  anesthesiaProtocol,
-  findings,
-  complications,
-  notes,
-]);
+  useEffect(() => {
+    surgeryContextRef.current = buildSurgeryContext();
+  }, [
+    surgeryType,
+    surgeon,
+    anesthesiologist,
+    startTime,
+    endTime,
+    anesthesiaProtocol,
+    findings,
+    complications,
+    notes,
+    patientData?.species,
+    appointmentData?.patient?.species,
+  ]);
 
-const { messages, sendMessage, status, setMessages } = useChat({
-  id: `surgery-details-${patientId}-${appointmentId}`,
-  transport: new DefaultChatTransport({
-    prepareSendMessagesRequest: ({ id, messages }) => {
-      const surgeryContext = surgeryContextRef.current;
+  const { messages, sendMessage, status, setMessages } = useChat({
+    id: `surgery-details-${patientId}-${appointmentId}`,
+    transport: new DefaultChatTransport({
+      prepareSendMessagesRequest: ({ id, messages }) => {
+        const surgeryContext = surgeryContextRef.current;
 
-      return {
-        body: {
-          id,
-          messages,
-          patientId: patientId ?? null,
-          surgeryContext: surgeryContext || undefined,
-        },
-      };
-    },
-  }),
-});
-const hasAnyInput = () =>
-  !!(
-    surgeryType ||
-    surgeon ||
-    anesthesiologist ||
-    startTime ||
-    endTime ||
-    anesthesiaProtocol ||
-    findings ||
-    complications ||
-    notes
-  );
-
-
-const handleAnalyze = async () => {
-  const species = appointmentData?.patient?.species;
-
-  if (!species) {
-    toast({
-      title: "Error",
-      description: "Patient species information is required for analysis",
-      variant: "destructive"
-    });
-    return;
-  }
-
-  if (!hasAnyInput()) {
-    toast({
-      title: "Error",
-      description: "Please enter at least one surgery detail before analyzing",
-      variant: "destructive"
-    });
-    return;
-  }
-
-  setIsAnalyzing(true);
-  try {
-    const analysis = await surgeryDetailsAnalysis(species, {
-      surgeryType,
-      surgeon,
-      anesthesiologist,
-      surgeryStartTime: startTime
-        ? new Date(startTime).toISOString()
-        : "",
-      surgeryEndTime: endTime
-        ? new Date(endTime).toISOString()
-        : "",
-      anesthesiaProtocol,
-      surgicalFindings: findings,
-      complications,
-      notes,
-    });
-
-    setAnalysisResult(analysis);
-    setIsChatMode(true);
-
-    setMessages([
-      {
-        id: "initial-surgery-details-analysis",
-        role: "assistant",
-        parts: [{ type: "text", text: analysis }],
+        return {
+          body: {
+            id,
+            messages,
+            patientId: patientId ?? null,
+            surgeryContext: surgeryContext || undefined,
+          },
+        };
       },
-    ]);
+    }),
+  });
 
-    toast({
-      title: "Success",
-      description: "Surgery details analysis completed",
-      variant: "success"
-    });
-  } catch (error) {
-    toast({
-      title: "Error",
-      description:
-        error instanceof Error
-          ? error.message
-          : "Failed to analyze surgery details",
-      variant: "destructive"
-    });
-  } finally {
-    setIsAnalyzing(false);
-  }
-};
-const handleChatSend = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (!chatInput.trim()) return;
+  const hasAnyInput = () => {
+    return Boolean(
+      surgeryType ||
+      surgeon ||
+      anesthesiologist ||
+      startTime ||
+      endTime ||
+      anesthesiaProtocol ||
+      findings ||
+      complications ||
+      notes
+    );
+  };
 
-  await sendMessage({ text: chatInput });
-  setChatInput("");
-};
-useEffect(() => {
-  messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-}, [messages]);
+  const handleAnalyze = async () => {
+    const species = patientData?.species ?? appointmentData?.patient?.species;
 
+    if (!species) {
+      toast({
+        title: "Error",
+        description: "Patient species information is required for analysis",
+        variant: "destructive"
+      });
+      return;
+    }
 
+    if (!hasAnyInput()) {
+      toast({
+        title: "Error",
+        description: "Please enter at least one surgery detail before analyzing",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsAnalyzing(true);
+    try {
+      const analysis = await surgeryDetailsAnalysis(species, {
+        surgeryType,
+        surgeon,
+        anesthesiologist,
+        surgeryStartTime: startTime
+          ? new Date(startTime).toISOString()
+          : "",
+        surgeryEndTime: endTime
+          ? new Date(endTime).toISOString()
+          : "",
+        anesthesiaProtocol,
+        surgicalFindings: findings,
+        complications,
+        notes,
+      });
+
+      setAnalysisResult(analysis);
+      setIsChatMode(true);
+
+      setMessages([
+        {
+          id: "initial-surgery-details-analysis",
+          role: "assistant",
+          parts: [{ type: "text", text: analysis }],
+        },
+      ]);
+
+      toast({
+        title: "Success",
+        description: "Surgery details analysis completed",
+        variant: "success"
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to analyze surgery details",
+        variant: "destructive"
+      });
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleChatSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+
+    await sendMessage({ text: chatInput });
+    setChatInput("");
+  };
 
   const handleSubmit = async () => {
     if (!visitData?.id) {
@@ -343,261 +344,242 @@ useEffect(() => {
   return (
     <Card>
       <CardContent className="p-0">
-      <div className="h-[calc(100vh-22.5rem)] overflow-y-auto p-6">
-        <div className="space-y-4">
-          <div>
-            <label className="block font-medium mb-1">Surgery Type</label>
-            <Input
-              value={surgeryType}
-              onChange={e => setSurgeryType(e.target.value)}
-              placeholder="e.g., Spay, Neuter, Mass Removal, etc."
-              disabled={isReadOnly}
-            />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="h-[calc(100vh-20.5rem)] overflow-y-auto p-6">
+          <div className="space-y-4">
             <div>
-              <label className="block font-medium mb-1">Surgeon</label>
+              <label className="block font-medium mb-1">Surgery Type</label>
               <Input
-                value={surgeon}
-                onChange={e => setSurgeon(e.target.value)}
-                placeholder="Enter surgeon name"
+                value={surgeryType}
+                onChange={e => setSurgeryType(e.target.value)}
+                placeholder="e.g., Spay, Neuter, Mass Removal, etc."
+                disabled={isReadOnly}
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block font-medium mb-1">Surgeon</label>
+                <Input
+                  value={surgeon}
+                  onChange={e => setSurgeon(e.target.value)}
+                  placeholder="Enter surgeon name"
+                  disabled={isReadOnly}
+                />
+              </div>
+              <div>
+                <label className="block font-medium mb-1">Anesthesiologist</label>
+                <Input
+                  value={anesthesiologist}
+                  onChange={e => setAnesthesiologist(e.target.value)}
+                  placeholder="Enter anesthesiologist name"
+                  disabled={isReadOnly}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block font-medium mb-1">Surgery Start Time</label>
+                <Input
+                  type="datetime-local"
+                  value={startTime}
+                  onChange={e => {
+                    setStartTime(e.target.value);
+                    if (timeError) setTimeError("");
+                  }}
+                  disabled={isReadOnly}
+                />
+              </div>
+              <div>
+                <label className="block font-medium mb-1">Surgery End Time</label>
+                <Input
+                  type="datetime-local"
+                  value={endTime}
+                  onChange={e => {
+                    setEndTime(e.target.value);
+                    if (timeError) setTimeError("");
+                  }}
+                  disabled={isReadOnly}
+                />
+                {timeError && (
+                  <p className="text-red-500 text-sm mt-1">{timeError}</p>
+                )}
+              </div>
+            </div>
+            <div>
+              <label className="block font-medium mb-1">Anesthesia Protocol</label>
+              <Textarea
+                value={anesthesiaProtocol}
+                onChange={e => setAnesthesiaProtocol(e.target.value)}
+                placeholder="Details on drugs, doses, monitoring"
                 disabled={isReadOnly}
               />
             </div>
             <div>
-              <label className="block font-medium mb-1">Anesthesiologist</label>
-              <Input
-                value={anesthesiologist}
-                onChange={e => setAnesthesiologist(e.target.value)}
-                placeholder="Enter anesthesiologist name"
+              <label className="block font-medium mb-1">Surgical Findings / Procedure Details</label>
+              <Textarea
+                value={findings}
+                onChange={e => setFindings(e.target.value)}
+                placeholder="Detailed surgical findings and actions"
+                disabled={isReadOnly}
+              />
+            </div>
+            <div>
+              <label className="block font-medium mb-1">Complications (if any)</label>
+              <Textarea
+                value={complications}
+                onChange={e => setComplications(e.target.value)}
+                placeholder="Complications encountered during surgery"
+                disabled={isReadOnly}
+              />
+            </div>
+            <div>
+              <label className="block font-medium mb-1">Notes</label>
+              <Textarea
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                placeholder="Additional surgical notes"
                 disabled={isReadOnly}
               />
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block font-medium mb-1">Surgery Start Time</label>
-              <DatePicker
-                selected={startTime ? new Date(startTime) : null}
-                onChange={(date) => {
-                  if (date instanceof Date && !isNaN(date.getTime())) {
-                    setStartTime(date.toISOString());
-                  } else {
-                    setStartTime("");
+
+          {/* AI Surgery Details Analysis */}
+          <div className="mt-8 border-t pt-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-md font-semibold">AI Surgery Details Analysis</h3>
+              {!isChatMode && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleAnalyze}
+                  disabled={
+                    isAnalyzing ||
+                    isReadOnly ||
+                    !hasAnyInput()
                   }
-                }}
-                showTimeSelect
-                timeIntervals={5}
-                showYearDropdown
-                showMonthDropdown
-                dropdownMode="select"
-                dateFormat="dd/MM/yyyy h:mm aa"
-                placeholderText="dd/mm/yyyy hh:mm"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                disabled={isReadOnly}
-              />
+                  className="flex items-center gap-2 font-semibold bg-gradient-to-r from-[#1E3D3D] to-[#1E3D3D] text-white shadow-lg hover:from-[#1E3D3D] hover:to-[#1E3D3D] hover:scale-105 transition-transform duration-150 border-0"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  {isAnalyzing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Analyzing...
+                    </>
+                  ) : (
+                    "Analyze Surgery Details"
+                  )}
+                </Button>
+              )}
             </div>
-            <div>
-              <label className="block font-medium mb-1">Surgery End Time</label>
-              <DatePicker
-                selected={endTime ? new Date(endTime) : null}
-                onChange={(date) => {
-                  if (date instanceof Date && !isNaN(date.getTime())) {
-                    setEndTime(date.toISOString());
-                  } else {
-                    setEndTime("");
-                  }
-                }}
-                showTimeSelect
-                timeIntervals={5}
-                showYearDropdown
-                showMonthDropdown
-                dropdownMode="select"
-                dateFormat="dd/MM/yyyy h:mm aa"
-                placeholderText="dd/mm/yyyy hh:mm"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                disabled={isReadOnly}
-              />
-              {timeError && <p className="text-red-500 text-sm">{timeError}</p>}
-            </div>
-          </div>
-          <div>
-            <label className="block font-medium mb-1">Anesthesia Protocol</label>
-            <Textarea
-              value={anesthesiaProtocol}
-              onChange={e => setAnesthesiaProtocol(e.target.value)}
-              placeholder="Describe the anesthesia protocol used"
-              disabled={isReadOnly}
-            />
-          </div>
-          <div>
-            <label className="block font-medium mb-1">Surgical Findings</label>
-            <Textarea
-              value={findings}
-              onChange={e => setFindings(e.target.value)}
-              placeholder="Describe what was found during surgery"
-              disabled={isReadOnly}
-            />
-          </div>
-          <div>
-            <label className="block font-medium mb-1">Complications</label>
-            <Textarea
-              value={complications}
-              onChange={e => setComplications(e.target.value)}
-              placeholder="Note any complications during surgery"
-              disabled={isReadOnly}
-            />
-          </div>
-          <div>
-            <label className="block font-medium mb-1">Notes</label>
-            <Textarea
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              placeholder="Additional surgical notes"
-              disabled={isReadOnly}
-            />
-          </div>
-          
-        </div>
-        {/* AI Emergency Procedures Analysis */}
-                  <div className="mt-8 border-t pt-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-md font-semibold">AI Emergency Procedures Analysis</h3>
-                      {!isChatMode && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={handleAnalyze}
-                          disabled={
-                            isAnalyzing ||
-                            isReadOnly ||
-                            !hasAnyInput()
-                          }
-                          className="flex items-center gap-2 font-semibold bg-gradient-to-r from-[#1E3D3D] to-[#1E3D3D] text-white shadow-lg hover:from-[#1E3D3D] hover:to-[#1E3D3D] hover:scale-105 transition-transform duration-150 border-0"
-                        >
-                          <Sparkles className="w-4 h-4" />
-                          {isAnalyzing ? (
-                            <>
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                              Analyzing...
-                            </>
-                          ) : (
-                            "Analyze Procedures"
+
+            {isChatMode ? (
+              <div className="border border-purple-200/50 dark:border-purple-800/50 rounded-lg bg-gradient-to-br from-white to-purple-50/30 dark:from-slate-900 dark:to-purple-950/20 shadow-sm">
+                <div className="flex-shrink-0 border-b border-purple-200/30 dark:border-purple-800/30 p-2 bg-gradient-to-r from-purple-500/10 to-pink-500/10 dark:from-purple-900/20 dark:to-pink-900/20 rounded-t-lg">
+                  <div className="flex items-center gap-1.5">
+                    <div className="flex items-center justify-center w-5 h-5 rounded-md bg-gradient-to-br from-purple-500 to-pink-500">
+                      <Bot className="h-3 w-3 text-white" />
+                    </div>
+                    <h4 className="text-sm text-purple-700 dark:text-purple-300 font-semibold">
+                      AI Surgery Details Assistant
+                    </h4>
+                  </div>
+                </div>
+                <div className="flex flex-col h-[400px]">
+                  <ScrollArea className="flex-1 p-3">
+                    <div className="space-y-3">
+                      {messages.map((message) => (
+                        <div
+                          key={message.id}
+                          className={cn(
+                            "flex gap-2",
+                            message.role === "user" ? "justify-end" : "justify-start"
                           )}
-                        </Button>
+                        >
+                          {message.role === "assistant" && (
+                            <Avatar className="h-6 w-6 flex-shrink-0">
+                              <AvatarFallback className="bg-gradient-to-br from-purple-500 to-pink-500 text-white">
+                                <Bot className="h-3 w-3" />
+                              </AvatarFallback>
+                            </Avatar>
+                          )}
+                          <div
+                            className={cn(
+                              "rounded-lg px-3 py-2 max-w-[80%]",
+                              message.role === "user"
+                                ? "bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-sm"
+                                : "bg-gradient-to-r from-slate-100 to-blue-50 dark:from-slate-800 dark:to-blue-950/30 border border-slate-200 dark:border-slate-700"
+                            )}
+                          >
+                            <p className="text-sm whitespace-pre-wrap">
+                              {message.parts
+                                ?.map((part) =>
+                                  part.type === "text" ? part.text : ""
+                                )
+                                .join("") || ""}
+                            </p>
+                          </div>
+                          {message.role === "user" && (
+                            <Avatar className="h-6 w-6 flex-shrink-0">
+                              <AvatarFallback className="bg-gradient-to-br from-blue-500 to-cyan-500 text-white">
+                                <User className="h-3 w-3" />
+                              </AvatarFallback>
+                            </Avatar>
+                          )}
+                        </div>
+                      ))}
+                      {status === "submitted" && (
+                        <div className="flex gap-2 justify-start">
+                          <Avatar className="h-6 w-6 flex-shrink-0">
+                            <AvatarFallback className="bg-gradient-to-br from-purple-500 to-pink-500 text-white">
+                              <Bot className="h-3 w-3" />
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="bg-muted rounded-lg px-3 py-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          </div>
+                        </div>
                       )}
                     </div>
-        
-                    {isChatMode ? (
-                      <div className="border border-purple-200/50 dark:border-purple-800/50 rounded-lg bg-gradient-to-br from-white to-purple-50/30 dark:from-slate-900 dark:to-purple-950/20 shadow-sm">
-                        <div className="flex-shrink-0 border-b border-purple-200/30 dark:border-purple-800/30 p-2 bg-gradient-to-r from-purple-500/10 to-pink-500/10 dark:from-purple-900/20 dark:to-pink-900/20 rounded-t-lg">
-                          <div className="flex items-center gap-1.5">
-                            <div className="flex items-center justify-center w-5 h-5 rounded-md bg-gradient-to-br from-purple-500 to-pink-500">
-                              <Bot className="h-3 w-3 text-white" />
-                            </div>
-                            <h4 className="text-sm text-purple-700 dark:text-purple-300 font-semibold">
-                              AI Emergency Procedures Assistant
-                            </h4>
-                          </div>
-                        </div>
-                        <div className="flex flex-col h-[400px]">
-                          <ScrollArea className="flex-1 p-3">
-                            <div className="space-y-3">
-                              {messages.map((message) => (
-                                <div
-                                  key={message.id}
-                                  className={cn(
-                                    "flex gap-2",
-                                    message.role === "user" ? "justify-end" : "justify-start"
-                                  )}
-                                >
-                                  {message.role === "assistant" && (
-                                    <Avatar className="h-6 w-6 flex-shrink-0">
-                                      <AvatarFallback className="bg-gradient-to-br from-purple-500 to-pink-500 text-white">
-                                        <Bot className="h-3 w-3" />
-                                      </AvatarFallback>
-                                    </Avatar>
-                                  )}
-                                  <div
-                                    className={cn(
-                                      "rounded-lg px-3 py-2 max-w-[80%]",
-                                      message.role === "user"
-                                        ? "bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-sm"
-                                        : "bg-gradient-to-r from-slate-100 to-blue-50 dark:from-slate-800 dark:to-blue-950/30 border border-slate-200 dark:border-slate-700"
-                                    )}
-                                  >
-                                    <p className="text-sm whitespace-pre-wrap">
-                                      {message.parts
-                                        ?.map((part) =>
-                                          part.type === "text" ? part.text : ""
-                                        )
-                                        .join("") || ""}
-                                    </p>
-                                  </div>
-                                  {message.role === "user" && (
-                                    <Avatar className="h-6 w-6 flex-shrink-0">
-                                      <AvatarFallback className="bg-gradient-to-br from-blue-500 to-cyan-500 text-white">
-                                        <User className="h-3 w-3" />
-                                      </AvatarFallback>
-                                    </Avatar>
-                                  )}
-                                </div>
-                              ))}
-                              {status === "submitted" && (
-                                <div className="flex gap-2 justify-start">
-                                  <Avatar className="h-6 w-6 flex-shrink-0">
-                                    <AvatarFallback className="bg-gradient-to-br from-purple-500 to-pink-500 text-white">
-                                      <Bot className="h-3 w-3" />
-                                    </AvatarFallback>
-                                  </Avatar>
-                                  <div className="bg-muted rounded-lg px-3 py-2">
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  </div>
-                                </div>
-                              )}
-                              <div ref={messagesEndRef} />
-                            </div>
-                          </ScrollArea>
-                          <div className="flex-shrink-0 border-t p-2">
-                            <form onSubmit={handleChatSend} className="flex gap-2">
-                              <Input
-                                value={chatInput}
-                                onChange={(e) => setChatInput(e.target.value)}
-                                placeholder="Ask about the surgery detail analysis..."
-                                className="flex-1 h-9 text-sm"
-                                disabled={status === "submitted" || isReadOnly}
-                              />
-                              <Button
-                                type="submit"
-                                disabled={
-                                  !chatInput.trim() ||
-                                  status === "submitted" ||
-                                  isReadOnly
-                                }
-                                size="icon"
-                                className="h-9 w-9 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white shadow-sm"
-                              >
-                                <Send className="h-4 w-4" />
-                                <span className="sr-only">Send message</span>
-                              </Button>
-                            </form>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        {!analysisResult && !isAnalyzing && (
-                          <div className="p-4 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md text-center text-gray-500 dark:text-gray-400 text-sm">
-                            {!hasAnyInput()
-                              ? "Enter emergency procedures data to enable AI analysis"
-                              : "Click 'Analyze Procedures' to get AI-powered insights"}
-                          </div>
-                        )}
-                      </>
-                    )}
+                  </ScrollArea>
+                  <div className="flex-shrink-0 border-t p-2">
+                    <form onSubmit={handleChatSend} className="flex gap-2">
+                      <Input
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        placeholder="Ask about the surgery detail analysis..."
+                        className="flex-1 h-9 text-sm"
+                        disabled={status === "submitted" || isReadOnly}
+                      />
+                      <Button
+                        type="submit"
+                        disabled={
+                          !chatInput.trim() ||
+                          status === "submitted" ||
+                          isReadOnly
+                        }
+                        size="icon"
+                        className="h-9 w-9 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white shadow-sm"
+                      >
+                        <Send className="h-4 w-4" />
+                        <span className="sr-only">Send message</span>
+                      </Button>
+                    </form>
                   </div>
-        </div>
-        <div className="mt-6 flex justify-end px-4 pb-4">
+                </div>
+              </div>
+            ) : (
+              <>
+                {!analysisResult && !isAnalyzing && (
+                  <div className="p-4 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md text-center text-gray-500 dark:text-gray-400 text-sm">
+                    {!hasAnyInput()
+                      ? "Enter surgery details data to enable AI analysis"
+                      : "Click 'Analyze Surgery Details' to get AI-powered insights"}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="mt-6 flex justify-end mb-4 mx-4">
             <Button
               onClick={handleSubmit}
               disabled={isSubmitting || isReadOnly || !hasAnyFieldFilled || (detailData && !hasChanges)}
@@ -610,6 +592,7 @@ useEffect(() => {
                 : "Save & Next"}
             </Button>
           </div>
+        </div>
       </CardContent>
     </Card>
   );
