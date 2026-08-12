@@ -9,6 +9,7 @@ import { useGetPrescriptionDetailByVisitId } from "@/queries/PrescriptionDetail/
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { useGetPatientById } from "@/queries/patients/get-patient-by-id";
 import { useUpdateAppointment } from "@/queries/appointment/update-appointment";
 import { useGetAppointmentById } from "@/queries/appointment/get-appointment-by-id";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -51,16 +52,15 @@ export default function DischargeTab({ patientId, appointmentId, onClose, extern
   const [medications, setMedications] = useState("");
   const [followUp, setFollowUp] = useState("");
   const [followUpDate, setFollowUpDate] = useState<string>("");
-  const [followUpUpdate, setFollowUpUpdate] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isChatMode, setIsChatMode] = useState(false);
   const [analysisResult, setAnalysisResult] = useState("");
   const [chatInput, setChatInput] = useState("");
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const { data: visitData } = useGetVisitByAppointmentId(appointmentId);
+  const { data: patientData } = useGetPatientById(patientId);
   const { data: appointmentData } = useGetAppointmentById(appointmentId);
   const isReadOnly = appointmentData?.status === "completed";
   const updateAppointmentMutation = useUpdateAppointment({
@@ -88,14 +88,15 @@ export default function DischargeTab({ patientId, appointmentId, onClose, extern
   const { markTabAsCompleted, isTabCompleted } = useTabCompletion();
   const { data: prescriptionData } = useGetPrescriptionDetailByVisitId(visitData?.id || "", !!visitData?.id);
   const today = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
+
   const areAnyVisitTabsCompleted = (): boolean => {
     if (!visitData) return false;
     const visit = visitData as unknown as ExtendedVisitData;
-    return (
-      visit.isSurgeryPostOpCompleted ||
-      visit.isSurgeryPrescriptionCompleted ||
+    return Boolean(
+      visit.isSurgeryPreOpCompleted ||
       visit.isSurgeryDetailsCompleted ||
-      visit.isSurgeryPreOpCompleted
+      visit.isSurgeryPostOpCompleted ||
+      visit.isSurgeryPrescriptionCompleted
     );
   };
 
@@ -127,10 +128,9 @@ export default function DischargeTab({ patientId, appointmentId, onClose, extern
       homeCare.trim() !== "" ||
       medications.trim() !== "" ||
       followUp.trim() !== "" ||
-      followUpUpdate.trim() !== "" ||
       followUpDate.trim() !== "";
     return nonDefaultSelects || hasTexts;
-  }, [status, dischargeTime, homeCare, medications, followUp, followUpUpdate, followUpDate]);
+  }, [status, dischargeTime, homeCare, medications, followUp, followUpDate]);
 
   useEffect(() => {
     if (dischargeData && dischargeData.length > 0) {
@@ -140,9 +140,10 @@ export default function DischargeTab({ patientId, appointmentId, onClose, extern
       setHomeCare(data.homeCareInstructions || "");
       setMedications(data.medicationsToGoHome || "");
       setFollowUp(data.followUpInstructions || "");
-      const apiFollowUpDate = (data as any)?.followupDate as string | undefined;
-      if (apiFollowUpDate) {
-        setFollowUpDate(apiFollowUpDate);
+      const apiFollowUpDate = data.followupDate ? new Date(data.followupDate).toISOString() : "";
+      setFollowUpDate(apiFollowUpDate);
+      if (apiFollowUpDate && onExternalFollowUpDateChange) {
+        onExternalFollowUpDateChange(apiFollowUpDate);
       }
     }
   }, [dischargeData]);
@@ -156,15 +157,18 @@ export default function DischargeTab({ patientId, appointmentId, onClose, extern
   const surgeryDischargeContextRef = useRef("");
 
   const buildSurgeryDischargeContext = () => {
+    const species = patientData?.species ?? appointmentData?.patient?.species ?? "Unknown";
+
     const dischargeInfo = `
 Current Surgery Discharge Data:
-- Discharge Status: ${dischargeStatus || "Not specified"}
-- Discharge Datetime: ${dischargeTime ? dischargeTime.toString() : "Not recorded"}
+- Species: ${species}
+- Discharge Status: ${status || "Not specified"}
+- Discharge Date/Time: ${dischargeTime ? new Date(dischargeTime).toISOString() : "Not recorded"}
 - Home Care Instructions: ${homeCare || "Not provided"}
 - Medications To Go Home: ${medications || "Not provided"}
 - Follow-up Instructions: ${followUp || "Not provided"}
 - Follow-up Date: ${followUpDate ? followUpDate.toString() : "Not scheduled"}
-`.trim();
+    `.trim();
 
     return dischargeInfo;
   };
@@ -172,12 +176,14 @@ Current Surgery Discharge Data:
   useEffect(() => {
     surgeryDischargeContextRef.current = buildSurgeryDischargeContext();
   }, [
-    dischargeStatus,
+    status,
     dischargeTime,
     homeCare,
     medications,
     followUp,
     followUpDate,
+    patientData?.species,
+    appointmentData?.patient?.species,
   ]);
 
   const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
@@ -198,19 +204,18 @@ Current Surgery Discharge Data:
     }),
   });
   const hasAnyInput = () => {
-    return (
+    return Boolean(
       status?.trim() ||
       dischargeTime?.trim() ||
       homeCare?.trim() ||
       medications?.trim() ||
       followUp?.trim() ||
-      followUpUpdate?.trim() ||
       followUpDate
     );
   };
 
   const handleAnalyze = async () => {
-    const species = appointmentData?.patient?.species;
+    const species = patientData?.species ?? appointmentData?.patient?.species;
 
     if (!species) {
       toast({
@@ -235,7 +240,7 @@ Current Surgery Discharge Data:
     try {
       const analysis = await surgeryDischargeAnalysis(species, {
         dischargeStatus: status,
-        dischargeDatetime: dischargeTime ? dischargeTime.toString() : undefined,
+        dischargeDatetime: dischargeTime ? new Date(dischargeTime).toISOString() : undefined,
         homeCareInstructions: homeCare,
         medicationsToGoHome: medications,
         followUpInstructions: followUp,
@@ -276,11 +281,6 @@ Current Surgery Discharge Data:
     await sendMessage({ text: chatInput });
     setChatInput("");
   };
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
 
   const handleSubmit = async () => {
     if (!visitData?.id) {
@@ -343,17 +343,34 @@ Current Surgery Discharge Data:
     if (!appointmentData) {
       toast({
         title: "Error",
-        description: "No appointment data found",
+        description: "Appointment data not loaded yet",
         variant: "destructive"
       });
       return;
     }
     setIsProcessing(true);
     try {
-      // First save the discharge details
-      await handleSubmit();
+      if (hasAnyFieldFilled) {
+        const payload = {
+          visitId: visitData.id,
+          dischargeStatus: status,
+          dischargeDatetime: dischargeTime ? new Date(dischargeTime).toISOString() : undefined,
+          homeCareInstructions: homeCare,
+          medicationsToGoHome: medications,
+          followUpInstructions: followUp,
+          followupDate: followUpDate ? new Date(followUpDate).toISOString() : undefined,
+          isCompleted: true,
+        };
 
-      // Update appointment status to completed
+        if (dischargeData && dischargeData.length > 0) {
+          await updateDischarge.mutateAsync({ id: dischargeData[0].id, ...payload });
+        } else {
+          await createDischarge.mutateAsync(payload);
+        }
+        await refetch();
+        markTabAsCompleted("surgery-discharge");
+      }
+
       await updateAppointmentMutation.mutateAsync({
         id: appointmentId,
         data: {
@@ -370,7 +387,7 @@ Current Surgery Discharge Data:
   return (
     <Card>
       <CardContent className="p-0">
-        <div className="h-[calc(100vh-22.5rem)] overflow-y-auto p-6">
+        <div className="h-[calc(100vh-20.5rem)] overflow-y-auto p-6">
           <div className="space-y-4">
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -448,7 +465,7 @@ Current Surgery Discharge Data:
               <Textarea
                 value={homeCare}
                 onChange={e => setHomeCare(e.target.value)}
-                placeholder="Detailed instructions for home care"
+                placeholder="List post-surgery home care instructions, restrictions, etc."
                 disabled={isReadOnly}
               />
             </div>
@@ -457,7 +474,7 @@ Current Surgery Discharge Data:
               <Textarea
                 value={medications}
                 onChange={e => setMedications(e.target.value)}
-                placeholder="List medications, dosages, and administration instructions"
+                placeholder="List take-home medications, dosages, frequency"
                 disabled={isReadOnly}
               />
             </div>
@@ -466,16 +483,7 @@ Current Surgery Discharge Data:
               <Textarea
                 value={followUp}
                 onChange={e => setFollowUp(e.target.value)}
-                placeholder="Follow-up appointment details and instructions"
-                disabled={isReadOnly}
-              />
-            </div>
-            <div>
-              <label className="block font-medium mb-1">Follow-up Update</label>
-              <Textarea
-                value={followUpUpdate}
-                onChange={e => setFollowUpUpdate(e.target.value)}
-                placeholder="Follow-up appointment details and instructions"
+                placeholder="Follow-up instructions for the client"
                 disabled={isReadOnly}
               />
             </div>
@@ -565,7 +573,7 @@ Current Surgery Discharge Data:
                           )}
                         </div>
                       ))}
-                      {status === "submitted" && (
+                      {chatStatus === "submitted" && (
                         <div className="flex gap-2 justify-start">
                           <Avatar className="h-6 w-6 flex-shrink-0">
                             <AvatarFallback className="bg-gradient-to-br from-purple-500 to-pink-500 text-white">
@@ -577,7 +585,6 @@ Current Surgery Discharge Data:
                           </div>
                         </div>
                       )}
-                      <div ref={messagesEndRef} />
                     </div>
                   </ScrollArea>
                   <div className="flex-shrink-0 border-t p-2">
@@ -587,13 +594,13 @@ Current Surgery Discharge Data:
                         onChange={(e) => setChatInput(e.target.value)}
                         placeholder="Ask about the surgery discharge analysis..."
                         className="flex-1 h-9 text-sm"
-                        disabled={status === "submitted" || isReadOnly}
+                        disabled={chatStatus === "submitted" || isReadOnly}
                       />
                       <Button
                         type="submit"
                         disabled={
                           !chatInput.trim() ||
-                          status === "submitted" ||
+                          chatStatus === "submitted" ||
                           isReadOnly
                         }
                         size="icon"
@@ -618,26 +625,27 @@ Current Surgery Discharge Data:
               </>
             )}
           </div>
-        </div>
-        <div className="mt-6 flex justify-end gap-2 px-4 pb-4">
-          <Button
-            onClick={handleSubmit}
-            disabled={isSubmitting || isProcessing || isReadOnly || !hasAnyFieldFilled}
-            className="bg-[#1E3D3D] text-white px-4 py-2 rounded enabled:hover:bg-[#152B2B] disabled:opacity-50"
-          >
-            {isSubmitting
-              ? "Saving..."
-              : dischargeData && dischargeData.length > 0 ? "Update" : "Save"}
-          </Button>
-          <Button
-            onClick={handleCheckout}
-            disabled={isSubmitting || isProcessing || isReadOnly || isAppointmentCompleted || (!areAnyVisitTabsCompleted() && !areAnySurgeryTabsCompletedInContext() && !isPrescriptionCompletedViaVisitData() && !hasPrescriptionData())}
-            className="ml-2 bg-[#1E3D3D] hover:bg-[#152B2B] text-white"
-          >
-            Checkout
-          </Button>
+
+          <div className="mt-6 flex justify-end gap-2 mb-4 mx-4">
+            <Button
+              onClick={handleSubmit}
+              disabled={isSubmitting || isProcessing || isReadOnly || !hasAnyFieldFilled}
+              className="bg-[#1E3D3D] text-white px-4 py-2 rounded enabled:hover:bg-[#152B2B] disabled:opacity-50"
+            >
+              {isSubmitting
+                ? "Saving..."
+                : dischargeData && dischargeData.length > 0 ? "Update" : "Save"}
+            </Button>
+            <Button
+              onClick={handleCheckout}
+              disabled={isSubmitting || isProcessing || isReadOnly || isAppointmentCompleted || (!areAnyVisitTabsCompleted() && !areAnySurgeryTabsCompletedInContext() && !isPrescriptionCompletedViaVisitData() && !hasPrescriptionData())}
+              className="ml-2 bg-[#1E3D3D] hover:bg-[#152B2B] text-white"
+            >
+              Checkout
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>
   );
-} 
+}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo , useRef} from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { useGetSurgeryPreOpByVisitId } from "@/queries/surgery/preop/get-surgery
 import { useCreateSurgeryPreOp } from "@/queries/surgery/preop/create-surgery-preop";
 import { useUpdateSurgeryPreOp } from "@/queries/surgery/preop/update-surgery-preop";
 import { Card, CardContent } from "@/components/ui/card";
+import { useGetPatientById } from "@/queries/patients/get-patient-by-id";
 import { useGetAppointmentById } from "@/queries/appointment/get-appointment-by-id";
 import { useTabCompletion } from "@/context/TabCompletionContext";
 import { useChat } from "@ai-sdk/react";
@@ -44,14 +45,13 @@ export default function PreOpTab({ patientId, appointmentId, onNext, setWeightGr
   const createPreOp = useCreateSurgeryPreOp();
   const updatePreOp = useUpdateSurgeryPreOp();
   const { markTabAsCompleted } = useTabCompletion();
+  const { data: patientData } = useGetPatientById(patientId);
   const { data: appointmentData } = useGetAppointmentById(appointmentId);
   const isReadOnly = appointmentData?.status === "completed";
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-const [isChatMode, setIsChatMode] = useState(false);
-const [analysisResult, setAnalysisResult] = useState("");
-const [chatInput, setChatInput] = useState("");
-
-const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const [isChatMode, setIsChatMode] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState("");
+  const [chatInput, setChatInput] = useState("");
 
   const hasAnyFieldFilled = useMemo(() => {
     const hasWeight = String(weight).trim() !== "";
@@ -80,144 +80,140 @@ const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const preOpContextRef = useRef("");
 
-const buildPreOpContext = () => {
-  const preOpInfo = `
+  const buildPreOpContext = () => {
+    const species = patientData?.species ?? appointmentData?.patient?.species ?? "Unknown";
+
+    const preOpInfo = `
 Current Surgery Pre-Op Data:
+- Species: ${species}
 - Weight (kg): ${
-    weight !== undefined && weight !== null ? weight : "Not recorded"
-  }
+      weight !== undefined && weight !== null ? weight : "Not recorded"
+    }
 - Pre-Op Bloodwork Results: ${bloodwork || "Not provided"}
 - Anesthesia Risk Assessment: ${riskLevel || "Not provided"}
 - Fasting Status: ${fasting || "Not recorded"}
 - Pre-Op Medications: ${medications || "Not provided"}
 ${notes ? `- Notes: ${notes}` : ""}
-  `.trim();
+    `.trim();
 
-  return preOpInfo;
-};
+    return preOpInfo;
+  };
 
+  useEffect(() => {
+    preOpContextRef.current = buildPreOpContext();
+  }, [
+    weight,
+    bloodwork,
+    riskLevel,
+    fasting,
+    medications,
+    notes,
+    patientData?.species,
+    appointmentData?.patient?.species,
+  ]);
 
-useEffect(() => {
-  preOpContextRef.current = buildPreOpContext();
-}, [
-  weight,
-  bloodwork,
-  riskLevel,
-  fasting,
-  medications,
-  notes,
-]);
+  const { messages, sendMessage, status, setMessages } = useChat({
+    id: `surgery-preop-${patientId}-${appointmentId}`,
+    transport: new DefaultChatTransport({
+      prepareSendMessagesRequest: ({ id, messages }) => {
+        const preOpContext = preOpContextRef.current;
 
-
-const { messages, sendMessage, status, setMessages } = useChat({
-  id: `surgery-preop-${patientId}-${appointmentId}`,
-  transport: new DefaultChatTransport({
-    prepareSendMessagesRequest: ({ id, messages }) => {
-      const preOpContext = preOpContextRef.current;
-
-      return {
-        body: {
-          id,
-          messages,
-          patientId: patientId ?? null,
-          preOpContext: preOpContext || undefined,
-        },
-      };
-    },
-  }),
-});
-const hasAnyInput = () => {
-  return Boolean(
-    weight ||
-      bloodwork ||
-      riskLevel ||
-      fasting ||
-      medications ||
-      notes
-  );
-};
-
-
-const handleAnalyze = async () => {
-  const species = appointmentData?.patient?.species;
-
-  if (!species) {
-    toast({
-      title: "Error",
-      description: "Patient species information is required for analysis",
-      variant: "destructive"
-    });
-    return;
-  }
-
-  if (!hasAnyInput()) {
-    toast({
-      title: "Error",
-      description: "Please enter at least one pre-op detail before analyzing",
-      variant: "destructive"
-    });
-    return;
-  }
-
-  setIsAnalyzing(true);
-
-  try {
-    const analysis = await surgeryPreOpAnalysis(species, {
-      weightKg:
-        weight !== undefined && weight !== null
-          ? Number(weight)
-          : undefined,
-      preOpBloodworkResults: bloodwork,
-      anesthesiaRiskAssessment: riskLevel,
-      fastingStatus: fasting,
-      preOpMedications: medications,
-      notes,
-    });
-
-    setAnalysisResult(analysis);
-    setIsChatMode(true);
-
-    setMessages([
-      {
-        id: "initial-surgery-preop-analysis",
-        role: "assistant",
-        parts: [{ type: "text", text: analysis }],
+        return {
+          body: {
+            id,
+            messages,
+            patientId: patientId ?? null,
+            preOpContext: preOpContext || undefined,
+          },
+        };
       },
-    ]);
+    }),
+  });
 
-    toast({
-      title: "Success",
-      description: "Surgery pre-op analysis completed",
-      variant: "success"
-    });
-  } catch (error) {
-    toast({
-      title: "Error",
-      description:
-        error instanceof Error
-          ? error.message
-          : "Failed to analyze surgery pre-op",
-      variant: "destructive"
-    });
-  } finally {
-    setIsAnalyzing(false);
-  }
-};
+  const hasAnyInput = () => {
+    return Boolean(
+      weight ||
+        bloodwork ||
+        riskLevel ||
+        fasting ||
+        medications ||
+        notes
+    );
+  };
 
+  const handleAnalyze = async () => {
+    const species = patientData?.species ?? appointmentData?.patient?.species;
 
-const handleChatSend = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (!chatInput.trim()) return;
+    if (!species) {
+      toast({
+        title: "Error",
+        description: "Patient species information is required for analysis",
+        variant: "destructive"
+      });
+      return;
+    }
 
-  await sendMessage({ text: chatInput });
-  setChatInput("");
-};
+    if (!hasAnyInput()) {
+      toast({
+        title: "Error",
+        description: "Please enter at least one pre-op detail before analyzing",
+        variant: "destructive"
+      });
+      return;
+    }
 
+    setIsAnalyzing(true);
 
-useEffect(() => {
-  messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-}, [messages]);
+    try {
+      const analysis = await surgeryPreOpAnalysis(species, {
+        weightKg:
+          weight !== undefined && weight !== null
+            ? Number(weight)
+            : undefined,
+        preOpBloodworkResults: bloodwork,
+        anesthesiaRiskAssessment: riskLevel,
+        fastingStatus: fasting,
+        preOpMedications: medications,
+        notes,
+      });
 
+      setAnalysisResult(analysis);
+      setIsChatMode(true);
+
+      setMessages([
+        {
+          id: "initial-surgery-preop-analysis",
+          role: "assistant",
+          parts: [{ type: "text", text: analysis }],
+        },
+      ]);
+
+      toast({
+        title: "Success",
+        description: "Surgery pre-op analysis completed",
+        variant: "success"
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to analyze surgery pre-op",
+        variant: "destructive"
+      });
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleChatSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+
+    await sendMessage({ text: chatInput });
+    setChatInput("");
+  };
 
   const handleSubmit = async () => {
 
@@ -274,92 +270,92 @@ useEffect(() => {
   return (
     <Card>
       <CardContent className="p-0">
-      <div className="h-[calc(100vh-22.5rem)] overflow-y-auto p-6">
-        <div className="space-y-4">
-          <div>
-            <label className="block font-medium mb-1">Weight (kg)</label>
-            <div className="flex items-center gap-2">
-              <Input
-                type="number"
-                step="0.01"
-                value={weight}
-                onChange={e => setWeight(e.target.value)}
-                placeholder="Enter weight in kg"
+        <div className="h-[calc(100vh-20.5rem)] overflow-y-auto p-6">
+          <div className="space-y-4">
+            <div>
+              <label className="block font-medium mb-1">Weight (kg)</label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={weight}
+                  onChange={e => setWeight(e.target.value)}
+                  placeholder="Enter weight in kg"
+                  disabled={isReadOnly}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={() => setWeightGraphOpen?.(true)}
+                  title="View weight history"
+                  disabled={isReadOnly}
+                >
+                  <TrendingUp className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            <div>
+              <label className="block font-medium mb-1">Pre-op Bloodwork Results</label>
+              <Textarea
+                value={bloodwork}
+                onChange={e => setBloodwork(e.target.value)}
+                placeholder="Enter bloodwork results and any abnormalities"
                 disabled={isReadOnly}
-                className="flex-1"
               />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={() => setWeightGraphOpen?.(true)}
-                title="View weight history"
-                disabled={isReadOnly}
-              >
-                <TrendingUp className="h-4 w-4" />
-              </Button>
             </div>
-          </div>
-          <div>
-            <label className="block font-medium mb-1">Pre-op Bloodwork Results</label>
-            <Textarea
-              value={bloodwork}
-              onChange={e => setBloodwork(e.target.value)}
-              placeholder="Enter bloodwork results and any abnormalities"
-              disabled={isReadOnly}
-            />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block font-medium mb-1">Anesthesia Risk Assessment</label>
-              <select
-                className="border rounded px-2 py-1 w-full"
-                value={riskLevel}
-                onChange={e => setRiskLevel(e.target.value)}
-                disabled={isReadOnly}
-              >
-                <option value="" disabled>Select Risk Assessment</option>
-                {riskLevels.map(level => (
-                  <option key={level} value={level}>{level}</option>
-                ))}
-              </select>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block font-medium mb-1">Anesthesia Risk Assessment</label>
+                <select
+                  className="border rounded px-2 py-1 w-full"
+                  value={riskLevel}
+                  onChange={e => setRiskLevel(e.target.value)}
+                  disabled={isReadOnly}
+                >
+                  <option value="" disabled>Select Risk Assessment</option>
+                  {riskLevels.map(level => (
+                    <option key={level} value={level}>{level}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium mb-1">Fasting Status</label>
+                <select
+                  className="border rounded px-2 py-1 w-full"
+                  value={fasting}
+                  onChange={e => setFasting(e.target.value)}
+                  disabled={isReadOnly}
+                >
+                  <option value="" disabled>Select Fasting Status</option>
+                  {fastingStatus.map(status => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div>
-              <label className="block font-medium mb-1">Fasting Status</label>
-              <select
-                className="border rounded px-2 py-1 w-full"
-                value={fasting}
-                onChange={e => setFasting(e.target.value)}
+              <label className="block font-medium mb-1">Pre-op Medications</label>
+              <Textarea
+                value={medications}
+                onChange={e => setMedications(e.target.value)}
+                placeholder="List any pre-operative medications given"
                 disabled={isReadOnly}
-              >
-                <option value="" disabled>Select Fasting Status</option>
-                {fastingStatus.map(status => (
-                  <option key={status} value={status}>{status}</option>
-                ))}
-              </select>
+              />
+            </div>
+            <div>
+              <label className="block font-medium mb-1">Notes</label>
+              <Textarea
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                placeholder="Additional pre-operative notes"
+                disabled={isReadOnly}
+              />
             </div>
           </div>
-          <div>
-            <label className="block font-medium mb-1">Pre-op Medications</label>
-            <Textarea
-              value={medications}
-              onChange={e => setMedications(e.target.value)}
-              placeholder="List any pre-operative medications given"
-              disabled={isReadOnly}
-            />
-          </div>
-          <div>
-            <label className="block font-medium mb-1">Notes</label>
-            <Textarea
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              placeholder="Additional pre-operative notes"
-              disabled={isReadOnly}
-            />
-          </div>
-        
-        </div>
-       {/* AI Surgery Pre-Op Analysis */}
+
+          {/* AI Surgery Pre-Op Analysis */}
           <div className="mt-8 border-t pt-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-md font-semibold">AI Surgery Pre-Op Analysis</h3>
@@ -455,7 +451,6 @@ useEffect(() => {
                           </div>
                         </div>
                       )}
-                      <div ref={messagesEndRef} />
                     </div>
                   </ScrollArea>
                   <div className="flex-shrink-0 border-t p-2">
@@ -496,8 +491,8 @@ useEffect(() => {
               </>
             )}
           </div>
-        </div>
-        <div className="mt-6 flex justify-end my-4 mx-4">
+
+          <div className="mt-6 flex justify-end mb-4 mx-4">
             <Button
               onClick={handleSubmit}
               disabled={isSubmitting || isReadOnly || !hasAnyFieldFilled}
@@ -510,6 +505,7 @@ useEffect(() => {
                   : "Save & Next"}
             </Button>
           </div>
+        </div>
       </CardContent>
     </Card>
   );
