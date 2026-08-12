@@ -797,14 +797,25 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
 
   // Handler for AI formatting of reason
   const handleAIFormatReason = async () => {
-    const currentReason = form.getValues("reason");
-    if (!currentReason) return;
+    const currentReason = form.getValues("reason")?.trim();
+    if (!currentReason) {
+      toast({
+        title: "Text required",
+        description: "Please type or dictate a reason before using AI Format.",
+        variant: "destructive"
+      });
+      return;
+    }
     setIsReasonFormatting(true);
     try {
       const formatted = await reasonFormatting(currentReason);
       form.setValue("reason", formatted);
+      toast({
+        title: "Success",
+        description: "Reason formatted successfully.",
+        variant: "success"
+      });
     } catch (e) {
-      // Optionally show error toast
       toast({ title: "AI Formatting Error", description: "Failed to format reason.", variant: "destructive" });
     } finally {
       setIsReasonFormatting(false);
@@ -813,12 +824,24 @@ function NewAppointment({ isOpen, onClose, patientId, preSelectedClinic, preSele
 
   // Handler for AI formatting of notes
   const handleAIFormatNotes = async () => {
-    const currentNotes = form.getValues("notes");
-    if (!currentNotes) return;
+    const currentNotes = form.getValues("notes")?.trim();
+    if (!currentNotes) {
+      toast({
+        title: "Text required",
+        description: "Please type or dictate notes before using AI Format.",
+        variant: "destructive"
+      });
+      return;
+    }
     setIsNotesFormatting(true);
     try {
       const formatted = await notesFormatting(currentNotes);
       form.setValue("notes", formatted);
+      toast({
+        title: "Success",
+        description: "Notes formatted successfully.",
+        variant: "success"
+      });
     } catch (e) {
       toast({ title: "AI Formatting Error", description: "Failed to format notes.", variant: "destructive" });
     } finally {

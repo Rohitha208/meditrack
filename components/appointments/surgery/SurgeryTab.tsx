@@ -459,10 +459,10 @@ useEffect(() => {
           </div>
           
         </div>
-        {/* AI Emergency Procedures Analysis */}
+        {/* AI Surgery Details Analysis */}
                   <div className="mt-8 border-t pt-6">
                     <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-md font-semibold">AI Emergency Procedures Analysis</h3>
+                      <h3 className="text-md font-semibold">AI Surgery Details Analysis</h3>
                       {!isChatMode && (
                         <Button
                           type="button"
@@ -482,7 +482,7 @@ useEffect(() => {
                               Analyzing...
                             </>
                           ) : (
-                            "Analyze Procedures"
+                            "Analyze Surgery Details"
                           )}
                         </Button>
                       )}
@@ -496,7 +496,7 @@ useEffect(() => {
                               <Bot className="h-3 w-3 text-white" />
                             </div>
                             <h4 className="text-sm text-purple-700 dark:text-purple-300 font-semibold">
-                              AI Emergency Procedures Assistant
+                              AI Surgery Details Assistant
                             </h4>
                           </div>
                         </div>
@@ -589,8 +589,8 @@ useEffect(() => {
                         {!analysisResult && !isAnalyzing && (
                           <div className="p-4 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md text-center text-gray-500 dark:text-gray-400 text-sm">
                             {!hasAnyInput()
-                              ? "Enter emergency procedures data to enable AI analysis"
-                              : "Click 'Analyze Procedures' to get AI-powered insights"}
+                              ? "Enter surgery details data to enable AI analysis"
+                              : "Click 'Analyze Surgery Details' to get AI-powered insights"}
                           </div>
                         )}
                       </>

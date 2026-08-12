@@ -591,10 +591,10 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
           <Label htmlFor="confirmed">Reviewed with client / Signature</Label>
         </div>
         </div>
-        {/* AI Emergency Procedures Analysis */}
+        {/* AI Emergency Discharge Analysis */}
         <div className="mt-8 border-t pt-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-md font-semibold">AI Emergency Procedures Analysis</h3>
+              <h3 className="text-md font-semibold">AI Emergency Discharge Analysis</h3>
               {!isChatMode && (
                 <Button
                   type="button"
@@ -614,7 +614,7 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
                       Analyzing...
                     </>
                   ) : (
-                    "Analyze Procedures"
+                    "Analyze Discharge"
                   )}
                 </Button>
               )}
@@ -628,7 +628,7 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
                       <Bot className="h-3 w-3 text-white" />
                     </div>
                     <h4 className="text-sm text-purple-700 dark:text-purple-300 font-semibold">
-                      AI Emergency Procedures Assistant
+                      AI Emergency Discharge Assistant
                     </h4>
                   </div>
                 </div>
@@ -721,8 +721,8 @@ const { messages, sendMessage, status: chatStatus, setMessages } = useChat({
                 {!analysisResult && !isAnalyzing && (
                   <div className="p-4 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md text-center text-gray-500 dark:text-gray-400 text-sm">
                     {!hasAnyInput()
-                      ? "Enter emergency procedures data to enable AI analysis"
-                      : "Click 'Analyze Procedures' to get AI-powered insights"}
+                      ? "Enter emergency discharge data to enable AI analysis"
+                      : "Click 'Analyze Discharge' to get AI-powered insights"}
                   </div>
                 )}
               </>

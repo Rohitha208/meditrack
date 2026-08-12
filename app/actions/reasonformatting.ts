@@ -1,6 +1,6 @@
 'use server';
 import { aiFormat, AIProvider, getDefaultAIProvider } from "@/services/AI/aiFormatting";
- 
+
 export async function reasonFormatting(reason: string) {
     try {
         const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
@@ -42,7 +42,7 @@ export async function vitalsAnalysis(species: string, vitalsData: {
 }) {
     try {
         const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
-       
+        
         // Build a structured prompt with the vitals data
         const vitalsInfo = `
 Species: ${species}
@@ -77,11 +77,10 @@ Observations: Elevated heart rate detected, may warrant monitoring."
 Generate ONLY the technical data comparison report. Do not provide medical advice or recommendations for treatment.`,
             userPrompt: vitalsInfo,
         });
-       
-        return analysis;
+             return analysis;
     } catch (error) {
-        console.error(error);
-        throw new Error('Failed to analyze vitals. Please try again.');
+        console.error('Error in vitalsAnalysis:', error);
+        throw new Error(error instanceof Error ? error.message : 'Failed to analyze vitals. Please try again.');
     }
 }
  
@@ -91,7 +90,7 @@ export async function complaintsAnalysis(species: string, symptomsData: {
 }) {
     try {
         const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
-       
+        
         // Build a structured prompt with the complaints data
         const complaintsInfo = `
 Species: ${species}
@@ -134,8 +133,8 @@ Generate ONLY the technical symptom pattern analysis. Do not provide diagnostic 
        
         return analysis;
     } catch (error) {
-        console.error(error);
-        throw new Error('Failed to analyze complaints. Please try again.');
+        console.error('Error in complaintsAnalysis:', error);
+        throw new Error(error instanceof Error ? error.message : 'Failed to analyze complaints. Please try again.');
     }
 }
  
@@ -161,7 +160,8 @@ export async function prescriptionAnalysis(species: string, prescriptionData: {
     ).join("\n");
     const prescriptionInfo = `
 Species: ${species}
-Prescribed Medicines:\n${medicinesList}
+Prescribed Medicines:
+${medicinesList}
 ${prescriptionData.notes ? `Notes: ${prescriptionData.notes}` : ''}
     `.trim();
  
@@ -172,8 +172,8 @@ ${prescriptionData.notes ? `Notes: ${prescriptionData.notes}` : ''}
     });
     return analysis;
   } catch (error) {
-    console.error(error);
-    throw new Error('Failed to analyze prescription. Please try again.');
+    console.error('Error in prescriptionAnalysis:', error);
+    throw new Error(error instanceof Error ? error.message : 'Failed to analyze prescription. Please try again.');
   }
 }
  
@@ -199,8 +199,8 @@ ${planData.followUpDate ? `Follow-up Date: ${planData.followUpDate}` : ''}
     });
     return analysis;
   } catch (error) {
-    console.error(error);
-    throw new Error('Failed to analyze treatment plan. Please try again.');
+    console.error('Error in planAnalysis:', error);
+    throw new Error(error instanceof Error ? error.message : 'Failed to analyze treatment plan. Please try again.');
   }
 }
  
@@ -213,7 +213,7 @@ export async function dewormingMedicationAnalysis(species: string, medicationDat
 }) {
     try {
         const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
-       
+        
         // Format the date for better readability
         const formattedDate = medicationData.dateTimeGiven
             ? new Date(medicationData.dateTimeGiven).toLocaleString()
@@ -275,7 +275,7 @@ export async function dewormingNotesAnalysis(
 ) {
   try {
     const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
- 
+
     const dewormingInfo = `
 Species: ${species}
  
@@ -331,7 +331,7 @@ export async function dewormingCheckoutAnalysis(
 ) {
   try {
     const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
- 
+
     const checkoutInfo = `
 Species: ${species}
  
@@ -410,7 +410,7 @@ export async function emergencyVitalsAnalysis(species: string, vitalsData: {
 }) {
     try {
         const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
-       
+        
         // Build a structured prompt with the vitals data
         const vitalsInfo = `
 Species: ${species}
@@ -475,7 +475,7 @@ export async function emergencyProceduresAnalysis(species: string, proceduresDat
 }) {
     try {
         const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
- 
+
         const proceduresInfo = `
 Species: ${species}
 Procedures Performed: ${proceduresData.proceduresPerformed.length > 0 ? proceduresData.proceduresPerformed.join(', ') : 'None selected'}
@@ -524,7 +524,7 @@ export async function emergencyTriageAnalysis(species: string, triageData: {
 }) {
     try {
         const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
-       
+        
         // Build the prompt with all available triage data
         let prompt = `Analyze the following emergency triage data for a ${species} patient. `;
         prompt += 'Provide a concise assessment of the patient\'s condition, immediate concerns, and recommended triage actions. ';
@@ -600,7 +600,7 @@ export async function emergencydischargeAnalysis(
   ) {
     try {
       const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
- 
+  
       const dischargeInfo = `
   Species: ${species}
   Discharge Status: ${dischargeData.dischargeStatus || 'Not specified'}
@@ -675,7 +675,7 @@ export async function surgeryDischargeAnalysis(
 ) {
   try {
     const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
- 
+
     const dischargeInfo = `
 Species: ${species}
 Discharge Status: ${dischargeData.dischargeStatus || "Not specified"}
@@ -742,7 +742,7 @@ export async function surgeryPostOpAnalysis(
 ) {
   try {
     const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
- 
+
     const postOpInfo = `
 Species: ${species}
  
@@ -806,7 +806,7 @@ export async function surgeryPreOpAnalysis(
 ) {
   try {
     const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
- 
+
     const preOpInfo = `
 Species: ${species}
  
@@ -873,7 +873,7 @@ export async function surgeryDetailsAnalysis(
 ) {
   try {
     const provider = (process.env.AI_PROVIDER as AIProvider) || getDefaultAIProvider();
- 
+
     const surgeryInfo = `
 Species: ${species}
  
