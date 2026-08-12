@@ -3,7 +3,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs-new";
 import { Button } from "@/components/ui/button";
-import { CheckCircle, History, Calendar } from "lucide-react";
+import { CheckCircle, History } from "lucide-react";
 import { TabCompletionProvider, TabId, useTabCompletion } from "@/context/TabCompletionContext";
 import { useGetPatientAppointmentHistory } from "@/queries/patients/get-patient-appointment-history";
 import { useGetVisitByAppointmentId } from "@/queries/visit/get-visit-by-appointmentId";
@@ -12,8 +12,6 @@ import AppointmentHistoryNavigation from "../AppointmentHistoryNavigation";
 import MedicalHistoryTab from "../MedicalHistoryTab";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import WeightGraph from "../WeightGraph";
-import "react-datepicker/dist/react-datepicker.css";
-import DatePicker from "react-datepicker";
 import { appointmentTabConfigMap } from "../appointmentTabConfig";
 import DewormingComponent from "../deworming";
 import VaccinationManagerComp from "../vaccination";
@@ -46,8 +44,6 @@ function SurgeryContent({ patientId, appointmentId: initialAppointmentId, onClos
 
   const { data: history } = useGetPatientAppointmentHistory(patientId, clinicIdForHistory)
   const { data: visitData, refetch: refetchVisitData } = useGetVisitByAppointmentId(currentAppointmentId);
-  const [followUpDateFooter, setFollowUpDateFooter] = useState<string>("");
-  const today = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
 
   // Keep currentAppointmentId in sync if parent prop changes
   useEffect(() => {
@@ -237,8 +233,6 @@ function SurgeryContent({ patientId, appointmentId: initialAppointmentId, onClos
                           visitId={visitData?.id}
                           onNext={navigateToNextTab}
                           onClose={onClose}
-                          externalFollowUpDate={followUpDateFooter}
-                          onExternalFollowUpDateChange={setFollowUpDateFooter}
                           setWeightGraphOpen={tab.value === "surgery-pre-op" ? setWeightGraphOpen : undefined}
                         />
                       </TabsContent>
@@ -248,33 +242,10 @@ function SurgeryContent({ patientId, appointmentId: initialAppointmentId, onClos
               );
             })()}
 
-            {/* Follow-up footer - fixed at bottom inside scroll area */}
+            {/* Footer - fixed at bottom inside scroll area */}
             {activeTab === "surgery-discharge" && appointment?.appointmentType?.name === "Surgery" && (
               <div className="border-t border-gray-200 p-4 mt-auto flex-shrink-0">
-                <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <div className="w-full sm:w-auto">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Follow-up Date</label>
-                    <div className="relative">
-                      <DatePicker
-                        selected={followUpDateFooter ? new Date(followUpDateFooter) : null}
-                        onChange={(date) => {
-                          if (date instanceof Date && !isNaN(date.getTime())) {
-                            setFollowUpDateFooter(date.toISOString());
-                          } else {
-                            setFollowUpDateFooter("");
-                          }
-                        }}
-                        minDate={today}
-                        showYearDropdown
-                        showMonthDropdown
-                        dropdownMode="select"
-                        dateFormat="dd/MM/yyyy"
-                        placeholderText="dd/mm/yyyy"
-                        className="w-full sm:w-48 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      />
-                      <Calendar className="absolute right-3 top-2.5 h-4 w-4 text-gray-400 pointer-events-none" />
-                    </div>
-                  </div>
+                <div className="max-w-6xl mx-auto flex justify-end">
                   <Button
                     onClick={() => setShowNewAppointment(true)}
                     className="theme-button text-white"

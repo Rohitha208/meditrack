@@ -373,11 +373,11 @@ Current Surgery Discharge Data:
         <div className="h-[calc(100vh-22.5rem)] overflow-y-auto p-6">
           <div className="space-y-4">
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block font-medium mb-1">Discharge Status</label>
                 <select
-                  className="border rounded px-2 py-1 w-full"
+                  className="border rounded px-2 py-1 w-full h-[42px]"
                   value={status}
                   onChange={e => setStatus(e.target.value)}
                   disabled={isReadOnly}
@@ -400,11 +400,44 @@ Current Surgery Discharge Data:
                     }
                   }}
                   minDate={today}
+                  showTimeSelect
+                  timeIntervals={5}
                   showYearDropdown
                   showMonthDropdown
                   dropdownMode="select"
                   dateFormat="dd/MM/yyyy h:mm aa"
                   placeholderText="dd/mm/yyyy hh:mm"
+                  wrapperClassName="w-full"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={isReadOnly}
+                />
+              </div>
+              <div>
+                <label className="block font-medium mb-1">Follow-up Date</label>
+                <DatePicker
+                  selected={followUpDate ? new Date(followUpDate) : null}
+                  onChange={(date) => {
+                    if (date instanceof Date && !isNaN(date.getTime())) {
+                      setFollowUpDate(date.toISOString());
+                      if (onExternalFollowUpDateChange) {
+                        onExternalFollowUpDateChange(date.toISOString());
+                      }
+                    } else {
+                      setFollowUpDate("");
+                      if (onExternalFollowUpDateChange) {
+                        onExternalFollowUpDateChange("");
+                      }
+                    }
+                  }}
+                  minDate={new Date()}
+                  showTimeSelect
+                  timeIntervals={5}
+                  showYearDropdown
+                  showMonthDropdown
+                  dropdownMode="select"
+                  dateFormat="dd/MM/yyyy h:mm aa"
+                  placeholderText="dd/mm/yyyy hh:mm"
+                  wrapperClassName="w-full"
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   disabled={isReadOnly}
                 />
@@ -425,33 +458,6 @@ Current Surgery Discharge Data:
                 value={medications}
                 onChange={e => setMedications(e.target.value)}
                 placeholder="List medications, dosages, and administration instructions"
-                disabled={isReadOnly}
-              />
-            </div>
-            <div>
-              <label className="block font-medium mb-1">Follow-up Date</label>
-              <DatePicker
-                selected={followUpDate ? new Date(followUpDate) : null}
-                onChange={(date) => {
-                  if (date instanceof Date && !isNaN(date.getTime())) {
-                    setFollowUpDate(date.toISOString());
-                    if (onExternalFollowUpDateChange) {
-                      onExternalFollowUpDateChange(date.toISOString());
-                    }
-                  } else {
-                    setFollowUpDate("");
-                    if (onExternalFollowUpDateChange) {
-                      onExternalFollowUpDateChange("");
-                    }
-                  }
-                }}
-                minDate={new Date()}
-                showYearDropdown
-                showMonthDropdown
-                dropdownMode="select"
-                dateFormat="dd/MM/yyyy"
-                placeholderText="dd/mm/yyyy"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 disabled={isReadOnly}
               />
             </div>
