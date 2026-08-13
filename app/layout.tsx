@@ -2,6 +2,7 @@ import type React from "react"
 import "@/app/globals.css"
 import { NuqsAdapter } from 'nuqs/adapters/next/app'
 import localFont from "next/font/local";
+import { Archivo, IBM_Plex_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import { getBrandName } from "@/utils/appMode";
  import QueryWrapper from "@/components/pawtrack/layout/queryWrapper";
@@ -23,6 +24,21 @@ const geistMono = localFont({
   src: "./fonts/GeistMonoVF.woff",
   variable: "--font-geist-mono",
   weight: "100 900",
+});
+
+// MediTrack Administration Register's typography (Archivo + IBM Plex Mono,
+// per the Arogya HMS design spec). Exposed as CSS variables globally but
+// only ever applied within the admin-register scope — PawTrack and the
+// rest of MediTrack keep using Geist.
+const archivo = Archivo({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-archivo",
+});
+const plexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-plex-mono",
 });
 
 
@@ -47,7 +63,7 @@ export default async function RootLayout({
         <link rel="manifest" href="/manifest.json" />
         <link rel="apple-touch-icon" href="/images/logo.png" />
       </head>
-      <body className={`antialiased`} suppressHydrationWarning>
+      <body className={`antialiased ${archivo.variable} ${plexMono.variable}`} suppressHydrationWarning>
         <AuthProvider>
           <NuqsAdapter>
             <QueryWrapper>
