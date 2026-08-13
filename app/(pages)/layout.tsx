@@ -1,9 +1,5 @@
-import MainLayout from "@/components/pawtrack/layout/mainLayout";
+import { ProductLayoutSwitch } from "@/components/shared/product-layout-switch";
 
 export default function Layout({ children }: { children: React.ReactNode }) {
-    return (
-        <MainLayout>
-            {children}
-        </MainLayout>
-    )
+    return <ProductLayoutSwitch>{children}</ProductLayoutSwitch>;
 }
