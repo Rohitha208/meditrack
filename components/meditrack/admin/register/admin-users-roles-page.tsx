@@ -44,6 +44,11 @@ const USERS: UserRow[] = [
 
 export function AdminUsersRolesPage() {
   const [tab, setTab] = useState<"users" | "permissions">("permissions")
+  const [permissions, setPermissions] = useState<RolePermissionRow[]>(ROLE_PERMISSIONS)
+
+  function togglePermission(role: string, col: PermissionColumn) {
+    setPermissions((prev) => prev.map((row) => (row.role === role ? { ...row, access: { ...row.access, [col]: !row.access[col] } } : row)))
+  }
 
   const userColumns: MtColumn<UserRow>[] = [
     {
@@ -108,14 +113,37 @@ export function AdminUsersRolesPage() {
                 </tr>
               </thead>
               <tbody>
-                {ROLE_PERMISSIONS.map((row) => (
+                {permissions.map((row) => (
                   <tr key={row.role} className="border-b border-adminreg-border/70 last:border-0">
                     <td className="py-3 pr-4 font-semibold text-adminreg-text">{row.role}</td>
-                    {PERMISSION_COLUMNS.map((col) => (
-                      <td key={col} className="px-4 py-3 text-center">
-                        <span className={cn("mx-auto inline-block h-2.5 w-2.5 rounded-full", row.access[col] ? "bg-adminreg-olive" : "bg-adminreg-border")} />
-                      </td>
-                    ))}
+                    {PERMISSION_COLUMNS.map((col) => {
+                      const on = row.access[col]
+                      return (
+                        <td key={col} className="px-4 py-3 text-center">
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={on}
+                            aria-label={`${row.role} — ${col}`}
+                            onClick={() => togglePermission(row.role, col)}
+                            className={cn(
+                              // Switches are the one control in this design that keep their
+                              // pill shape — a square toggle reads ambiguously at a glance,
+                              // and this is the universally-recognized pattern for on/off.
+                              "relative mx-auto flex h-5 w-9 flex-shrink-0 items-center rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-adminreg-olive focus-visible:ring-offset-1",
+                              on ? "border-adminreg-olive bg-adminreg-olive" : "border-adminreg-border bg-adminreg-border/50"
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "inline-block h-3.5 w-3.5 rounded-full bg-adminreg-card shadow-sm transition-transform",
+                                on ? "translate-x-[18px]" : "translate-x-[3px]"
+                              )}
+                            />
+                          </button>
+                        </td>
+                      )
+                    })}
                   </tr>
                 ))}
               </tbody>
