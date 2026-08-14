@@ -531,9 +531,9 @@ export function OpdVisitThreadPage() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex flex-shrink-0 flex-wrap items-end justify-between gap-4 border-b border-adminreg-border bg-adminreg-header px-8 py-4">
           <div>
-            <div className="mb-1 font-plexmono text-[10px] tracking-[0.05em] text-adminreg-muted">
+            {/* <div className="mb-1 font-plexmono text-[10px] tracking-[0.05em] text-adminreg-muted">
               STAGE {s + 1} OF 9 — {activeStage.role}
-            </div>
+            </div> */}
             <h1 className="text-[21px] font-extrabold tracking-[-0.01em] text-adminreg-text">{activeStage.name}</h1>
           </div>
           <span className="whitespace-nowrap font-plexmono text-[11px] text-adminreg-muted">12 AUG 2026</span>

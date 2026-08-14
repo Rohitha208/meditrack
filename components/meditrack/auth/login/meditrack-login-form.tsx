@@ -6,13 +6,12 @@ import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { ArrowRight, Building2, Eye, EyeOff, Fingerprint, Loader2, Lock, User } from "lucide-react"
+import { Loader2 } from "lucide-react"
 
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Form, FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form"
-import { MtButton } from "@/components/meditrack/shared"
+import { AdminButton } from "@/components/meditrack/admin/register"
 import { useLoginMutation } from "@/queries/auth/login-user"
 import { setJwtToken, setUserId, setClientId, setCompanyId } from "@/utils/clientCookie"
 import { useToast } from "@/hooks/use-toast"
@@ -28,22 +27,22 @@ const loginSchema = z.object({
 
 type LoginFormValues = z.infer<typeof loginSchema>
 
-// const USER_TYPES = ["Doctor", "Nurse", "Reception", "Hospital Admin", "Super Admin"]
+const FIELD_LABEL = "block font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted2"
+const FIELD_CLASS = "h-11 rounded-none border-adminreg-border bg-adminreg-bg font-archivo text-sm text-adminreg-text placeholder:text-adminreg-muted focus-visible:ring-1 focus-visible:ring-adminreg-olive"
 
 /**
  * MediTrack's own login form — same email/password submit + redirect flow as
  * PawTrack's shared LoginForm (queries/auth/login-user.ts has no concept of
- * "user type" or SSO), restyled to match the approved MediTrack mockup.
- * "User Type" is a display-only selector and Google/Fingerprint are not
- * wired to a real provider — clicking them is honest about that via a toast
- * rather than silently doing nothing.
+ * "user type" or SSO), restyled to the Administration Register's palette
+ * (square corners, Archivo + IBM Plex Mono, olive accent, no drop shadow).
+ * Google/Biometric aren't wired to a real provider — clicking them is
+ * honest about that via a toast rather than silently doing nothing.
  */
 export function MediTrackLoginForm() {
   const { fetchUser, setProductType } = useRootContext()
   const { toast } = useToast()
   const router = useRouter()
   const [showPassword, setShowPassword] = useState(false)
-  const [userType, setUserType] = useState("")
   const [rememberMe, setRememberMe] = useState(true)
 
   const form = useForm<LoginFormValues>({
@@ -96,23 +95,15 @@ export function MediTrackLoginForm() {
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 font-archivo">
         <FormField
           control={form.control}
           name="email"
           render={({ field }) => (
             <FormItem className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Username</label>
+              <label className={FIELD_LABEL}>Username</label>
               <FormControl>
-                <div className="relative">
-                  <User className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <Input
-                    placeholder="Enter your username"
-                    className="h-11 rounded-xl border-slate-200 pl-10 dark:border-slate-700"
-                    data-testid="email-input"
-                    {...field}
-                  />
-                </div>
+                <Input placeholder="Enter your username" className={FIELD_CLASS} data-testid="email-input" {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -124,24 +115,16 @@ export function MediTrackLoginForm() {
           name="password"
           render={({ field }) => (
             <FormItem className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Password</label>
+              <label className={FIELD_LABEL}>Password</label>
               <FormControl>
                 <div className="relative">
-                  <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <Input
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Enter your password"
-                    className="h-11 rounded-xl border-slate-200 pl-10 pr-10 dark:border-slate-700"
-                    data-testid="password-input"
-                    {...field}
-                  />
+                  <Input type={showPassword ? "text" : "password"} placeholder="Enter your password" className={`${FIELD_CLASS} pr-16`} data-testid="password-input" {...field} />
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 font-plexmono text-[10px] font-semibold uppercase tracking-wide text-adminreg-olive hover:text-adminreg-olive-dark"
                   >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showPassword ? "Hide" : "Show"}
                   </button>
                 </div>
               </FormControl>
@@ -151,63 +134,50 @@ export function MediTrackLoginForm() {
         />
 
         <div className="flex items-center justify-between">
-          <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+          <label className="flex items-center gap-2 text-sm text-adminreg-muted">
             <Checkbox
               checked={rememberMe}
               onCheckedChange={(v) => setRememberMe(!!v)}
-              className="data-[state=checked]:border-brand-600 data-[state=checked]:bg-brand-600"
+              className="rounded-none border-adminreg-border data-[state=checked]:border-adminreg-olive data-[state=checked]:bg-adminreg-olive"
             />
             Remember Me
           </label>
-          <Link href="/forgot-password" className="text-sm font-medium text-brand-600 hover:text-brand-700 dark:text-brand-400">
+          <Link href="/forgot-password" className="text-sm font-medium text-adminreg-olive hover:text-adminreg-olive-dark">
             Forgot Password?
           </Link>
         </div>
 
-        <MtButton
-          type="submit"
-          disabled={loginMutation.isPending}
-          data-testid="login-submit"
-          className="h-12 w-full gap-2 rounded-xl text-base font-semibold"
-        >
-          {loginMutation.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <>
-              Sign In
-              <ArrowRight className="h-4 w-4" />
-            </>
-          )}
-        </MtButton>
+        <AdminButton type="submit" disabled={loginMutation.isPending} data-testid="login-submit" className="h-11 w-full text-sm">
+          {loginMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign In"}
+        </AdminButton>
 
         <div className="flex items-center gap-3 pt-1">
-          <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
-          <span className="text-xs text-slate-400">or continue with</span>
-          <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+          <span className="h-px flex-1 bg-adminreg-border" />
+          <span className="font-plexmono text-[10px] uppercase tracking-wide text-adminreg-muted">or continue with</span>
+          <span className="h-px flex-1 bg-adminreg-border" />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-3">
           <button
             type="button"
             onClick={() => handleComingSoon("Google")}
-            aria-label="Sign in with Google"
-            className="flex h-12 items-center justify-center rounded-xl border border-slate-200 bg-white transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
+            className="flex h-11 items-center justify-center gap-2 rounded-none border border-adminreg-border bg-adminreg-card text-sm font-medium text-adminreg-muted transition-colors hover:bg-adminreg-header"
           >
-            <GoogleIcon className="h-5 w-5" />
+            <GoogleIcon className="h-4 w-4" />
+            Google
           </button>
           <button
             type="button"
             onClick={() => handleComingSoon("biometrics")}
-            aria-label="Sign in with biometrics"
-            className="flex h-12 items-center justify-center rounded-xl border border-slate-200 bg-white transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
+            className="flex h-11 items-center justify-center gap-2 rounded-none border border-adminreg-border bg-adminreg-card text-sm font-medium text-adminreg-muted transition-colors hover:bg-adminreg-header"
           >
-            <Fingerprint className="h-5 w-5 text-brand-600 dark:text-brand-400" />
+            Biometric
           </button>
         </div>
 
-        <p className="pt-1 text-center text-sm text-slate-500 dark:text-slate-400">
+        <p className="pt-1 text-center text-sm text-adminreg-muted">
           Don&apos;t have an account?{" "}
-          <Link href="/register" className="font-medium text-brand-600 hover:text-brand-700 dark:text-brand-400">
+          <Link href="/register" className="font-medium text-adminreg-olive hover:text-adminreg-olive-dark">
             Contact Administrator
           </Link>
         </p>

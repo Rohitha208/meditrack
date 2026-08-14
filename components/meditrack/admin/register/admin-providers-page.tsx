@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState, type FormEvent } from "react"
-import { ChevronLeft, Eye } from "lucide-react"
+import { ChevronLeft, Eye, Plus } from "lucide-react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
@@ -9,10 +9,10 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
-import { MtDataTable, RowActions, MtButton, getInitials, type MtColumn } from "@/components/meditrack/shared"
+import { MtDataTable, RowActions, FormDialog, MtButton, getInitials, type MtColumn } from "@/components/meditrack/shared"
 import { AdminPageHeader } from "./AdminPageHeader"
 import { AdminCard } from "./AdminCard"
-import { DOCTORS, type DoctorDirectoryEntry } from "@/components/meditrack/shared/directory"
+import { DOCTORS, DEPARTMENTS, type DoctorDirectoryEntry } from "@/components/meditrack/shared/directory"
 
 // Frontend/UI only — provider directory + weekly availability sessions live
 // in local React state.
@@ -47,9 +47,26 @@ function defaultSessionsFor(doctor: DoctorDirectoryEntry): Session[] {
 
 export function AdminProvidersPage() {
   const { toast } = useToast()
+  const [providers, setProviders] = useState<DoctorDirectoryEntry[]>(DOCTORS)
   const [sessionsByDoctor, setSessionsByDoctor] = useState<Record<string, Session[]>>(INITIAL_SESSIONS)
   const [selected, setSelected] = useState<DoctorDirectoryEntry | null>(null)
   const [form, setForm] = useState({ day: "Mon" as Day, start: "", end: "", type: "OPD" as SessionType, location: "" })
+
+  const [addOpen, setAddOpen] = useState(false)
+  const [providerForm, setProviderForm] = useState({ name: "", degree: "", department: DEPARTMENTS[0] })
+
+  function handleAddProvider(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const provider: DoctorDirectoryEntry = {
+      name: providerForm.name || "Untitled Provider",
+      degree: providerForm.degree || "—",
+      department: providerForm.department,
+    }
+    setProviders((prev) => [...prev, provider])
+    setAddOpen(false)
+    setProviderForm({ name: "", degree: "", department: DEPARTMENTS[0] })
+    toast({ title: "Provider added", description: `${provider.name} was added to the registry.` })
+  }
 
   const sessions = useMemo(() => {
     if (!selected) return []
@@ -212,10 +229,52 @@ export function AdminProvidersPage() {
 
   return (
     <div>
-      <AdminPageHeader title="Providers" subtitle="Provider registry, weekly availability and leave exceptions." />
+      <AdminPageHeader
+        title="Providers"
+        subtitle="Provider registry, weekly availability and leave exceptions."
+        actions={
+          <MtButton className="gap-2" onClick={() => setAddOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Add provider
+          </MtButton>
+        }
+      />
       <AdminCard title="Provider Directory" noPadding>
-        <MtDataTable columns={directoryColumns} rows={DOCTORS} keyExtractor={(r) => r.name} />
+        <MtDataTable columns={directoryColumns} rows={providers} keyExtractor={(r) => r.name} />
       </AdminCard>
+
+      <FormDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        title="Add provider"
+        onSubmit={handleAddProvider}
+        footer={
+          <>
+            <MtButton type="button" variant="ghost" onClick={() => setAddOpen(false)}>Cancel</MtButton>
+            <MtButton type="submit">Add provider</MtButton>
+          </>
+        }
+      >
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Full Name</Label>
+          <Input value={providerForm.name} onChange={(e) => setProviderForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Dr. Kabir Sethi" required />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Degree</Label>
+          <Input value={providerForm.degree} onChange={(e) => setProviderForm((f) => ({ ...f, degree: e.target.value }))} placeholder="e.g. MBBS, MD" />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Department</Label>
+          <Select value={providerForm.department} onValueChange={(v) => setProviderForm((f) => ({ ...f, department: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {DEPARTMENTS.map((d) => (
+                <SelectItem key={d} value={d}>{d}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </FormDialog>
     </div>
   )
 }
