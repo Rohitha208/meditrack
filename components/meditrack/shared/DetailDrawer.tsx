@@ -1,7 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { Sheet, SheetContent } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
 
 interface DetailDrawerProps {
@@ -28,7 +28,7 @@ export function DetailDrawer({ open, onOpenChange, title, headerExtra, children,
         className={cn("flex w-full flex-col gap-0 p-0 sm:w-[34rem] sm:max-w-[34rem]", className)}
       >
         <div className="flex flex-shrink-0 items-center justify-between gap-3 border-b border-adminreg-border p-5 pr-10">
-          <h2 className="text-base font-semibold text-adminreg-text">{title}</h2>
+          <SheetTitle className="text-base font-semibold text-adminreg-text">{title}</SheetTitle>
           {headerExtra}
         </div>
 

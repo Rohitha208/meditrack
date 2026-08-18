@@ -1,4 +1,4 @@
-import { AdminDepartmentsPage } from "@/components/meditrack/admin/register/admin-departments-page"
+import { AdminDepartmentsPage } from "@/components/meditrack/department"
 
 export default function Page() {
   return <AdminDepartmentsPage />

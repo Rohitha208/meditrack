@@ -1,4 +1,4 @@
-import { AdminUsersRolesPage } from "@/components/meditrack/admin/register/admin-users-roles-page"
+import { AdminUsersRolesPage } from "@/components/meditrack/users-roles"
 
 export default function Page() {
   return <AdminUsersRolesPage />
