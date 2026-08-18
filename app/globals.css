@@ -233,4 +233,49 @@ body {
   background-color: var(--theme-primary);
 }
 
+/* MediTrack Administration Register + OPD scrollbars — olive/cream themed,
+   matching the adminreg design tokens (see tailwind.config.ts). Scoped to
+   these two classes only, so PawTrack and the rest of MediTrack keep the
+   browser default scrollbar.
+   Thumb tones are deliberately a step lighter than the old #cbc3a8/#34342a
+   (which sat too close to their tracks to read as a scrollbar) while still
+   staying in the light tan/olive family instead of jumping to a dark color. */
+.adminreg-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #b9ac7c #f1eddf;
+}
+.adminreg-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.adminreg-scroll::-webkit-scrollbar-track {
+  background: #f1eddf;
+}
+.adminreg-scroll::-webkit-scrollbar-thumb {
+  background-color: #b9ac7c;
+  border: 2px solid #f1eddf;
+}
+.adminreg-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #5a6b36;
+}
+
+.adminreg-scroll-dark {
+  scrollbar-width: thin;
+  scrollbar-color: #8c8768 #1e1e16;
+}
+.adminreg-scroll-dark::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.adminreg-scroll-dark::-webkit-scrollbar-track {
+  background: #1e1e16;
+}
+.adminreg-scroll-dark::-webkit-scrollbar-thumb {
+  background-color: #8c8768;
+  border: 2px solid #1e1e16;
+}
+.adminreg-scroll-dark::-webkit-scrollbar-thumb:hover {
+  background-color: #c4bea0;
+}
+
 

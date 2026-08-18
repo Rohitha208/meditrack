@@ -1,7 +1,8 @@
 "use client"
 
 import { useMemo, useState, type FormEvent } from "react"
-import { ChevronLeft, Eye, Plus } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { ArrowUpRight, ChevronLeft, Eye, Plus } from "lucide-react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
@@ -10,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { MtDataTable, RowActions, FormDialog, MtButton, getInitials, type MtColumn } from "@/components/meditrack/shared"
+import { useStaffRole } from "@/components/meditrack/layout/register/RoleProvider"
 import { AdminPageHeader } from "./AdminPageHeader"
 import { AdminCard } from "./AdminCard"
 import { DOCTORS, DEPARTMENTS, type DoctorDirectoryEntry } from "@/components/meditrack/shared/directory"
@@ -47,6 +49,8 @@ function defaultSessionsFor(doctor: DoctorDirectoryEntry): Session[] {
 
 export function AdminProvidersPage() {
   const { toast } = useToast()
+  const router = useRouter()
+  const { role } = useStaffRole()
   const [providers, setProviders] = useState<DoctorDirectoryEntry[]>(DOCTORS)
   const [sessionsByDoctor, setSessionsByDoctor] = useState<Record<string, Session[]>>(INITIAL_SESSIONS)
   const [selected, setSelected] = useState<DoctorDirectoryEntry | null>(null)
@@ -120,7 +124,16 @@ export function AdminProvidersPage() {
       alwaysVisible: true,
       className: "text-right",
       headerClassName: "text-right",
-      render: (r) => <RowActions actions={[{ icon: Eye, label: "View", onClick: () => openProvider(r) }]} />,
+      render: (r) => (
+        <RowActions
+          actions={[
+            { icon: Eye, label: "View", onClick: () => openProvider(r) },
+            ...(role === "admin"
+              ? [{ icon: ArrowUpRight, label: "View live queue", tooltip: "View live queue →", onClick: () => router.push(`/opd/visit-thread?stage=2&from=providers`) }]
+              : []),
+          ]}
+        />
+      ),
     },
   ]
 

@@ -78,7 +78,7 @@ export function AdminDrawer({ open, onOpenChange, title, description, badge, con
           </div>
 
           <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+            <div className="adminreg-scroll min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
               {consequenceNote && (
                 <div className="border border-adminreg-indigo bg-adminreg-indigo-soft px-3.5 py-3 text-xs text-adminreg-indigo-dark">{consequenceNote}</div>
               )}
