@@ -11,6 +11,8 @@ import {
   MtDataTable,
   RowActions,
   FormDialog,
+  DetailDrawer,
+  InfoRow,
   MtButton,
   type MtColumn,
 } from "@/components/meditrack/shared"
@@ -40,13 +42,22 @@ const INITIAL_DEPARTMENTS: Department[] = [
   { id: "6", name: "Dermatology", head: "Unassigned", bedGroup: "—", tariffGroup: "TG-STD", providers: 0 },
 ]
 
+const emptyForm = { name: "", head: "unassigned", bedGroup: "", tariffGroup: TARIFF_GROUPS[0] }
+
 export function AdminDepartmentsPage() {
   const { toast } = useToast()
   const [departments, setDepartments] = useState<Department[]>(INITIAL_DEPARTMENTS)
   const [addOpen, setAddOpen] = useState(false)
-  const [form, setForm] = useState({ name: "", head: "unassigned", bedGroup: "", tariffGroup: TARIFF_GROUPS[0] })
+  const [editing, setEditing] = useState<Department | null>(null)
+  const [viewing, setViewing] = useState<Department | null>(null)
+  const [form, setForm] = useState(emptyForm)
 
   const headOptions = useMemo(() => ["unassigned", ...DOCTORS.map((d) => d.name)], [])
+
+  function openAdd() {
+    setForm(emptyForm)
+    setAddOpen(true)
+  }
 
   function handleAdd(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -60,8 +71,27 @@ export function AdminDepartmentsPage() {
     }
     setDepartments((prev) => [...prev, dept])
     setAddOpen(false)
-    setForm({ name: "", head: "unassigned", bedGroup: "", tariffGroup: TARIFF_GROUPS[0] })
+    setForm(emptyForm)
     toast({ title: "Department added", description: `${dept.name} was added to the master list.` })
+  }
+
+  function openEdit(dept: Department) {
+    setForm({ name: dept.name, head: dept.head === "Unassigned" ? "unassigned" : dept.head, bedGroup: dept.bedGroup === "—" ? "" : dept.bedGroup, tariffGroup: dept.tariffGroup })
+    setEditing(dept)
+  }
+
+  function handleEdit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!editing) return
+    setDepartments((prev) =>
+      prev.map((d) =>
+        d.id === editing.id
+          ? { ...d, name: form.name || d.name, head: form.head === "unassigned" ? "Unassigned" : form.head, bedGroup: form.bedGroup || "—", tariffGroup: form.tariffGroup }
+          : d
+      )
+    )
+    toast({ title: "Department updated", description: `${form.name || editing.name} was saved.` })
+    setEditing(null)
   }
 
   const columns: MtColumn<Department>[] = [
@@ -88,7 +118,7 @@ export function AdminDepartmentsPage() {
       alwaysVisible: true,
       className: "text-right",
       headerClassName: "text-right",
-      render: () => <RowActions actions={[{ icon: Eye, label: "View", onClick: () => {} }, { icon: Pencil, label: "Edit", onClick: () => {} }]} />,
+      render: (r) => <RowActions actions={[{ icon: Eye, label: "View", onClick: () => setViewing(r) }, { icon: Pencil, label: "Edit", onClick: () => openEdit(r) }]} />,
     },
   ]
 
@@ -98,7 +128,7 @@ export function AdminDepartmentsPage() {
         title="Departments"
         subtitle="Department master data — heads, beds and tariff mapping."
         actions={
-          <MtButton className="gap-2" onClick={() => setAddOpen(true)}>
+          <MtButton className="gap-2" onClick={openAdd}>
             <Plus className="h-4 w-4" />
             Add department
           </MtButton>
@@ -121,37 +151,81 @@ export function AdminDepartmentsPage() {
           </>
         }
       >
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Department Name</Label>
-          <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Dermatology" required />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Head of Department</Label>
-          <Select value={form.head} onValueChange={(v) => setForm((f) => ({ ...f, head: v }))}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {headOptions.map((h) => (
-                <SelectItem key={h} value={h}>{h === "unassigned" ? "Unassigned" : h}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Bed Group Mapping</Label>
-          <Input value={form.bedGroup} onChange={(e) => setForm((f) => ({ ...f, bedGroup: e.target.value }))} placeholder="e.g. DER-01" />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Tariff Group</Label>
-          <Select value={form.tariffGroup} onValueChange={(v) => setForm((f) => ({ ...f, tariffGroup: v }))}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {TARIFF_GROUPS.map((t) => (
-                <SelectItem key={t} value={t}>{t}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <DepartmentFormFields form={form} setForm={setForm} headOptions={headOptions} />
       </FormDialog>
+
+      <FormDialog
+        open={!!editing}
+        onOpenChange={(o) => !o && setEditing(null)}
+        title="Edit department"
+        description={editing?.name}
+        onSubmit={handleEdit}
+        footer={
+          <>
+            <MtButton type="button" variant="ghost" onClick={() => setEditing(null)}>Cancel</MtButton>
+            <MtButton type="submit">Save changes</MtButton>
+          </>
+        }
+      >
+        <DepartmentFormFields form={form} setForm={setForm} headOptions={headOptions} />
+      </FormDialog>
+
+      <DetailDrawer open={!!viewing} onOpenChange={(o) => !o && setViewing(null)} title="Department Details">
+        {viewing && (
+          <div className="divide-y divide-adminreg-border">
+            <InfoRow label="Department" value={viewing.name} />
+            <InfoRow label="Head" value={viewing.head} />
+            <InfoRow label="Bed Group" value={viewing.bedGroup} />
+            <InfoRow label="Tariff Group" value={viewing.tariffGroup} />
+            <InfoRow label="Providers" value={viewing.providers} />
+          </div>
+        )}
+      </DetailDrawer>
     </div>
+  )
+}
+
+function DepartmentFormFields({
+  form,
+  setForm,
+  headOptions,
+}: {
+  form: typeof emptyForm
+  setForm: (updater: (f: typeof emptyForm) => typeof emptyForm) => void
+  headOptions: string[]
+}) {
+  return (
+    <>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Department Name</Label>
+        <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Dermatology" required />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Head of Department</Label>
+        <Select value={form.head} onValueChange={(v) => setForm((f) => ({ ...f, head: v }))}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {headOptions.map((h) => (
+              <SelectItem key={h} value={h}>{h === "unassigned" ? "Unassigned" : h}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Bed Group Mapping</Label>
+        <Input value={form.bedGroup} onChange={(e) => setForm((f) => ({ ...f, bedGroup: e.target.value }))} placeholder="e.g. DER-01" />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Tariff Group</Label>
+        <Select value={form.tariffGroup} onValueChange={(v) => setForm((f) => ({ ...f, tariffGroup: v }))}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {TARIFF_GROUPS.map((t) => (
+              <SelectItem key={t} value={t}>{t}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </>
   )
 }
