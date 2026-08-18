@@ -21,7 +21,7 @@ export interface Company {
     country: string;
   };
   status: string;
-  productType: string;
+
   privacyPolicy?: string; // Base64 encoded PDF
   termsOfUse?: string; // Base64 encoded PDF
   createdAt: string;

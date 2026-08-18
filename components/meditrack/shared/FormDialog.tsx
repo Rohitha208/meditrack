@@ -1,7 +1,7 @@
 "use client"
 
 import type { ReactNode, FormEvent } from "react"
-import { Sheet, SheetContent } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
 
 interface FormDialogProps {
@@ -31,8 +31,10 @@ export function FormDialog({ open, onOpenChange, title, description, children, f
         )}
       >
         <div className="flex-shrink-0 border-b border-adminreg-border p-5 pr-10">
-          <h2 className="text-base font-semibold text-adminreg-text">{title}</h2>
-          {description && <p className="mt-1 text-sm text-adminreg-muted">{description}</p>}
+          <SheetTitle className="text-base font-semibold text-adminreg-text">{title}</SheetTitle>
+          {description && (
+            <SheetDescription className="mt-1 text-sm text-adminreg-muted">{description}</SheetDescription>
+          )}
         </div>
 
         <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
