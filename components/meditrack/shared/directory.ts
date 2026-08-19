@@ -8,6 +8,8 @@ export interface DoctorDirectoryEntry {
   name: string
   degree: string
   department: string
+  /** Defaults to "Active" wherever unset — most existing rows predate this field. */
+  status?: "Active" | "Inactive"
 }
 
 export const DOCTORS: DoctorDirectoryEntry[] = [

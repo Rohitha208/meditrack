@@ -2,15 +2,16 @@
 
 import { useMemo, useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
-import { ArrowUpRight, ChevronLeft, Eye, Plus } from "lucide-react"
+import { ArrowUpRight, CalendarClock, CalendarOff, ChevronLeft, Plus, Power, UserCheck } from "lucide-react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
-import { MtDataTable, RowActions, FormDialog, MtButton, getInitials, type MtColumn } from "@/components/meditrack/shared"
+import { MtDataTable, RowActions, FormDialog, ConfirmDialog, MtButton, getInitials, type MtColumn } from "@/components/meditrack/shared"
 import { useStaffRole } from "@/components/meditrack/layout/register/RoleProvider"
 import { AdminPageHeader } from "./AdminPageHeader"
 import { AdminCard } from "./AdminCard"
@@ -58,6 +59,36 @@ export function AdminProvidersPage() {
 
   const [addOpen, setAddOpen] = useState(false)
   const [providerForm, setProviderForm] = useState({ name: "", degree: "", department: DEPARTMENTS[0] })
+
+  // Leave exceptions — per-provider list, frontend/local state only.
+  const [leaveTarget, setLeaveTarget] = useState<DoctorDirectoryEntry | null>(null)
+  const [leaveForm, setLeaveForm] = useState({ from: "", to: "", reason: "" })
+  const [leavesByDoctor, setLeavesByDoctor] = useState<Record<string, { from: string; to: string; reason: string }[]>>({})
+
+  // Deactivate / reactivate — confirmed via ConfirmDialog before it takes effect.
+  const [deactivateTarget, setDeactivateTarget] = useState<DoctorDirectoryEntry | null>(null)
+
+  function statusOf(doctor: DoctorDirectoryEntry): "Active" | "Inactive" {
+    return doctor.status ?? "Active"
+  }
+
+  function handleAddLeave(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!leaveTarget) return
+    const entry = { from: leaveForm.from || "—", to: leaveForm.to || leaveForm.from || "—", reason: leaveForm.reason || "Not specified" }
+    setLeavesByDoctor((prev) => ({ ...prev, [leaveTarget.name]: [...(prev[leaveTarget.name] ?? []), entry] }))
+    toast({ title: "Leave added", description: `${leaveTarget.name} marked on leave ${entry.from}${entry.to !== entry.from ? ` – ${entry.to}` : ""}.` })
+    setLeaveForm({ from: "", to: "", reason: "" })
+    setLeaveTarget(null)
+  }
+
+  function confirmDeactivate() {
+    if (!deactivateTarget) return
+    const nextStatus = statusOf(deactivateTarget) === "Active" ? "Inactive" : "Active"
+    setProviders((prev) => prev.map((p) => (p.name === deactivateTarget.name ? { ...p, status: nextStatus } : p)))
+    toast({ title: nextStatus === "Active" ? "Provider reactivated" : "Provider deactivated", description: `${deactivateTarget.name} is now ${nextStatus.toLowerCase()}.` })
+    setDeactivateTarget(null)
+  }
 
   function handleAddProvider(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -119,6 +150,15 @@ export function AdminProvidersPage() {
       sortValue: (r) => (sessionsByDoctor[r.name] ?? defaultSessionsFor(r)).length,
     },
     {
+      key: "status",
+      header: "Status",
+      render: (r) => (
+        <span className={cn("text-xs font-semibold", statusOf(r) === "Active" ? "text-adminreg-olive-700" : "text-adminreg-muted")}>
+          {statusOf(r)}
+        </span>
+      ),
+    },
+    {
       key: "action",
       header: "Action",
       alwaysVisible: true,
@@ -127,10 +167,18 @@ export function AdminProvidersPage() {
       render: (r) => (
         <RowActions
           actions={[
-            { icon: Eye, label: "View", onClick: () => openProvider(r) },
+            { icon: CalendarClock, label: "Availability", tooltip: "Availability", onClick: () => openProvider(r) },
+            { icon: CalendarOff, label: "Add leave", tooltip: "Add leave", onClick: () => setLeaveTarget(r) },
             ...(role === "admin"
-              ? [{ icon: ArrowUpRight, label: "View live queue", tooltip: "View live queue →", onClick: () => router.push(`/opd/visit-thread?stage=2&from=providers`) }]
+              ? [{ icon: ArrowUpRight, label: "Live queue", tooltip: "Live queue →", onClick: () => router.push(`/opd/visit-thread?stage=2&from=providers`) }]
               : []),
+            {
+              icon: statusOf(r) === "Active" ? Power : UserCheck,
+              label: statusOf(r) === "Active" ? "Deactivate" : "Activate",
+              tooltip: statusOf(r) === "Active" ? "Deactivate" : "Reactivate",
+              destructive: statusOf(r) === "Active",
+              onClick: () => setDeactivateTarget(r),
+            },
           ]}
         />
       ),
@@ -236,6 +284,28 @@ export function AdminProvidersPage() {
             <MtButton type="submit">Add session</MtButton>
           </form>
         </AdminCard>
+
+        <AdminCard
+          title="Leave Exceptions"
+          className="mt-5"
+          action={<MtButton className="gap-2" onClick={() => setLeaveTarget(selected)}><Plus className="h-4 w-4" />Add leave</MtButton>}
+        >
+          {(leavesByDoctor[selected.name] ?? []).length === 0 ? (
+            <p className="text-sm text-adminreg-muted">No leave recorded for {selected.name}.</p>
+          ) : (
+            <ul className="space-y-2">
+              {(leavesByDoctor[selected.name] ?? []).map((l, i) => (
+                <li key={i} className="flex flex-col gap-0.5 border border-adminreg-border bg-adminreg-header/40 px-3.5 py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between">
+                  <span className="font-medium text-adminreg-text">
+                    {l.from}
+                    {l.to !== l.from ? ` – ${l.to}` : ""}
+                  </span>
+                  <span className="text-adminreg-muted">{l.reason}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </AdminCard>
       </div>
     )
   }
@@ -288,6 +358,51 @@ export function AdminProvidersPage() {
           </Select>
         </div>
       </FormDialog>
+
+      <FormDialog
+        open={!!leaveTarget}
+        onOpenChange={(open) => !open && setLeaveTarget(null)}
+        title="Add leave"
+        description={leaveTarget ? `Mark ${leaveTarget.name} on leave for a date range.` : undefined}
+        onSubmit={handleAddLeave}
+        footer={
+          <>
+            <MtButton type="button" variant="ghost" onClick={() => setLeaveTarget(null)}>Cancel</MtButton>
+            <MtButton type="submit">Add leave</MtButton>
+          </>
+        }
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">From</Label>
+            <Input type="date" value={leaveForm.from} onChange={(e) => setLeaveForm((f) => ({ ...f, from: e.target.value }))} required />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">To</Label>
+            <Input type="date" value={leaveForm.to} onChange={(e) => setLeaveForm((f) => ({ ...f, to: e.target.value }))} />
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Reason</Label>
+          <Textarea value={leaveForm.reason} onChange={(e) => setLeaveForm((f) => ({ ...f, reason: e.target.value }))} placeholder="e.g. Conference — out of station" rows={3} />
+        </div>
+      </FormDialog>
+
+      <ConfirmDialog
+        open={!!deactivateTarget}
+        onOpenChange={(open) => !open && setDeactivateTarget(null)}
+        title={deactivateTarget && statusOf(deactivateTarget) === "Active" ? "Deactivate provider?" : "Reactivate provider?"}
+        description={
+          deactivateTarget
+            ? statusOf(deactivateTarget) === "Active"
+              ? `${deactivateTarget.name} will no longer appear for new bookings or the live queue. Existing sessions are kept.`
+              : `${deactivateTarget.name} will become bookable again across OPD and Appointment Booking.`
+            : ""
+        }
+        confirmLabel={deactivateTarget && statusOf(deactivateTarget) === "Active" ? "Deactivate" : "Reactivate"}
+        destructive={deactivateTarget ? statusOf(deactivateTarget) === "Active" : false}
+        onConfirm={confirmDeactivate}
+      />
     </div>
   )
 }
