@@ -550,9 +550,6 @@ export function AdminTariffsPage() {
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Effective date</Label>
           <Input type="date" value={tariffForm.effectiveDate} onChange={(e) => setTariffForm((f) => ({ ...f, effectiveDate: e.target.value }))} required />
-          <p className="text-xs text-adminreg-muted">
-            Required. This never overwrites the previous rate — it adds a new dated entry, so invoices already billed keep the rate that was active at the time. Today's date applies the change now; a future date schedules it instead.
-          </p>
         </div>
       </FormDialog>
 
@@ -635,9 +632,6 @@ export function AdminTariffsPage() {
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Effective date</Label>
           <Input type="date" value={tpaForm.effectiveDate} onChange={(e) => setTpaForm((f) => ({ ...f, effectiveDate: e.target.value }))} required />
-          <p className="text-xs text-adminreg-muted">
-            Required. Today's date applies the negotiated rate now; a future date schedules it — the current rate card stays as-is until then.
-          </p>
         </div>
       </FormDialog>
 

@@ -1,8 +1,11 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, type FormEvent } from "react"
+import { Loader2, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
+  FormDialog,
+  MtButton,
   MtDataTable,
   StatusBadge,
   TableSkeleton,
@@ -10,25 +13,25 @@ import {
   type MtColumn,
 } from "@/components/meditrack/shared"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AdminPageHeader } from "@/components/meditrack/admin/register/AdminPageHeader"
 import { AdminCard } from "@/components/meditrack/admin/register/AdminCard"
 import { useRootContext } from "@/context/RootContext"
 import { getCompanyId } from "@/utils/clientCookie"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
-import { useGetMediTrackUsers } from "@/queries/meditrack/users"
+import { useToast } from "@/hooks/use-toast"
+import { useCreateMediTrackUser, useGetMediTrackUsers } from "@/queries/meditrack/users"
 import { useGetMediTrackRoles } from "@/queries/meditrack/roles"
 import { useGetMediTrackScreens, useGetMediTrackScreenAccess, useUpdateScreenAccess } from "@/queries/meditrack/screens"
+import { useGetDepartments } from "@/queries/departments"
 
 function displayName(firstName?: string, lastName?: string, email?: string) {
   const name = `${firstName || ""} ${lastName || ""}`.trim()
   return name || email || "Unknown user"
 }
 
-/** Pill toggle switch for the permission matrix — olive track + white knob
- * when allowed, muted track + grey knob when not. The grey knob is
- * deliberate: at a glance it reads as "off" without relying on color alone
- * (matches the rest of the register's toggle switches elsewhere). */
 function PermissionToggle({ allowed, onClick }: { allowed: boolean; onClick: () => void }) {
   return (
     <button
@@ -64,19 +67,41 @@ function formatLastLogin(value: string | null) {
   })
 }
 
+function splitFullName(fullName: string) {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return { firstName: "", lastName: "" }
+  if (parts.length === 1) return { firstName: parts[0], lastName: "" }
+  return { firstName: parts[0], lastName: parts.slice(1).join(" ") }
+}
+
+const ALL_DEPARTMENTS = "all"
+const EMPTY_USER_FORM = {
+  fullName: "",
+  email: "",
+  password: "",
+  roleId: "",
+  departmentId: ALL_DEPARTMENTS,
+}
+
 export function AdminUsersRolesPage() {
+  const { toast } = useToast()
   const { user, clinic } = useRootContext()
   const companyId = clinic?.companyId || user?.companyId || getCompanyId() || ""
   const clinicId = clinic?.id || undefined
 
   const [tab, setTab] = useState<"users" | "permissions">("users")
   const [roleFilter, setRoleFilter] = useState("all")
+  const [addOpen, setAddOpen] = useState(false)
+  const [form, setForm] = useState(EMPTY_USER_FORM)
 
   const { data: roles = [], isLoading: isLoadingRoles } = useGetMediTrackRoles(true)
   const hospitalRoles = useMemo(
     () => roles.filter((role) => role.value !== "super_admin"),
     [roles]
   )
+
+  const { data: departments = [] } = useGetDepartments(companyId || undefined, clinicId, !!companyId && addOpen)
+  const createUser = useCreateMediTrackUser()
 
   const selectedRoleIds = roleFilter === "all" ? [] : [roleFilter]
   const {
@@ -103,7 +128,6 @@ export function AdminUsersRolesPage() {
   } = useGetMediTrackScreenAccess(clinicId, undefined, tab === "permissions")
 
   const updateAccess = useUpdateScreenAccess()
-
   const users = usersData?.items ?? []
 
   const [optimistic, setOptimistic] = useState<Map<string, boolean>>(new Map())
@@ -118,6 +142,59 @@ export function AdminUsersRolesPage() {
     })
     return map
   }, [screenAccess, optimistic])
+
+  const defaultRoleId = hospitalRoles[0]?.id || ""
+
+  function openAddUser() {
+    setForm({
+      ...EMPTY_USER_FORM,
+      roleId: defaultRoleId,
+    })
+    setAddOpen(true)
+  }
+
+  async function handleAddUser(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!companyId) {
+      toast({ title: "Cannot save", description: "Company is missing. Please log in again.", variant: "destructive" })
+      return
+    }
+    if (!form.roleId) {
+      toast({ title: "Role required", description: "Select a role for this user.", variant: "destructive" })
+      return
+    }
+
+    const { firstName, lastName } = splitFullName(form.fullName)
+    if (!firstName) {
+      toast({ title: "Full name required", description: "Enter the user's full name.", variant: "destructive" })
+      return
+    }
+
+    try {
+      const created = await createUser.mutateAsync({
+        firstName,
+        lastName: lastName || null,
+        email: form.email.trim(),
+        passwordHash: form.password,
+        roleId: form.roleId,
+        companyId,
+        departmentId: form.departmentId === ALL_DEPARTMENTS ? null : form.departmentId,
+        clinicIds: clinicId ? [clinicId] : null,
+      })
+      setAddOpen(false)
+      setForm(EMPTY_USER_FORM)
+      toast({
+        title: "User added",
+        description: `${displayName(created.firstName, created.lastName, created.email)} was added.`,
+      })
+    } catch (err) {
+      toast({
+        title: "Could not add user",
+        description: getToastErrorMessage(err, "Failed to create user"),
+        variant: "destructive",
+      })
+    }
+  }
 
   const userColumns: MtColumn<(typeof users)[number]>[] = [
     {
@@ -159,7 +236,18 @@ export function AdminUsersRolesPage() {
 
   return (
     <div>
-      <AdminPageHeader title="Users & Roles" subtitle="User accounts, access status and role permission matrix." />
+      <AdminPageHeader
+        title="Users & Roles"
+        subtitle="User accounts, access status and role permission matrix."
+        actions={
+          tab === "users" ? (
+            <MtButton className="gap-2" onClick={openAddUser}>
+              <Plus className="h-4 w-4" />
+              Add user
+            </MtButton>
+          ) : undefined
+        }
+      />
 
       <div className="mb-5 flex gap-2">
         <button
@@ -296,6 +384,76 @@ export function AdminUsersRolesPage() {
           )}
         </AdminCard>
       )}
+
+      <FormDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        title="Add user"
+        onSubmit={handleAddUser}
+        footer={
+          <>
+            <MtButton type="button" variant="ghost" onClick={() => setAddOpen(false)}>Cancel</MtButton>
+            <MtButton type="submit" disabled={createUser.isPending}>
+              {createUser.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Add user
+            </MtButton>
+          </>
+        }
+      >
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Full name</Label>
+          <Input
+            value={form.fullName}
+            onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
+            placeholder="e.g. Anjali Nair"
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Email</Label>
+          <Input
+            type="email"
+            value={form.email}
+            onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+            placeholder="e.g. anjali@hospital.com"
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Password</Label>
+          <Input
+            type="password"
+            value={form.password}
+            onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+            placeholder="Min. 6 characters"
+            minLength={6}
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Role</Label>
+          <Select value={form.roleId || defaultRoleId} onValueChange={(v) => setForm((f) => ({ ...f, roleId: v }))}>
+            <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
+            <SelectContent>
+              {hospitalRoles.map((role) => (
+                <SelectItem key={role.id} value={role.id}>{role.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Department scope</Label>
+          <Select value={form.departmentId} onValueChange={(v) => setForm((f) => ({ ...f, departmentId: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_DEPARTMENTS}>All departments</SelectItem>
+              {departments.map((d) => (
+                <SelectItem key={d.departmentId} value={d.departmentId}>{d.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </FormDialog>
     </div>
   )
 }

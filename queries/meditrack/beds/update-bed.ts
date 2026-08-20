@@ -4,7 +4,7 @@ import type { Bed } from "./types";
 
 export interface UpdateBedRequest {
   id: string;
-  departmentId: string;
+  wardId: string;
   bedNumber: string;
   status: string;
   patientId?: string | null;
@@ -31,7 +31,7 @@ export const useUpdateBed = () => {
     retry: false,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["beds"] });
-      queryClient.invalidateQueries({ queryKey: ["departments"] });
+      queryClient.invalidateQueries({ queryKey: ["meditrack-wards"] });
     },
   });
 };

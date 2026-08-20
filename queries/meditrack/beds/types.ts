@@ -5,8 +5,8 @@ export type UiBedStatus = "Vacant" | "Occupied" | "Cleaning" | "Out of service";
 export interface Bed {
   id: string;
   companyId?: string | null;
-  departmentId: string;
-  departmentName?: string | null;
+  wardId: string;
+  wardName?: string | null;
   bedNumber: string;
   status: string;
   patientId?: string | null;
