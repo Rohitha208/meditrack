@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getMessageFromErrorBody } from "@/utils/apiErrorHandler";
 
 export interface MediTrackScreenAccess {
@@ -21,8 +21,9 @@ function normalizeAccess(payload: unknown): MediTrackScreenAccess[] {
   return [];
 }
 
-const getScreenAccess = async (clinicId: string, roleId?: string): Promise<MediTrackScreenAccess[]> => {
-  const params = new URLSearchParams({ clinicId });
+const getScreenAccess = async (clinicId?: string, roleId?: string): Promise<MediTrackScreenAccess[]> => {
+  const params = new URLSearchParams();
+  if (clinicId) params.set("clinicId", clinicId);
   if (roleId) params.set("roleId", roleId);
   const response = await fetch(`/api/meditrack/screen/access?${params.toString()}`);
   const result = await response.json().catch(() => ({}));
@@ -35,9 +36,38 @@ const getScreenAccess = async (clinicId: string, roleId?: string): Promise<MediT
 export const useGetMediTrackScreenAccess = (clinicId?: string, roleId?: string, enabled = true) => {
   return useQuery({
     queryKey: ["meditrack-screen-access", clinicId || "", roleId || ""],
-    queryFn: () => getScreenAccess(clinicId as string, roleId),
-    enabled: !!clinicId && enabled,
+    queryFn: () => getScreenAccess(clinicId, roleId),
+    enabled,
     refetchOnWindowFocus: true,
     staleTime: 0,
+  });
+};
+
+export interface UpdateScreenAccessPayload {
+  roleId: string;
+  clinicId?: string | null;
+  screenIds: string[];
+  isAccessEnable: boolean;
+}
+
+const updateScreenAccess = async (payload: UpdateScreenAccessPayload): Promise<void> => {
+  const response = await fetch("/api/meditrack/screen/access", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(getMessageFromErrorBody(result, "Failed to update screen access"));
+  }
+};
+
+export const useUpdateScreenAccess = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: updateScreenAccess,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["meditrack-screen-access"] });
+    },
   });
 };

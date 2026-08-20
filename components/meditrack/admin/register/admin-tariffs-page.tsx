@@ -1,243 +1,300 @@
 "use client"
 
-import { useState, type FormEvent } from "react"
-import { History, Pencil, Plus } from "lucide-react"
+import { useMemo, useState, type FormEvent } from "react"
+import { History, Loader2, Pencil, Plus, Trash2 } from "lucide-react"
 
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
-import { MtDataTable, RowActions, FormDialog, MtButton, formatCurrency, type MtColumn } from "@/components/meditrack/shared"
+import { getToastErrorMessage } from "@/utils/apiErrorHandler"
+import { getCompanyId } from "@/utils/clientCookie"
+import { useRootContext } from "@/context/RootContext"
+import { useGetDepartments } from "@/queries/departments"
+import {
+  useCreateTariff,
+  useDeleteTariff,
+  useGetTariffRates,
+  useGetTariffs,
+  useUpdateTariff,
+  type MediTrackPackage,
+  type MediTrackTariff,
+} from "@/queries/meditrack/tariffs"
+import { useCreatePackage, useDeletePackage, useGetPackages, useUpdatePackage } from "@/queries/meditrack/packages"
+import { useCreateTpa, useDeleteTpa, useGetTpas, useUpdateTpa, type MediTrackTpa } from "@/queries/meditrack/tpas"
+import { MtDataTable, RowActions, FormDialog, MtButton, TableSkeleton, formatCurrency, type MtColumn } from "@/components/meditrack/shared"
 import { AdminPageHeader } from "./AdminPageHeader"
 import { AdminCard } from "./AdminCard"
 import { AdminModal } from "./AdminModal"
 
-// Frontend/UI only — Tariff Master, PMJAY Packages and TPA Rate Cards all
-// live in local React state; no backend behind this page yet.
-//
-// FR-ADM-11 business rules implemented here:
-//  - Every rate change requires an effective-from date and is appended as a
-//    new dated history entry rather than overwritten in place, so a rate
-//    that was active when an invoice was generated stays reconstructable.
-//  - The rate list shows a visible indicator when a future-dated change is
-//    scheduled (the amber "↻ Changes to ₹X on [date]" line).
-//  - A PMJAY package record carries a fixed rate and the set of services it
-//    includes (see the PMJAY Packages register below).
-
-const DEPARTMENTS = ["General Medicine", "Cardiology", "Diagnostics", "Radiology", "Orthopedics"]
 const GST_OPTIONS = ["Exempt", "5%", "12%", "18%"]
+const UNASSIGNED_DEPARTMENT = "unassigned"
 
-// Mock "today" so effective-date comparisons are deterministic — matches
-// this register's other mock content (Audit Log, Hospital Profile, etc).
-const TODAY = new Date("2026-08-19")
-const TODAY_ISO = "2026-08-19"
-const TODAY_LABEL = "19 Aug 2026"
+function todayIso() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function formatDateLabel(value?: string | null) {
+  if (!value) return "—"
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value
+  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+}
+
+function parseAmount(value?: string | null) {
+  if (!value) return 0
+  const n = Number(String(value).replace(/[^\d.]/g, ""))
+  return Number.isNaN(n) ? 0 : n
+}
 
 function parseDate(value: string): Date | null {
   const d = new Date(value)
   return Number.isNaN(d.getTime()) ? null : d
 }
 
-function formatDateLabel(value: string): string {
-  const d = parseDate(value)
-  if (!d) return value
-  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+function startOfToday() {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d
 }
 
-/* ------------------------------- Tariff Master ------------------------------- */
-
-/** One dated rate — rows never overwrite an entry in place, they append a
- * new one. This is what lets an invoice generated in the past keep showing
- * the rate that was actually active on its billing date. */
-interface RateEntry {
-  rate: number
-  effectiveFrom: string // ISO yyyy-mm-dd
-  editedOn: string
-  editedBy: string
+const TARIFF_EMPTY_FORM = {
+  service: "",
+  code: "",
+  departmentId: UNASSIGNED_DEPARTMENT,
+  rate: "",
+  gst: GST_OPTIONS[0],
+  effectiveDate: todayIso(),
 }
-
-interface TariffRow {
-  id: string
-  service: string
-  code: string
-  department: string
-  gst: string
-  /** Ascending by effectiveFrom. */
-  history: RateEntry[]
-}
-
-function sortHistory(history: RateEntry[]): RateEntry[] {
-  return [...history].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))
-}
-
-/** The rate in effect today — the latest entry whose effective date has arrived. */
-function currentEntry(row: TariffRow): RateEntry {
-  const sorted = sortHistory(row.history)
-  const eligible = sorted.filter((h) => (parseDate(h.effectiveFrom)?.getTime() ?? 0) <= TODAY.getTime())
-  return eligible[eligible.length - 1] ?? sorted[0]
-}
-
-/** The next entry still waiting for its effective date, if any. */
-function upcomingEntry(row: TariffRow): RateEntry | undefined {
-  return sortHistory(row.history).find((h) => (parseDate(h.effectiveFrom)?.getTime() ?? 0) > TODAY.getTime())
-}
-
-const INITIAL_TARIFFS: TariffRow[] = [
-  { id: "1", service: "General consultation", code: "CON-001", department: "General Medicine", gst: "Exempt", history: [{ rate: 500, effectiveFrom: "2026-04-01", editedOn: "01 Apr 2026", editedBy: "R. Desai" }] },
-  { id: "2", service: "Specialist consultation", code: "CON-002", department: "Cardiology", gst: "Exempt", history: [{ rate: 700, effectiveFrom: "2026-04-01", editedOn: "01 Apr 2026", editedBy: "R. Desai" }] },
-  { id: "3", service: "ECG", code: "DIA-014", department: "Diagnostics", gst: "5%", history: [{ rate: 350, effectiveFrom: "2026-01-12", editedOn: "12 Jan 2026", editedBy: "S. Verma" }] },
-  { id: "4", service: "Chest X-ray", code: "RAD-006", department: "Radiology", gst: "5%", history: [{ rate: 600, effectiveFrom: "2026-01-12", editedOn: "12 Jan 2026", editedBy: "S. Verma" }] },
-  { id: "5", service: "General ward bed / day", code: "BED-GEN", department: "General Medicine", gst: "Exempt", history: [{ rate: 1200, effectiveFrom: "2026-04-01", editedOn: "01 Apr 2026", editedBy: "R. Desai" }] },
-  {
-    id: "6",
-    service: "ICU bed / day",
-    code: "BED-ICU",
-    department: "Cardiology",
-    gst: "Exempt",
-    history: [
-      { rate: 6500, effectiveFrom: "2026-07-20", editedOn: "20 Jul 2026", editedBy: "R. Desai" },
-      { rate: 7200, effectiveFrom: "2026-09-01", editedOn: "20 Jul 2026", editedBy: "R. Desai" },
-    ],
-  },
-]
-
-const TARIFF_EMPTY_FORM = { service: "", code: "", department: DEPARTMENTS[0], rate: "", gst: GST_OPTIONS[0], effectiveDate: TODAY_ISO }
-
-/* ------------------------------- PMJAY Packages ------------------------------- */
-
-interface PmjayPackageRow {
-  id: string
-  code: string
-  name: string
-  rate: number
-  includedServices: string
-  lastEdited: string
-  editedBy: string
-}
-
-const INITIAL_PMJAY_PACKAGES: PmjayPackageRow[] = [
-  { id: "1", code: "PMJAY-OBS-014", name: "Normal Delivery", rate: 9000, includedServices: "Normal delivery, 48-hr stay, routine post-natal care", lastEdited: "01 Apr 2026", editedBy: "R. Desai" },
-  { id: "2", code: "PMJAY-OPH-021", name: "Cataract Surgery (Phaco)", rate: 10000, includedServices: "Phacoemulsification, IOL, 1 follow-up visit", lastEdited: "01 Apr 2026", editedBy: "R. Desai" },
-  { id: "3", code: "PMJAY-CAR-009", name: "Angioplasty (PTCA, 1 stent)", rate: 65000, includedServices: "PTCA with 1 stent, 3-day ICU/ward stay", lastEdited: "12 Jan 2026", editedBy: "S. Verma" },
-  { id: "4", code: "PMJAY-ORT-004", name: "Hip Replacement (Unilateral)", rate: 120000, includedServices: "Implant, surgery, 7-day stay, physiotherapy", lastEdited: "12 Jan 2026", editedBy: "S. Verma" },
-]
 
 const PMJAY_EMPTY_FORM = { code: "", name: "", rate: "", includedServices: "" }
-
-/* ------------------------------- TPA Rate Cards ------------------------------- */
-
-interface TpaCard {
-  id: string
-  insurer: string
-  discount?: string
-  overrideRates?: string
-  lastNegotiated?: string
-  editedBy?: string
-  /** A future-dated change waiting on its effective date — same append-
-   * rather-than-overwrite discipline as the Tariff Master above. */
-  pending?: { discount?: string; overrideRates?: string; date: string }
-}
-
-const TPA_CARDS: TpaCard[] = [
-  { id: "1", insurer: "Star Health Insurance", discount: "10% off base tariff — Cardiology, Orthopedics", lastNegotiated: "12 Jan 2026", editedBy: "S. Verma" },
-  { id: "2", insurer: "ICICI Lombard", discount: "8% off base tariff — all departments", lastNegotiated: "01 Apr 2026", editedBy: "R. Desai" },
-  { id: "3", insurer: "HDFC Ergo Health" },
-  { id: "4", insurer: "Bajaj Allianz" },
-]
-
-const TPA_EMPTY_FORM = { insurer: TPA_CARDS[0].insurer, discountPct: "", overrideRates: "", effectiveDate: TODAY_ISO }
+const TPA_EMPTY_FORM = { tpaName: "", discountPercent: "", overrideRates: "", effectiveDate: todayIso() }
 
 export function AdminTariffsPage() {
   const { toast } = useToast()
+  const { user, clinic } = useRootContext()
+  const companyId = clinic?.companyId || user?.companyId || getCompanyId() || ""
+  const clinicId = clinic?.id || undefined
 
-  /* ---- Tariff Master ---- */
-  const [tariffs, setTariffs] = useState<TariffRow[]>(INITIAL_TARIFFS)
+  const { data: departments = [] } = useGetDepartments(companyId || undefined, clinicId)
+  const { data: tariffsData, isLoading: isLoadingTariffs, isError: isTariffsError, error: tariffsError } = useGetTariffs({ pageSize: 100 })
+  const { data: packagesData, isLoading: isLoadingPackages, isError: isPackagesError, error: packagesError } = useGetPackages({ pageSize: 100 })
+  const { data: tpasData, isLoading: isLoadingTpas, isError: isTpasError, error: tpasError } = useGetTpas({ pageSize: 100 })
+  const createTariff = useCreateTariff()
+  const updateTariff = useUpdateTariff()
+  const deleteTariff = useDeleteTariff()
+  const createPackage = useCreatePackage()
+  const updatePackage = useUpdatePackage()
+  const deletePackage = useDeletePackage()
+  const createTpa = useCreateTpa()
+  const updateTpa = useUpdateTpa()
+  const deleteTpa = useDeleteTpa()
+
+  const tariffs = tariffsData?.items ?? []
+  const packages = packagesData?.items ?? []
+  const tpas = tpasData?.items ?? []
+
   const [tariffDrawerOpen, setTariffDrawerOpen] = useState(false)
-  const [editingTariff, setEditingTariff] = useState<TariffRow | null>(null)
+  const [editingTariff, setEditingTariff] = useState<MediTrackTariff | null>(null)
   const [tariffForm, setTariffForm] = useState(TARIFF_EMPTY_FORM)
-  const [historyTarget, setHistoryTarget] = useState<TariffRow | null>(null)
+  const [historyTarget, setHistoryTarget] = useState<MediTrackTariff | null>(null)
+  const [pmjayDrawerOpen, setPmjayDrawerOpen] = useState(false)
+  const [editingPackage, setEditingPackage] = useState<MediTrackPackage | null>(null)
+  const [pmjayForm, setPmjayForm] = useState(PMJAY_EMPTY_FORM)
+  const [deleteTarget, setDeleteTarget] = useState<{ type: "tariff" | "package" | "tpa"; id: string; name: string } | null>(null)
+
+  const { data: rateHistory = [], isLoading: isLoadingHistory } = useGetTariffRates(historyTarget?.id, !!historyTarget)
+
+  const departmentOptions = useMemo(
+    () => departments.filter((d) => d.isActive !== false),
+    [departments]
+  )
+
+  const isSavingTariff = createTariff.isPending || updateTariff.isPending
+  const isSavingPackage = createPackage.isPending || updatePackage.isPending
+  const isSavingTpa = createTpa.isPending || updateTpa.isPending
 
   function openAddTariff() {
     setEditingTariff(null)
-    setTariffForm(TARIFF_EMPTY_FORM)
+    setTariffForm({ ...TARIFF_EMPTY_FORM, effectiveDate: todayIso() })
     setTariffDrawerOpen(true)
   }
 
-  function openEditTariff(row: TariffRow) {
+  function openEditTariff(row: MediTrackTariff) {
     setEditingTariff(row)
-    setTariffForm({ service: row.service, code: row.code, department: row.department, rate: String(currentEntry(row).rate), gst: row.gst, effectiveDate: TODAY_ISO })
+    setTariffForm({
+      service: row.service || "",
+      code: row.code || "",
+      departmentId: row.departmentId || UNASSIGNED_DEPARTMENT,
+      rate: row.rate || "",
+      gst: row.gst || GST_OPTIONS[0],
+      effectiveDate: todayIso(),
+    })
     setTariffDrawerOpen(true)
   }
 
-  function handleTariffSubmit(e: FormEvent<HTMLFormElement>) {
+  function openAddPackage() {
+    setEditingPackage(null)
+    setPmjayForm(PMJAY_EMPTY_FORM)
+    setPmjayDrawerOpen(true)
+  }
+
+  function openEditPackage(row: MediTrackPackage) {
+    setEditingPackage(row)
+    setPmjayForm({
+      code: row.code || "",
+      name: row.name || "",
+      rate: row.fixedRate || "",
+      includedServices: row.includedServices || "",
+    })
+    setPmjayDrawerOpen(true)
+  }
+
+  const [tpaDrawerOpen, setTpaDrawerOpen] = useState(false)
+  const [editingTpa, setEditingTpa] = useState<MediTrackTpa | null>(null)
+  const [tpaForm, setTpaForm] = useState(TPA_EMPTY_FORM)
+
+  function openAddTpa() {
+    setEditingTpa(null)
+    setTpaForm({ ...TPA_EMPTY_FORM, effectiveDate: todayIso() })
+    setTpaDrawerOpen(true)
+  }
+
+  function openEditTpa(row: MediTrackTpa) {
+    setEditingTpa(row)
+    setTpaForm({
+      tpaName: row.tpaName || "",
+      discountPercent: row.discountPercent || "",
+      overrideRates: row.overrideRates || "",
+      effectiveDate: row.effectiveDate?.slice(0, 10) || todayIso(),
+    })
+    setTpaDrawerOpen(true)
+  }
+
+  async function handleTariffSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!tariffForm.effectiveDate) {
       toast({ title: "Effective date required", description: "Every rate change needs an effective-from date.", variant: "destructive" })
       return
     }
-    const newRate = Number(tariffForm.rate) || 0
-    const effective = parseDate(tariffForm.effectiveDate)
-    const isFutureDated = !!effective && effective.getTime() > TODAY.getTime()
-    const newEntry: RateEntry = { rate: newRate, effectiveFrom: tariffForm.effectiveDate, editedOn: TODAY_LABEL, editedBy: "R. Desai" }
 
-    if (editingTariff) {
-      setTariffs((prev) =>
-        prev.map((r) =>
-          r.id === editingTariff.id
-            ? { ...r, service: tariffForm.service, code: tariffForm.code, department: tariffForm.department, gst: tariffForm.gst, history: sortHistory([...r.history, newEntry]) }
-            : r
-        )
-      )
-      toast({
-        title: isFutureDated ? "Change scheduled" : "Rate updated",
-        description: isFutureDated
-          ? `${tariffForm.service} will change to ${formatCurrency(newRate)} on ${formatDateLabel(tariffForm.effectiveDate)}. The current rate stays live — and on record — until then.`
-          : `${tariffForm.service} is now ${formatCurrency(newRate)}, effective ${formatDateLabel(tariffForm.effectiveDate)}.`,
-      })
-    } else {
-      const row: TariffRow = {
-        id: String(Date.now()),
-        service: tariffForm.service || "Untitled service",
-        code: tariffForm.code || "NEW-000",
-        department: tariffForm.department,
-        gst: tariffForm.gst,
-        history: [newEntry],
-      }
-      setTariffs((prev) => [...prev, row])
-      toast({ title: "Rate added", description: `${row.service} added to the tariff master, effective ${formatDateLabel(tariffForm.effectiveDate)}.` })
+    const payload = {
+      service: tariffForm.service.trim(),
+      code: tariffForm.code.trim() || null,
+      departmentId: tariffForm.departmentId === UNASSIGNED_DEPARTMENT ? null : tariffForm.departmentId,
+      rate: tariffForm.rate.trim() || null,
+      gst: tariffForm.gst,
+      effectiveDate: tariffForm.effectiveDate,
     }
 
-    setTariffDrawerOpen(false)
-    setEditingTariff(null)
-    setTariffForm(TARIFF_EMPTY_FORM)
+    try {
+      if (editingTariff) {
+        const updated = await updateTariff.mutateAsync({
+          id: editingTariff.id,
+          ...payload,
+          isActive: editingTariff.isActive,
+        })
+        toast({ title: "Rate updated", description: `${updated.service} was saved.` })
+      } else {
+        const created = await createTariff.mutateAsync(payload)
+        toast({
+          title: "Rate added",
+          description: `${created.service} added to the tariff master, effective ${formatDateLabel(created.effectiveDate)}.`,
+        })
+      }
+      setTariffDrawerOpen(false)
+      setEditingTariff(null)
+      setTariffForm({ ...TARIFF_EMPTY_FORM, effectiveDate: todayIso() })
+    } catch (err) {
+      toast({
+        title: editingTariff ? "Could not update rate" : "Could not add rate",
+        description: getToastErrorMessage(err, "Failed to save tariff"),
+        variant: "destructive",
+      })
+    }
   }
 
-  const tariffColumns: MtColumn<TariffRow>[] = [
-    { key: "service", header: "Service", alwaysVisible: true, render: (r) => <span className="font-medium text-adminreg-text">{r.service}</span> },
-    { key: "code", header: "Code", render: (r) => <span className="font-mono text-xs">{r.code}</span> },
-    { key: "department", header: "Department", render: (r) => r.department },
-    { key: "rate", header: "Rate (₹)", render: (r) => currentEntry(r).rate.toLocaleString("en-IN"), sortValue: (r) => currentEntry(r).rate },
-    { key: "gst", header: "GST", render: (r) => r.gst },
+  async function handlePmjaySubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const payload = {
+      code: pmjayForm.code.trim(),
+      name: pmjayForm.name.trim(),
+      fixedRate: pmjayForm.rate.trim() || null,
+      includedServices: pmjayForm.includedServices.trim() || null,
+      effectiveDate: editingPackage?.effectiveDate?.slice(0, 10) || todayIso(),
+    }
+    try {
+      if (editingPackage) {
+        const updated = await updatePackage.mutateAsync({
+          id: editingPackage.id,
+          ...payload,
+          isActive: editingPackage.isActive,
+        })
+        toast({ title: "Package updated", description: `${updated.name} was saved.` })
+      } else {
+        const created = await createPackage.mutateAsync(payload)
+        toast({ title: "Package added", description: `${created.name} added to PMJAY Packages.` })
+      }
+      setPmjayDrawerOpen(false)
+      setEditingPackage(null)
+      setPmjayForm(PMJAY_EMPTY_FORM)
+    } catch (err) {
+      toast({
+        title: editingPackage ? "Could not update package" : "Could not add package",
+        description: getToastErrorMessage(err, "Failed to save package"),
+        variant: "destructive",
+      })
+    }
+  }
+
+  async function handleConfirmDelete() {
+    if (!deleteTarget) return
+    try {
+      if (deleteTarget.type === "tariff") {
+        await deleteTariff.mutateAsync(deleteTarget.id)
+        toast({ title: "Rate deleted", description: `${deleteTarget.name} was removed from the tariff master.` })
+      } else if (deleteTarget.type === "package") {
+        await deletePackage.mutateAsync(deleteTarget.id)
+        toast({ title: "Package deleted", description: `${deleteTarget.name} was removed from PMJAY Packages.` })
+      } else {
+        await deleteTpa.mutateAsync(deleteTarget.id)
+        toast({ title: "TPA deleted", description: `${deleteTarget.name} was removed from TPA rate cards.` })
+      }
+      setDeleteTarget(null)
+    } catch (err) {
+      toast({
+        title:
+          deleteTarget.type === "tariff"
+            ? "Could not delete rate"
+            : deleteTarget.type === "package"
+              ? "Could not delete package"
+              : "Could not delete TPA",
+        description: getToastErrorMessage(err, "Failed to delete"),
+        variant: "destructive",
+      })
+    }
+  }
+
+  const tariffColumns: MtColumn<MediTrackTariff>[] = [
+    { key: "service", header: "Service", alwaysVisible: true, render: (r) => <span className="font-medium text-adminreg-text">{r.service}</span>, sortValue: (r) => r.service },
+    { key: "code", header: "Code", render: (r) => <span className="font-mono text-xs">{r.code || "—"}</span>, sortValue: (r) => r.code || "" },
+    { key: "department", header: "Department", render: (r) => r.departmentName || "—", sortValue: (r) => r.departmentName || "" },
+    { key: "rate", header: "Rate (₹)", render: (r) => parseAmount(r.rate).toLocaleString("en-IN"), sortValue: (r) => parseAmount(r.rate) },
+    { key: "gst", header: "GST", render: (r) => r.gst || "—" },
     {
       key: "lastEdited",
       header: "Last edited",
-      render: (r) => {
-        const current = currentEntry(r)
-        const upcoming = upcomingEntry(r)
-        return (
-          <div>
-            <p>
-              {current.editedOn} · {current.editedBy}
+      render: (r) => (
+        <div>
+          <p>{formatDateLabel(r.updatedAt || r.effectiveDate)}</p>
+          {r.hasScheduledChange && r.upcomingRate && (
+            <p className="text-xs text-adminreg-amber">
+              ↻ Changes to {formatCurrency(parseAmount(r.upcomingRate))} on {formatDateLabel(r.upcomingRateDate)}
             </p>
-            {upcoming && (
-              <p className="text-xs text-adminreg-amber">
-                ↻ Changes to {formatCurrency(upcoming.rate)} on {formatDateLabel(upcoming.effectiveFrom)}
-              </p>
-            )}
-          </div>
-        )
-      },
+          )}
+        </div>
+      ),
     },
     {
       key: "action",
@@ -250,50 +307,45 @@ export function AdminTariffsPage() {
           actions={[
             { icon: History, label: "History", tooltip: "View rate history", onClick: () => setHistoryTarget(r) },
             { icon: Pencil, label: "Edit", onClick: () => openEditTariff(r) },
+            { icon: Trash2, label: "Delete", destructive: true, onClick: () => setDeleteTarget({ type: "tariff", id: r.id, name: r.service }) },
           ]}
         />
       ),
     },
   ]
 
-  /* ---- PMJAY Packages ---- */
-  const [pmjayPackages, setPmjayPackages] = useState<PmjayPackageRow[]>(INITIAL_PMJAY_PACKAGES)
-  const [addPmjayOpen, setAddPmjayOpen] = useState(false)
-  const [pmjayForm, setPmjayForm] = useState(PMJAY_EMPTY_FORM)
-
-  function handleAddPmjay(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const row: PmjayPackageRow = {
-      id: String(Date.now()),
-      code: pmjayForm.code || "PMJAY-NEW-000",
-      name: pmjayForm.name || "Untitled package",
-      rate: Number(pmjayForm.rate) || 0,
-      includedServices: pmjayForm.includedServices || "—",
-      lastEdited: TODAY_LABEL,
-      editedBy: "R. Desai",
-    }
-    setPmjayPackages((prev) => [...prev, row])
-    setAddPmjayOpen(false)
-    setPmjayForm(PMJAY_EMPTY_FORM)
-    toast({ title: "Package added", description: `${row.name} added to PMJAY Packages.` })
-  }
-
-  const pmjayColumns: MtColumn<PmjayPackageRow>[] = [
+  const pmjayColumns: MtColumn<(typeof packages)[number]>[] = [
     { key: "code", header: "Code", render: (r) => <span className="font-mono text-xs">{r.code}</span> },
     { key: "name", header: "Name", alwaysVisible: true, render: (r) => <span className="font-medium text-adminreg-text">{r.name}</span> },
-    { key: "rate", header: "Fixed rate (₹)", render: (r) => formatCurrency(r.rate), sortValue: (r) => r.rate },
-    { key: "includedServices", header: "Included services", render: (r) => <span className="text-adminreg-muted">{r.includedServices}</span> },
+    { key: "rate", header: "Fixed rate (₹)", render: (r) => formatCurrency(parseAmount(r.fixedRate)), sortValue: (r) => parseAmount(r.fixedRate) },
+    { key: "includedServices", header: "Included services", render: (r) => <span className="text-adminreg-muted">{r.includedServices || "—"}</span> },
+    {
+      key: "action",
+      header: "Action",
+      alwaysVisible: true,
+      className: "text-right",
+      headerClassName: "text-right",
+      render: (r) => (
+        <RowActions
+          actions={[
+            { icon: Pencil, label: "Edit", onClick: () => openEditPackage(r) },
+            {
+              icon: Trash2,
+              label: "Delete",
+              destructive: true,
+              onClick: () => setDeleteTarget({ type: "package", id: r.id, name: r.name }),
+            },
+          ]}
+        />
+      ),
+    },
   ]
 
   /* ---- TPA Rate Cards ---- */
-  const [tpaCards, setTpaCards] = useState<TpaCard[]>(TPA_CARDS)
-  const [addTpaOpen, setAddTpaOpen] = useState(false)
-  const [tpaForm, setTpaForm] = useState(TPA_EMPTY_FORM)
-
-  function handleAddTpa(e: FormEvent<HTMLFormElement>) {
+  async function handleTpaSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    const insurerName = tpaForm.insurer.trim()
-    if (!insurerName) {
+    const tpaName = tpaForm.tpaName.trim()
+    if (!tpaName) {
       toast({ title: "TPA name required", description: "Enter the insurer/TPA's name.", variant: "destructive" })
       return
     }
@@ -301,38 +353,35 @@ export function AdminTariffsPage() {
       toast({ title: "Effective date required", description: "Every negotiated-rate change needs an effective-from date.", variant: "destructive" })
       return
     }
-    const effective = parseDate(tpaForm.effectiveDate)
-    const isFutureDated = !!effective && effective.getTime() > TODAY.getTime()
-    const discountLabel = tpaForm.discountPct ? `${tpaForm.discountPct}% off base tariff` : undefined
-    const overrideRates = tpaForm.overrideRates.trim() || undefined
-    const dateLabel = formatDateLabel(tpaForm.effectiveDate)
+    const payload = {
+      tpaName,
+      discountPercent: tpaForm.discountPercent.trim() || null,
+      overrideRates: tpaForm.overrideRates.trim() || null,
+      effectiveDate: tpaForm.effectiveDate,
+    }
 
-    setTpaCards((prev) => {
-      const existingIndex = prev.findIndex((c) => c.insurer.toLowerCase() === insurerName.toLowerCase())
-      if (existingIndex === -1) {
-        const newCard: TpaCard = isFutureDated
-          ? { id: String(Date.now()), insurer: insurerName, pending: { discount: discountLabel, overrideRates, date: dateLabel } }
-          : { id: String(Date.now()), insurer: insurerName, discount: discountLabel, overrideRates, lastNegotiated: dateLabel, editedBy: "R. Desai" }
-        return [...prev, newCard]
+    try {
+      if (editingTpa) {
+        const updated = await updateTpa.mutateAsync({
+          id: editingTpa.id,
+          ...payload,
+          isActive: editingTpa.isActive,
+        })
+        toast({ title: "TPA updated", description: `${updated.tpaName} was saved.` })
+      } else {
+        const created = await createTpa.mutateAsync(payload)
+        toast({ title: "TPA added", description: `${created.tpaName} was added to TPA rate cards.` })
       }
-      return prev.map((c, i) =>
-        i === existingIndex
-          ? isFutureDated
-            ? { ...c, pending: { discount: discountLabel, overrideRates, date: dateLabel } }
-            : { ...c, discount: discountLabel ?? c.discount, overrideRates: overrideRates ?? c.overrideRates, lastNegotiated: dateLabel, editedBy: "R. Desai", pending: undefined }
-          : c
-      )
-    })
-
-    toast({
-      title: isFutureDated ? "Rate card change scheduled" : "Rate card updated",
-      description: isFutureDated
-        ? `${insurerName}'s negotiated rate takes effect ${dateLabel}.`
-        : `${insurerName}'s negotiated rate is now in effect.`,
-    })
-
-    setAddTpaOpen(false)
-    setTpaForm(TPA_EMPTY_FORM)
+      setTpaDrawerOpen(false)
+      setEditingTpa(null)
+      setTpaForm({ ...TPA_EMPTY_FORM, effectiveDate: todayIso() })
+    } catch (err) {
+      toast({
+        title: editingTpa ? "Could not update TPA" : "Could not add TPA",
+        description: getToastErrorMessage(err, "Failed to save TPA rate card"),
+        variant: "destructive",
+      })
+    }
   }
 
   return (
@@ -349,64 +398,97 @@ export function AdminTariffsPage() {
           </MtButton>
         }
       >
-        <MtDataTable columns={tariffColumns} rows={tariffs} keyExtractor={(r) => r.id} />
+        {isLoadingTariffs ? (
+          <TableSkeleton rows={6} columns={6} />
+        ) : isTariffsError ? (
+          <p className="px-5 py-8 text-sm text-adminreg-red">{getToastErrorMessage(tariffsError, "Failed to load tariffs")}</p>
+        ) : (
+          <MtDataTable
+            columns={tariffColumns}
+            rows={tariffs}
+            keyExtractor={(r) => r.id}
+            emptyTitle="No tariffs yet"
+            emptyDescription="Add a rate to start the tariff master."
+          />
+        )}
       </AdminCard>
 
       <AdminCard
         title="PMJAY Packages"
         noPadding
         action={
-          <MtButton className="gap-2" onClick={() => setAddPmjayOpen(true)}>
+          <MtButton className="gap-2" onClick={openAddPackage}>
             <Plus className="h-4 w-4" />
             Add package
           </MtButton>
         }
       >
-        <MtDataTable columns={pmjayColumns} rows={pmjayPackages} keyExtractor={(r) => r.id} />
+        {isLoadingPackages ? (
+          <TableSkeleton rows={4} columns={4} />
+        ) : isPackagesError ? (
+          <p className="px-5 py-8 text-sm text-adminreg-red">{getToastErrorMessage(packagesError, "Failed to load packages")}</p>
+        ) : (
+          <MtDataTable
+            columns={pmjayColumns}
+            rows={packages}
+            keyExtractor={(r) => r.id}
+            emptyTitle="No packages yet"
+            emptyDescription="Add a PMJAY package to start the register."
+          />
+        )}
       </AdminCard>
 
       <AdminCard
         title="TPA Rate Cards"
         action={
-          <MtButton
-            className="gap-2"
-            onClick={() => {
-              setTpaForm(TPA_EMPTY_FORM)
-              setAddTpaOpen(true)
-            }}
-          >
+          <MtButton className="gap-2" onClick={openAddTpa}>
             <Plus className="h-4 w-4" />
             Add TPA
           </MtButton>
         }
       >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {tpaCards.map((card) => (
-            <div key={card.id} className="border border-adminreg-border bg-adminreg-header/40 p-4">
-              <p className="text-sm font-semibold text-adminreg-text">{card.insurer}</p>
-              {card.discount || card.overrideRates ? (
-                <>
-                  {card.discount && <p className="mt-1.5 text-sm text-adminreg-olive-700">{card.discount}</p>}
-                  {card.overrideRates && <p className="mt-1 text-xs text-adminreg-muted">Override rates: {card.overrideRates}</p>}
-                  <p className="mt-1 text-xs text-adminreg-muted">
-                    Last negotiated {card.lastNegotiated} · {card.editedBy}
-                  </p>
-                </>
-              ) : (
-                !card.pending && (
+        {isLoadingTpas ? (
+          <TableSkeleton rows={4} columns={2} />
+        ) : isTpasError ? (
+          <p className="px-5 py-8 text-sm text-adminreg-red">{getToastErrorMessage(tpasError, "Failed to load TPA rate cards")}</p>
+        ) : tpas.length === 0 ? (
+          <p className="px-5 py-8 text-sm text-adminreg-muted">No TPA rate cards yet. Add a negotiated rate card to start this register.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {tpas.map((card) => (
+              <div key={card.id} className="border border-adminreg-border bg-adminreg-header/40 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-sm font-semibold text-adminreg-text">{card.tpaName}</p>
+                  <RowActions
+                    actions={[
+                      { icon: Pencil, label: "Edit", onClick: () => openEditTpa(card) },
+                      {
+                        icon: Trash2,
+                        label: "Delete",
+                        destructive: true,
+                        onClick: () => setDeleteTarget({ type: "tpa", id: card.id, name: card.tpaName }),
+                      },
+                    ]}
+                  />
+                </div>
+                {card.discountPercent && (
+                  <p className="mt-1.5 text-sm text-adminreg-olive-700">{card.discountPercent}% off base tariff</p>
+                )}
+                {card.overrideRates && (
+                  <p className="mt-1 text-xs text-adminreg-muted">Override rates: {card.overrideRates}</p>
+                )}
+                {!card.discountPercent && !card.overrideRates && (
                   <p className="mt-1.5 text-xs font-medium text-adminreg-amber-text">
                     No negotiated rates entered yet — showing base tariff for all services.
                   </p>
-                )
-              )}
-              {card.pending && (
-                <p className="mt-1.5 text-xs font-medium text-adminreg-amber-text">
-                  ↻ {card.pending.discount || card.pending.overrideRates || "New rate"} takes effect {card.pending.date}
+                )}
+                <p className="mt-1 text-xs text-adminreg-muted">
+                  Effective {formatDateLabel(card.effectiveDate)} · Updated {formatDateLabel(card.updatedAt)}
                 </p>
-              )}
-            </div>
-          ))}
-        </div>
+              </div>
+            ))}
+          </div>
+        )}
       </AdminCard>
 
       <FormDialog
@@ -416,12 +498,15 @@ export function AdminTariffsPage() {
           if (!open) setEditingTariff(null)
         }}
         title={editingTariff ? "Edit rate" : "Add rate"}
-        description={editingTariff ? `${editingTariff.code} · currently ${formatCurrency(currentEntry(editingTariff).rate)}` : undefined}
+        description={editingTariff ? `${editingTariff.code || "No code"} · currently ${formatCurrency(parseAmount(editingTariff.rate))}` : undefined}
         onSubmit={handleTariffSubmit}
         footer={
           <>
             <MtButton type="button" variant="ghost" onClick={() => setTariffDrawerOpen(false)}>Cancel</MtButton>
-            <MtButton type="submit">{editingTariff ? "Save changes" : "Add rate"}</MtButton>
+            <MtButton type="submit" disabled={isSavingTariff}>
+              {isSavingTariff ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {editingTariff ? "Save changes" : "Add rate"}
+            </MtButton>
           </>
         }
       >
@@ -435,11 +520,12 @@ export function AdminTariffsPage() {
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Department</Label>
-          <Select value={tariffForm.department} onValueChange={(v) => setTariffForm((f) => ({ ...f, department: v }))}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
+          <Select value={tariffForm.departmentId} onValueChange={(v) => setTariffForm((f) => ({ ...f, departmentId: v }))}>
+            <SelectTrigger><SelectValue placeholder="Unassigned" /></SelectTrigger>
             <SelectContent>
-              {DEPARTMENTS.map((d) => (
-                <SelectItem key={d} value={d}>{d}</SelectItem>
+              <SelectItem value={UNASSIGNED_DEPARTMENT}>Unassigned</SelectItem>
+              {departmentOptions.map((d) => (
+                <SelectItem key={d.departmentId} value={d.departmentId}>{d.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -471,14 +557,20 @@ export function AdminTariffsPage() {
       </FormDialog>
 
       <FormDialog
-        open={addPmjayOpen}
-        onOpenChange={setAddPmjayOpen}
-        title="Add PMJAY package"
-        onSubmit={handleAddPmjay}
+        open={pmjayDrawerOpen}
+        onOpenChange={(open) => {
+          setPmjayDrawerOpen(open)
+          if (!open) setEditingPackage(null)
+        }}
+        title={editingPackage ? "Edit PMJAY package" : "Add PMJAY package"}
+        onSubmit={handlePmjaySubmit}
         footer={
           <>
-            <MtButton type="button" variant="ghost" onClick={() => setAddPmjayOpen(false)}>Cancel</MtButton>
-            <MtButton type="submit">Add package</MtButton>
+            <MtButton type="button" variant="ghost" onClick={() => setPmjayDrawerOpen(false)}>Cancel</MtButton>
+            <MtButton type="submit" disabled={isSavingPackage}>
+              {isSavingPackage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {editingPackage ? "Save changes" : "Add package"}
+            </MtButton>
           </>
         }
       >
@@ -506,25 +598,30 @@ export function AdminTariffsPage() {
       </FormDialog>
 
       <FormDialog
-        open={addTpaOpen}
-        onOpenChange={setAddTpaOpen}
-        title="Add TPA rate card"
-        onSubmit={handleAddTpa}
+        open={tpaDrawerOpen}
+        onOpenChange={(open) => {
+          setTpaDrawerOpen(open)
+          if (!open) setEditingTpa(null)
+        }}
+        title={editingTpa ? "Edit TPA rate card" : "Add TPA rate card"}
+        onSubmit={handleTpaSubmit}
         footer={
           <>
-            <MtButton type="button" variant="ghost" onClick={() => setAddTpaOpen(false)}>Cancel</MtButton>
-            <MtButton type="submit">Add rate card</MtButton>
+            <MtButton type="button" variant="ghost" onClick={() => setTpaDrawerOpen(false)}>Cancel</MtButton>
+            <MtButton type="submit" disabled={isSavingTpa}>
+              {isSavingTpa ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {editingTpa ? "Save changes" : "Add rate card"}
+            </MtButton>
           </>
         }
       >
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">TPA name</Label>
-          <Input value={tpaForm.insurer} onChange={(e) => setTpaForm((f) => ({ ...f, insurer: e.target.value }))} placeholder="e.g. Star Health Insurance" required />
-          <p className="text-xs text-adminreg-muted">Matches an existing card by name, or adds a new one if it doesn't match yet.</p>
+          <Input value={tpaForm.tpaName} onChange={(e) => setTpaForm((f) => ({ ...f, tpaName: e.target.value }))} placeholder="e.g. Star Health Insurance" required />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Negotiated discount (% off base tariff)</Label>
-          <Input type="number" min={0} max={100} value={tpaForm.discountPct} onChange={(e) => setTpaForm((f) => ({ ...f, discountPct: e.target.value }))} placeholder="e.g. 10" />
+          <Input type="number" min={0} max={100} value={tpaForm.discountPercent} onChange={(e) => setTpaForm((f) => ({ ...f, discountPercent: e.target.value }))} placeholder="e.g. 10" />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Or specify override rates</Label>
@@ -548,32 +645,52 @@ export function AdminTariffsPage() {
         open={!!historyTarget}
         onOpenChange={(open) => !open && setHistoryTarget(null)}
         title={historyTarget ? `Rate history — ${historyTarget.service}` : ""}
-        lines={historyTarget ? [`${historyTarget.code} · every entry below is permanent — invoices keep the rate active on their billing date.`] : []}
+        lines={historyTarget ? [`${historyTarget.code || "No code"} · every entry below is permanent — invoices keep the rate active on their billing date.`] : []}
         confirmLabel="Close"
         onConfirm={() => setHistoryTarget(null)}
       >
         {historyTarget && (
           <div className="mt-3 space-y-2">
-            {sortHistory(historyTarget.history).map((h, i) => {
-              const isFuture = (parseDate(h.effectiveFrom)?.getTime() ?? 0) > TODAY.getTime()
-              const isCurrent = !isFuture && h === currentEntry(historyTarget)
-              const tag = isFuture ? "UPCOMING" : isCurrent ? "CURRENT" : "PAST"
-              const tagClass = isFuture ? "text-adminreg-amber-text" : isCurrent ? "text-adminreg-olive-700" : "text-adminreg-muted"
-              return (
-                <div key={i} className="flex items-center justify-between border border-adminreg-border bg-adminreg-header/40 px-3.5 py-2.5 text-sm">
-                  <div>
-                    <p className="font-semibold text-adminreg-text">{formatCurrency(h.rate)}</p>
-                    <p className="text-xs text-adminreg-muted">
-                      Effective {formatDateLabel(h.effectiveFrom)} · edited {h.editedOn} by {h.editedBy}
-                    </p>
+            {isLoadingHistory ? (
+              <p className="text-sm text-adminreg-muted">Loading rate history…</p>
+            ) : rateHistory.length === 0 ? (
+              <p className="text-sm text-adminreg-muted">No rate history yet.</p>
+            ) : (
+              rateHistory.map((h) => {
+                const isFuture = new Date(h.effectiveDate).getTime() > Date.now()
+                const tag = isFuture ? "UPCOMING" : h.isCurrent ? "CURRENT" : "PAST"
+                const tagClass = isFuture ? "text-adminreg-amber-text" : h.isCurrent ? "text-adminreg-olive-700" : "text-adminreg-muted"
+                return (
+                  <div key={h.id} className="flex items-center justify-between border border-adminreg-border bg-adminreg-header/40 px-3.5 py-2.5 text-sm">
+                    <div>
+                      <p className="font-semibold text-adminreg-text">{formatCurrency(parseAmount(h.rate))}</p>
+                      <p className="text-xs text-adminreg-muted">Effective {formatDateLabel(h.effectiveDate)}</p>
+                    </div>
+                    <span className={`font-mono text-[10px] font-bold uppercase tracking-[0.04em] ${tagClass}`}>{tag}</span>
                   </div>
-                  <span className={`font-mono text-[10px] font-bold uppercase tracking-[0.04em] ${tagClass}`}>{tag}</span>
-                </div>
-              )
-            })}
+                )
+              })
+            )}
           </div>
         )}
       </AdminModal>
+
+      <AdminModal
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={deleteTarget?.type === "package" ? "Delete package" : deleteTarget?.type === "tpa" ? "Delete TPA" : "Delete rate"}
+        lines={
+          deleteTarget
+            ? [
+                `"${deleteTarget.name}" will be removed from the register.`,
+                "This cannot be undone from this screen.",
+              ]
+            : []
+        }
+        confirmLabel={deleteTariff.isPending || deletePackage.isPending || deleteTpa.isPending ? "Deleting…" : "Delete"}
+        danger
+        onConfirm={handleConfirmDelete}
+      />
     </div>
   )
 }
