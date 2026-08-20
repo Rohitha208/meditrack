@@ -25,6 +25,32 @@ function displayName(firstName?: string, lastName?: string, email?: string) {
   return name || email || "Unknown user"
 }
 
+/** Pill toggle switch for the permission matrix — olive track + white knob
+ * when allowed, muted track + grey knob when not. The grey knob is
+ * deliberate: at a glance it reads as "off" without relying on color alone
+ * (matches the rest of the register's toggle switches elsewhere). */
+function PermissionToggle({ allowed, onClick }: { allowed: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={allowed}
+      onClick={onClick}
+      className={cn(
+        "relative mx-auto flex h-5 w-9 flex-shrink-0 items-center rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-adminreg-olive focus-visible:ring-offset-1",
+        allowed ? "border-adminreg-olive-dark bg-adminreg-olive" : "border-adminreg-border bg-adminreg-border/50"
+      )}
+    >
+      <span
+        className={cn(
+          "h-3.5 w-3.5 rounded-full shadow-sm transition-transform",
+          allowed ? "translate-x-[18px] bg-white" : "translate-x-0.5 bg-adminreg-muted"
+        )}
+      />
+    </button>
+  )
+}
+
 function formatLastLogin(value: string | null) {
   if (!value) return "—"
   const date = new Date(value)
@@ -85,6 +111,17 @@ export function AdminUsersRolesPage() {
     })
     return map
   }, [screenAccess])
+
+  // Local toggle overrides layered on top of the loaded access map — there's
+  // no save-permissions endpoint yet, so this is a preview-only toggle
+  // (matches the rest of this admin register's not-yet-backend-wired demo
+  // toggles); it resets whenever the underlying data reloads.
+  const [accessOverrides, setAccessOverrides] = useState<Map<string, boolean>>(new Map())
+
+  function toggleAccess(roleId: string, screenId: string, current: boolean) {
+    const key = `${roleId}:${screenId}`
+    setAccessOverrides((prev) => new Map(prev).set(key, !current))
+  }
 
   const userColumns: MtColumn<(typeof users)[number]>[] = [
     {
@@ -215,15 +252,12 @@ export function AdminUsersRolesPage() {
                       <tr key={role.id} className="border-b border-adminreg-border/70 last:border-0">
                         <td className="py-3 pr-4 font-semibold text-adminreg-text">{role.name}</td>
                         {screens.map((screen) => {
-                          const allowed = accessByRoleAndScreen.get(`${role.id}:${screen.id}`) === true
+                          const key = `${role.id}:${screen.id}`
+                          const baseAllowed = accessByRoleAndScreen.get(key) === true
+                          const allowed = accessOverrides.has(key) ? accessOverrides.get(key)! : baseAllowed
                           return (
                             <td key={screen.id} className="px-4 py-3 text-center">
-                              <span
-                                className={cn(
-                                  "mx-auto inline-block h-2.5 w-2.5 rounded-full",
-                                  allowed ? "bg-adminreg-olive" : "bg-adminreg-border"
-                                )}
-                              />
+                              <PermissionToggle allowed={allowed} onClick={() => toggleAccess(role.id, screen.id, allowed)} />
                             </td>
                           )
                         })}

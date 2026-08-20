@@ -26,7 +26,12 @@ export function FormDialog({ open, onOpenChange, title, description, children, f
       <SheetContent
         side="right"
         className={cn(
-          "flex w-full flex-col gap-0 p-0 sm:w-[36rem] sm:max-w-[36rem]",
+          // Overrides the base Sheet variant's floating "inset 1rem, rounded,
+          // 3/4-width" card — on a narrow screen that combination (right-4 +
+          // w-full) pushes the panel's left edge off-screen entirely. This
+          // makes it a true edge-to-edge, full-height right-side drawer at
+          // every width instead.
+          "inset-y-0 right-0 flex h-full w-full flex-col gap-0 rounded-none p-0 sm:w-[36rem] sm:max-w-[36rem]",
           className
         )}
       >

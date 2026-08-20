@@ -185,9 +185,10 @@ export function AdminProvidersPage() {
     },
   ]
 
-  if (selected) {
-    return (
-      <div>
+  return (
+    <div>
+      {selected ? (
+        <>
         <AdminPageHeader title="Providers" subtitle="Provider registry, weekly availability and leave exceptions." />
 
         <button type="button" onClick={() => setSelected(null)} className="mb-4 inline-flex items-center gap-1.5 text-sm text-adminreg-muted hover:text-adminreg-text">
@@ -306,25 +307,24 @@ export function AdminProvidersPage() {
             </ul>
           )}
         </AdminCard>
-      </div>
-    )
-  }
-
-  return (
-    <div>
-      <AdminPageHeader
-        title="Providers"
-        subtitle="Provider registry, weekly availability and leave exceptions."
-        actions={
-          <MtButton className="gap-2" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Add provider
-          </MtButton>
-        }
-      />
-      <AdminCard title="Provider Directory" noPadding>
-        <MtDataTable columns={directoryColumns} rows={providers} keyExtractor={(r) => r.name} />
-      </AdminCard>
+        </>
+      ) : (
+        <>
+          <AdminPageHeader
+            title="Providers"
+            subtitle="Provider registry, weekly availability and leave exceptions."
+            actions={
+              <MtButton className="gap-2" onClick={() => setAddOpen(true)}>
+                <Plus className="h-4 w-4" />
+                Add provider
+              </MtButton>
+            }
+          />
+          <AdminCard title="Provider Directory" noPadding>
+            <MtDataTable columns={directoryColumns} rows={providers} keyExtractor={(r) => r.name} />
+          </AdminCard>
+        </>
+      )}
 
       <FormDialog
         open={addOpen}

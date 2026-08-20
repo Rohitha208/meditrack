@@ -424,7 +424,7 @@ export function OpdVisitThreadPage() {
 
   return (
     <div className="min-h-full">
-      <div className="flex flex-shrink-0 flex-wrap items-end justify-between gap-4 border-b border-adminreg-border bg-adminreg-header px-8 py-4 font-archivo">
+      <div className="flex flex-shrink-0 flex-wrap items-end justify-between gap-4 border-b border-adminreg-border bg-adminreg-header px-4 py-4 font-archivo sm:px-6 md:px-8">
         <div>
           <div className="mb-1 font-plexmono text-[10px] tracking-[0.05em] text-adminreg-muted">
             OPD — STAGE {s + 1} OF 9
@@ -436,7 +436,7 @@ export function OpdVisitThreadPage() {
       {!editable && <ViewOnlyBanner role={ROLE_LABEL[role]} />}
 
       {from === "providers" && !dismissedDeepLink && (
-        <div className="flex items-center justify-between gap-3 border-b border-adminreg-indigo bg-adminreg-indigo-soft px-8 py-2.5 font-archivo text-xs text-adminreg-indigo-dark">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-adminreg-indigo bg-adminreg-indigo-soft px-4 py-2.5 font-archivo text-xs text-adminreg-indigo-dark sm:px-6 md:px-8">
           <span>↳ Viewing via Provider Management — Dr. Anjali Nair · Cardiology</span>
           <div className="flex flex-shrink-0 items-center gap-3">
             <a href="/admin/providers" className="font-semibold underline">Back to Provider Management</a>
@@ -446,12 +446,12 @@ export function OpdVisitThreadPage() {
       )}
 
       {state.bannerText && (
-        <div className="px-8 pt-6">
+        <div className="px-4 pt-6 sm:px-6 md:px-8">
           <AdminBanner message={state.bannerText} onDismiss={() => patch({ bannerText: null })} />
         </div>
       )}
 
-      <div className="px-8 pb-16 pt-6 font-archivo">
+      <div className="px-4 pb-16 pt-6 font-archivo sm:px-6 md:px-8">
         <div className="mx-auto max-w-[1240px]">
           {s === 0 && (
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

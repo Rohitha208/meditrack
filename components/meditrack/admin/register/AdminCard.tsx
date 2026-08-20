@@ -27,7 +27,11 @@ export function AdminCard({ title, action, children, className, contentClassName
           {action}
         </div>
       )}
-      <div className={cn(noPadding ? "" : "p-5", contentClassName)}>{children}</div>
+      {/* overflow-x-auto is a safety net for cards holding a raw <table>
+       * (not every screen goes through MtDataTable, which handles this
+       * itself) — keeps a wide table scrolling inside the card on mobile
+       * instead of blowing out the whole page's width. */}
+      <div className={cn("overflow-x-auto", noPadding ? "" : "p-5", contentClassName)}>{children}</div>
     </div>
   )
 }
