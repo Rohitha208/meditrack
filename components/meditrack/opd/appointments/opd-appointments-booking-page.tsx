@@ -73,7 +73,7 @@ export function OpdAppointmentsBookingPage() {
 
   return (
     <div className="min-h-full">
-      <div className="flex flex-shrink-0 flex-wrap items-end justify-between gap-4 border-b border-adminreg-border bg-adminreg-header px-8 py-4 font-archivo">
+      <div className="flex flex-shrink-0 flex-wrap items-end justify-between gap-4 border-b border-adminreg-border bg-adminreg-header px-4 sm:px-6 md:px-8 py-4 font-archivo">
         <div>
           <div className="mb-1 font-plexmono text-[10px] tracking-[0.05em] text-adminreg-muted">OPD — APPOINTMENT BOOKING · STAGE 0</div>
           <h1 className="text-[21px] font-extrabold tracking-[-0.01em] text-adminreg-text">{APPOINTMENT_TABS[tab]}</h1>
@@ -82,7 +82,7 @@ export function OpdAppointmentsBookingPage() {
 
       {!editable && <ViewOnlyBanner role={ROLE_LABEL[role]} />}
 
-      <div className="border-b border-adminreg-border bg-adminreg-card px-8 py-3 font-archivo">
+      <div className="border-b border-adminreg-border bg-adminreg-card px-4 sm:px-6 md:px-8 py-3 font-archivo">
         <div className="flex flex-wrap gap-2">
           {APPOINTMENT_TABS.map((t, i) => (
             <button
@@ -100,7 +100,7 @@ export function OpdAppointmentsBookingPage() {
         </div>
       </div>
 
-      <div className="px-8 pb-16 pt-6 font-archivo">
+      <div className="px-4 sm:px-6 md:px-8 pb-16 pt-6 font-archivo">
         <div className="mx-auto max-w-[1240px]">
           {tab === 0 && (
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1.6fr]">

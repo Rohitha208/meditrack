@@ -183,7 +183,10 @@ export function MediTrackSidebar() {
             <span className="sr-only">Toggle navigation menu</span>
           </Button>
         </SheetTrigger>
-        <SheetContent side="left" className="w-72 sm:max-w-none bg-white p-0 text-slate-900 dark:bg-slate-900 dark:text-white">
+        <SheetContent
+          side="left"
+          className="inset-y-0 left-0 h-full w-72 max-w-[85vw] rounded-none bg-white p-0 text-slate-900 sm:max-w-none dark:bg-slate-900 dark:text-white"
+        >
           <BrandHeader collapsed={false} contextLabel={contextLabel} />
           <div className="border-b border-slate-100 dark:border-slate-800" />
           <div className="h-[calc(100vh-9.5rem)] overflow-y-auto py-2 scrollbar-hide">

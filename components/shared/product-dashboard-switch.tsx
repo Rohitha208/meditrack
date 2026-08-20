@@ -10,18 +10,26 @@ import { useRootContext } from "@/context/RootContext";
  * dashboard — hospital tenants are redirected straight to the Admin
  * Overview (/admin/dashboard), matching the login flow's default landing
  * page. Mirrors ProductLayoutSwitch so app/(pages)/dashboard/page.tsx stays
- * a plain route file. */
+ * a plain route file.
+ *
+ * `loading` gates the fallback render deliberately: `isHumanMode` defaults
+ * to false until the tenant's product type is known, so rendering
+ * DashboardScreen as soon as `!isHumanMode` is true would flash PawTrack's
+ * dashboard for a MediTrack tenant during that brief unknown window (this
+ * is exactly what a MediTrack login landing here via a generic redirect
+ * used to show, for about a second, before the effect below could redirect
+ * away). Render nothing until we actually know which product this is. */
 export function ProductDashboardSwitch() {
-    const { isHumanMode } = useRootContext();
+    const { isHumanMode, loading } = useRootContext();
     const router = useRouter();
 
     useEffect(() => {
-        if (isHumanMode) {
+        if (!loading && isHumanMode) {
             router.replace("/admin/dashboard");
         }
-    }, [isHumanMode, router]);
+    }, [loading, isHumanMode, router]);
 
-    if (isHumanMode) {
+    if (loading || isHumanMode) {
         return null;
     }
 

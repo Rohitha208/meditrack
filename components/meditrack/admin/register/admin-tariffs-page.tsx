@@ -131,8 +131,12 @@ interface TpaCard {
   id: string
   insurer: string
   discount?: string
+  overrideRates?: string
   lastNegotiated?: string
   editedBy?: string
+  /** A future-dated change waiting on its effective date — same append-
+   * rather-than-overwrite discipline as the Tariff Master above. */
+  pending?: { discount?: string; overrideRates?: string; date: string }
 }
 
 const TPA_CARDS: TpaCard[] = [
@@ -141,6 +145,8 @@ const TPA_CARDS: TpaCard[] = [
   { id: "3", insurer: "HDFC Ergo Health" },
   { id: "4", insurer: "Bajaj Allianz" },
 ]
+
+const TPA_EMPTY_FORM = { insurer: TPA_CARDS[0].insurer, discountPct: "", overrideRates: "", effectiveDate: TODAY_ISO }
 
 export function AdminTariffsPage() {
   const { toast } = useToast()
@@ -279,6 +285,56 @@ export function AdminTariffsPage() {
     { key: "includedServices", header: "Included services", render: (r) => <span className="text-adminreg-muted">{r.includedServices}</span> },
   ]
 
+  /* ---- TPA Rate Cards ---- */
+  const [tpaCards, setTpaCards] = useState<TpaCard[]>(TPA_CARDS)
+  const [addTpaOpen, setAddTpaOpen] = useState(false)
+  const [tpaForm, setTpaForm] = useState(TPA_EMPTY_FORM)
+
+  function handleAddTpa(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const insurerName = tpaForm.insurer.trim()
+    if (!insurerName) {
+      toast({ title: "TPA name required", description: "Enter the insurer/TPA's name.", variant: "destructive" })
+      return
+    }
+    if (!tpaForm.effectiveDate) {
+      toast({ title: "Effective date required", description: "Every negotiated-rate change needs an effective-from date.", variant: "destructive" })
+      return
+    }
+    const effective = parseDate(tpaForm.effectiveDate)
+    const isFutureDated = !!effective && effective.getTime() > TODAY.getTime()
+    const discountLabel = tpaForm.discountPct ? `${tpaForm.discountPct}% off base tariff` : undefined
+    const overrideRates = tpaForm.overrideRates.trim() || undefined
+    const dateLabel = formatDateLabel(tpaForm.effectiveDate)
+
+    setTpaCards((prev) => {
+      const existingIndex = prev.findIndex((c) => c.insurer.toLowerCase() === insurerName.toLowerCase())
+      if (existingIndex === -1) {
+        const newCard: TpaCard = isFutureDated
+          ? { id: String(Date.now()), insurer: insurerName, pending: { discount: discountLabel, overrideRates, date: dateLabel } }
+          : { id: String(Date.now()), insurer: insurerName, discount: discountLabel, overrideRates, lastNegotiated: dateLabel, editedBy: "R. Desai" }
+        return [...prev, newCard]
+      }
+      return prev.map((c, i) =>
+        i === existingIndex
+          ? isFutureDated
+            ? { ...c, pending: { discount: discountLabel, overrideRates, date: dateLabel } }
+            : { ...c, discount: discountLabel ?? c.discount, overrideRates: overrideRates ?? c.overrideRates, lastNegotiated: dateLabel, editedBy: "R. Desai", pending: undefined }
+          : c
+      )
+    })
+
+    toast({
+      title: isFutureDated ? "Rate card change scheduled" : "Rate card updated",
+      description: isFutureDated
+        ? `${insurerName}'s negotiated rate takes effect ${dateLabel}.`
+        : `${insurerName}'s negotiated rate is now in effect.`,
+    })
+
+    setAddTpaOpen(false)
+    setTpaForm(TPA_EMPTY_FORM)
+  }
+
   return (
     <div className="space-y-5">
       <AdminPageHeader title="Tariffs & Packages" subtitle="Service tariffs, PMJAY packages and TPA negotiated rate cards." />
@@ -309,21 +365,43 @@ export function AdminTariffsPage() {
         <MtDataTable columns={pmjayColumns} rows={pmjayPackages} keyExtractor={(r) => r.id} />
       </AdminCard>
 
-      <AdminCard title="TPA Rate Cards">
+      <AdminCard
+        title="TPA Rate Cards"
+        action={
+          <MtButton
+            className="gap-2"
+            onClick={() => {
+              setTpaForm(TPA_EMPTY_FORM)
+              setAddTpaOpen(true)
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            Add TPA
+          </MtButton>
+        }
+      >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {TPA_CARDS.map((card) => (
+          {tpaCards.map((card) => (
             <div key={card.id} className="border border-adminreg-border bg-adminreg-header/40 p-4">
               <p className="text-sm font-semibold text-adminreg-text">{card.insurer}</p>
-              {card.discount ? (
+              {card.discount || card.overrideRates ? (
                 <>
-                  <p className="mt-1.5 text-sm text-adminreg-olive-700">{card.discount}</p>
+                  {card.discount && <p className="mt-1.5 text-sm text-adminreg-olive-700">{card.discount}</p>}
+                  {card.overrideRates && <p className="mt-1 text-xs text-adminreg-muted">Override rates: {card.overrideRates}</p>}
                   <p className="mt-1 text-xs text-adminreg-muted">
                     Last negotiated {card.lastNegotiated} · {card.editedBy}
                   </p>
                 </>
               ) : (
+                !card.pending && (
+                  <p className="mt-1.5 text-xs font-medium text-adminreg-amber-text">
+                    No negotiated rates entered yet — showing base tariff for all services.
+                  </p>
+                )
+              )}
+              {card.pending && (
                 <p className="mt-1.5 text-xs font-medium text-adminreg-amber-text">
-                  No negotiated rates entered yet — showing base tariff for all services.
+                  ↻ {card.pending.discount || card.pending.overrideRates || "New rate"} takes effect {card.pending.date}
                 </p>
               )}
             </div>
@@ -424,6 +502,45 @@ export function AdminTariffsPage() {
             placeholder="e.g. Open hernia repair, 2-day stay, 1 follow-up"
             rows={3}
           />
+        </div>
+      </FormDialog>
+
+      <FormDialog
+        open={addTpaOpen}
+        onOpenChange={setAddTpaOpen}
+        title="Add TPA rate card"
+        onSubmit={handleAddTpa}
+        footer={
+          <>
+            <MtButton type="button" variant="ghost" onClick={() => setAddTpaOpen(false)}>Cancel</MtButton>
+            <MtButton type="submit">Add rate card</MtButton>
+          </>
+        }
+      >
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">TPA name</Label>
+          <Input value={tpaForm.insurer} onChange={(e) => setTpaForm((f) => ({ ...f, insurer: e.target.value }))} placeholder="e.g. Star Health Insurance" required />
+          <p className="text-xs text-adminreg-muted">Matches an existing card by name, or adds a new one if it doesn't match yet.</p>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Negotiated discount (% off base tariff)</Label>
+          <Input type="number" min={0} max={100} value={tpaForm.discountPct} onChange={(e) => setTpaForm((f) => ({ ...f, discountPct: e.target.value }))} placeholder="e.g. 10" />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Or specify override rates</Label>
+          <Textarea
+            value={tpaForm.overrideRates}
+            onChange={(e) => setTpaForm((f) => ({ ...f, overrideRates: e.target.value }))}
+            placeholder="e.g. ICU bed/day ₹6,000 flat, Angioplasty package ₹1,60,000"
+            rows={3}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Effective date</Label>
+          <Input type="date" value={tpaForm.effectiveDate} onChange={(e) => setTpaForm((f) => ({ ...f, effectiveDate: e.target.value }))} required />
+          <p className="text-xs text-adminreg-muted">
+            Required. Today's date applies the negotiated rate now; a future date schedules it — the current rate card stays as-is until then.
+          </p>
         </div>
       </FormDialog>
 

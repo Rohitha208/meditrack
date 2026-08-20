@@ -1,9 +1,14 @@
 "use client"
 
+import { useState, type FormEvent } from "react"
 import { CheckCircle2, Plus, XCircle } from "lucide-react"
 
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
-import { MtButton } from "@/components/meditrack/shared"
+import { FormDialog, MtButton } from "@/components/meditrack/shared"
 import { AdminPageHeader } from "./AdminPageHeader"
 import { AdminCard } from "./AdminCard"
 
@@ -21,6 +26,9 @@ const DOCUMENT_TEMPLATES = [
   { template: "Death summary certificate", type: "PDF letterhead" },
 ]
 
+const CHANNEL_OPTIONS = ["SMS", "Email", "WhatsApp"]
+const DOCUMENT_TYPE_OPTIONS = ["PDF letterhead", "PDF form"]
+
 const INTEGRATIONS = [
   { name: "SMS Gateway", provider: "Twilio", connected: true },
   { name: "Email Service", provider: "SendGrid", connected: true },
@@ -28,7 +36,33 @@ const INTEGRATIONS = [
   { name: "PMJAY Portal", provider: "NHA Sandbox", connected: false },
 ]
 
+type TemplateKind = "notification" | "document"
+
 export function AdminSystemConfigPage() {
+  const { toast } = useToast()
+  const [notificationTemplates, setNotificationTemplates] = useState(NOTIFICATION_TEMPLATES)
+  const [documentTemplates, setDocumentTemplates] = useState(DOCUMENT_TEMPLATES)
+
+  const [addKind, setAddKind] = useState<TemplateKind | null>(null)
+  const [notifForm, setNotifForm] = useState({ template: "", channel: CHANNEL_OPTIONS[0], subject: "" })
+  const [docForm, setDocForm] = useState({ template: "", type: DOCUMENT_TYPE_OPTIONS[0] })
+
+  function handleAddTemplate(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (addKind === "notification") {
+      const row = { template: notifForm.template || "Untitled template", channel: notifForm.channel, subject: notifForm.subject || "—" }
+      setNotificationTemplates((prev) => [...prev, row])
+      toast({ title: "Template added", description: `${row.template} added to notification templates.` })
+      setNotifForm({ template: "", channel: CHANNEL_OPTIONS[0], subject: "" })
+    } else if (addKind === "document") {
+      const row = { template: docForm.template || "Untitled template", type: docForm.type }
+      setDocumentTemplates((prev) => [...prev, row])
+      toast({ title: "Template added", description: `${row.template} added to document templates.` })
+      setDocForm({ template: "", type: DOCUMENT_TYPE_OPTIONS[0] })
+    }
+    setAddKind(null)
+  }
+
   return (
     <div className="space-y-5">
       <AdminPageHeader title="System Config" subtitle="Notification and document templates; integration health." />
@@ -37,7 +71,7 @@ export function AdminSystemConfigPage() {
         title="Notification Templates"
         noPadding
         action={
-          <MtButton className="gap-2">
+          <MtButton className="gap-2" onClick={() => setAddKind("notification")}>
             <Plus className="h-4 w-4" />
             Add template
           </MtButton>
@@ -52,7 +86,7 @@ export function AdminSystemConfigPage() {
             </tr>
           </thead>
           <tbody>
-            {NOTIFICATION_TEMPLATES.map((t) => (
+            {notificationTemplates.map((t) => (
               <tr key={t.template} className="border-b border-adminreg-border/70 last:border-0">
                 <td className="px-5 py-3 font-semibold text-adminreg-text">{t.template}</td>
                 <td className="px-5 py-3">{t.channel}</td>
@@ -63,7 +97,16 @@ export function AdminSystemConfigPage() {
         </table>
       </AdminCard>
 
-      <AdminCard title="Document Templates" noPadding>
+      <AdminCard
+        title="Document Templates"
+        noPadding
+        action={
+          <MtButton className="gap-2" onClick={() => setAddKind("document")}>
+            <Plus className="h-4 w-4" />
+            Add template
+          </MtButton>
+        }
+      >
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-adminreg-border bg-adminreg-border/30 text-left text-[11px] font-semibold uppercase tracking-wide text-adminreg-muted">
@@ -72,7 +115,7 @@ export function AdminSystemConfigPage() {
             </tr>
           </thead>
           <tbody>
-            {DOCUMENT_TEMPLATES.map((t) => (
+            {documentTemplates.map((t) => (
               <tr key={t.template} className="border-b border-adminreg-border/70 last:border-0">
                 <td className="px-5 py-3 font-semibold text-adminreg-text">{t.template}</td>
                 <td className="px-5 py-3 text-adminreg-muted">{t.type}</td>
@@ -98,6 +141,62 @@ export function AdminSystemConfigPage() {
           ))}
         </ul>
       </AdminCard>
+
+      <FormDialog
+        open={!!addKind}
+        onOpenChange={(open) => !open && setAddKind(null)}
+        title={addKind === "document" ? "Add document template" : "Add notification template"}
+        onSubmit={handleAddTemplate}
+        footer={
+          <>
+            <MtButton type="button" variant="ghost" onClick={() => setAddKind(null)}>Cancel</MtButton>
+            <MtButton type="submit">Add template</MtButton>
+          </>
+        }
+      >
+        {addKind === "document" ? (
+          <>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Template name</Label>
+              <Input value={docForm.template} onChange={(e) => setDocForm((f) => ({ ...f, template: e.target.value }))} placeholder="e.g. OT consent form" required />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Type</Label>
+              <Select value={docForm.type} onValueChange={(v) => setDocForm((f) => ({ ...f, type: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {DOCUMENT_TYPE_OPTIONS.map((t) => (
+                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Template name</Label>
+              <Input value={notifForm.template} onChange={(e) => setNotifForm((f) => ({ ...f, template: e.target.value }))} placeholder="e.g. Lab report ready" required />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Channel</Label>
+              <Select value={notifForm.channel} onValueChange={(v) => setNotifForm((f) => ({ ...f, channel: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {CHANNEL_OPTIONS.map((c) => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Subject</Label>
+              <Input value={notifForm.subject} onChange={(e) => setNotifForm((f) => ({ ...f, subject: e.target.value }))} placeholder="e.g. Your lab report is ready — {{patientName}}" />
+              <p className="text-xs text-adminreg-muted">Only used for Email; SMS/WhatsApp templates ignore this.</p>
+            </div>
+          </>
+        )}
+      </FormDialog>
     </div>
   )
 }

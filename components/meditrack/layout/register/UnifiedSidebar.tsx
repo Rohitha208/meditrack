@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { ModuleSwitcher } from "./ModuleSwitcher"
 import { RoleSwitcher } from "./RoleSwitcher"
 import { useStaffRole } from "./RoleProvider"
@@ -115,19 +116,12 @@ function OpdNav() {
   )
 }
 
-/**
- * The unified left sidebar shared by Admin and OPD — one nav component
- * rendering in one of two modes depending on the active module (grouped
- * directory for Admin, sequential relay-spine + appointment tabs for OPD),
- * per the unified-shell spec. Module switcher pinned top, role switcher
- * pinned bottom.
- */
-export function UnifiedSidebar() {
+function SidebarContent() {
   const pathname = usePathname()
   const isOpd = pathname.startsWith("/opd")
 
   return (
-    <aside className="hidden h-screen w-[272px] flex-shrink-0 flex-col bg-adminreg-sidebar font-archivo md:flex">
+    <>
       <div className="flex-shrink-0 px-5 py-4">
         <p className="text-[15px] font-extrabold tracking-[0.01em] text-adminreg-sidebar-text">MediTrack</p>
         <p className="mt-0.5 font-plexmono text-[9px] uppercase tracking-[0.08em] text-adminreg-sidebar-text-muted">Unified Application Shell</p>
@@ -136,6 +130,50 @@ export function UnifiedSidebar() {
       <ModuleSwitcher />
       {isOpd ? <OpdNav /> : <AdminNav />}
       <RoleSwitcher />
-    </aside>
+    </>
+  )
+}
+
+interface UnifiedSidebarProps {
+  /** Mobile slide-over open state, lifted to UnifiedShell so its top-bar
+   * hamburger button can control it. Desktop `<aside>` below ignores it. */
+  mobileOpen: boolean
+  onMobileOpenChange: (open: boolean) => void
+}
+
+/**
+ * The unified left sidebar shared by Admin and OPD — one nav component
+ * rendering in one of two modes depending on the active module (grouped
+ * directory for Admin, sequential relay-spine + appointment tabs for OPD),
+ * per the unified-shell spec. Module switcher pinned top, role switcher
+ * pinned bottom.
+ *
+ * Below `md` the `<aside>` is hidden entirely and this same content renders
+ * inside a slide-over `Sheet` instead, opened via UnifiedShell's hamburger
+ * button — otherwise every sidebar option (and the module/role switchers)
+ * would simply be inaccessible on a phone-width screen.
+ */
+export function UnifiedSidebar({ mobileOpen, onMobileOpenChange }: UnifiedSidebarProps) {
+  return (
+    <>
+      <Sheet open={mobileOpen} onOpenChange={onMobileOpenChange}>
+        <SheetContent
+          side="left"
+          className="inset-y-0 left-0 flex h-full w-[272px] max-w-[85vw] flex-col gap-0 rounded-none border-none bg-adminreg-sidebar p-0 font-archivo text-adminreg-sidebar-text sm:max-w-none md:hidden"
+          // Every nav item is a real <a>; clicking one should close the
+          // slide-over the same way it would collapse on desktop navigation.
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest("a")) onMobileOpenChange(false)
+          }}
+        >
+          <SheetTitle className="sr-only">MediTrack navigation</SheetTitle>
+          <SidebarContent />
+        </SheetContent>
+      </Sheet>
+
+      <aside className="hidden h-screen w-[272px] flex-shrink-0 flex-col bg-adminreg-sidebar font-archivo md:flex">
+        <SidebarContent />
+      </aside>
+    </>
   )
 }
