@@ -18,7 +18,7 @@ import { getCompanyId } from "@/utils/clientCookie"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
 import { useGetMediTrackUsers } from "@/queries/meditrack/users"
 import { useGetMediTrackRoles } from "@/queries/meditrack/roles"
-import { useGetMediTrackScreens, useGetMediTrackScreenAccess } from "@/queries/meditrack/screens"
+import { useGetMediTrackScreens, useGetMediTrackScreenAccess, useUpdateScreenAccess } from "@/queries/meditrack/screens"
 
 function displayName(firstName?: string, lastName?: string, email?: string) {
   const name = `${firstName || ""} ${lastName || ""}`.trim()
@@ -100,28 +100,24 @@ export function AdminUsersRolesPage() {
     isLoading: isLoadingAccess,
     isError: isAccessError,
     error: accessError,
-  } = useGetMediTrackScreenAccess(clinicId, undefined, tab === "permissions" && !!clinicId)
+  } = useGetMediTrackScreenAccess(clinicId, undefined, tab === "permissions")
+
+  const updateAccess = useUpdateScreenAccess()
 
   const users = usersData?.items ?? []
+
+  const [optimistic, setOptimistic] = useState<Map<string, boolean>>(new Map())
 
   const accessByRoleAndScreen = useMemo(() => {
     const map = new Map<string, boolean>()
     screenAccess.forEach((row) => {
       map.set(`${row.roleId}:${row.screenId}`, row.isAccessEnable)
     })
+    optimistic.forEach((val, key) => {
+      map.set(key, val)
+    })
     return map
-  }, [screenAccess])
-
-  // Local toggle overrides layered on top of the loaded access map — there's
-  // no save-permissions endpoint yet, so this is a preview-only toggle
-  // (matches the rest of this admin register's not-yet-backend-wired demo
-  // toggles); it resets whenever the underlying data reloads.
-  const [accessOverrides, setAccessOverrides] = useState<Map<string, boolean>>(new Map())
-
-  function toggleAccess(roleId: string, screenId: string, current: boolean) {
-    const key = `${roleId}:${screenId}`
-    setAccessOverrides((prev) => new Map(prev).set(key, !current))
-  }
+  }, [screenAccess, optimistic])
 
   const userColumns: MtColumn<(typeof users)[number]>[] = [
     {
@@ -253,11 +249,37 @@ export function AdminUsersRolesPage() {
                         <td className="py-3 pr-4 font-semibold text-adminreg-text">{role.name}</td>
                         {screens.map((screen) => {
                           const key = `${role.id}:${screen.id}`
-                          const baseAllowed = accessByRoleAndScreen.get(key) === true
-                          const allowed = accessOverrides.has(key) ? accessOverrides.get(key)! : baseAllowed
+                          const allowed = accessByRoleAndScreen.get(key) === true
                           return (
                             <td key={screen.id} className="px-4 py-3 text-center">
-                              <PermissionToggle allowed={allowed} onClick={() => toggleAccess(role.id, screen.id, allowed)} />
+                              <PermissionToggle
+                                allowed={allowed}
+                                onClick={() => {
+                                  setOptimistic((prev) => new Map(prev).set(key, !allowed))
+                                  updateAccess.mutate(
+                                    {
+                                      roleId: role.id,
+                                      clinicId: clinicId || null,
+                                      screenIds: [screen.id],
+                                      isAccessEnable: !allowed,
+                                    },
+                                    {
+                                      onSuccess: () =>
+                                        setOptimistic((prev) => {
+                                          const next = new Map(prev)
+                                          next.delete(key)
+                                          return next
+                                        }),
+                                      onError: () =>
+                                        setOptimistic((prev) => {
+                                          const next = new Map(prev)
+                                          next.delete(key)
+                                          return next
+                                        }),
+                                    }
+                                  )
+                                }}
+                              />
                             </td>
                           )
                         })}
