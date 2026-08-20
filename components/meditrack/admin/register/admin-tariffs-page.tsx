@@ -22,6 +22,7 @@ import {
   type MediTrackTariff,
 } from "@/queries/meditrack/tariffs"
 import { useCreatePackage, useDeletePackage, useGetPackages, useUpdatePackage } from "@/queries/meditrack/packages"
+import { useCreateTpa, useDeleteTpa, useGetTpas, useUpdateTpa, type MediTrackTpa } from "@/queries/meditrack/tpas"
 import { MtDataTable, RowActions, FormDialog, MtButton, TableSkeleton, formatCurrency, type MtColumn } from "@/components/meditrack/shared"
 import { AdminPageHeader } from "./AdminPageHeader"
 import { AdminCard } from "./AdminCard"
@@ -47,6 +48,17 @@ function parseAmount(value?: string | null) {
   return Number.isNaN(n) ? 0 : n
 }
 
+function parseDate(value: string): Date | null {
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+function startOfToday() {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
 const TARIFF_EMPTY_FORM = {
   service: "",
   code: "",
@@ -57,27 +69,7 @@ const TARIFF_EMPTY_FORM = {
 }
 
 const PMJAY_EMPTY_FORM = { code: "", name: "", rate: "", includedServices: "" }
-
-interface TpaCard {
-  id: string
-  insurer: string
-  discount?: string
-  overrideRates?: string
-  lastNegotiated?: string
-  editedBy?: string
-  /** A future-dated change waiting on its effective date — same append-
-   * rather-than-overwrite discipline as the Tariff Master above. */
-  pending?: { discount?: string; overrideRates?: string; date: string }
-}
-
-const TPA_CARDS: TpaCard[] = [
-  { id: "1", insurer: "Star Health Insurance", discount: "10% off base tariff — Cardiology, Orthopedics", lastNegotiated: "12 Jan 2026", editedBy: "S. Verma" },
-  { id: "2", insurer: "ICICI Lombard", discount: "8% off base tariff — all departments", lastNegotiated: "01 Apr 2026", editedBy: "R. Desai" },
-  { id: "3", insurer: "HDFC Ergo Health" },
-  { id: "4", insurer: "Bajaj Allianz" },
-]
-
-const TPA_EMPTY_FORM = { insurer: TPA_CARDS[0].insurer, discountPct: "", overrideRates: "", effectiveDate: TODAY_ISO }
+const TPA_EMPTY_FORM = { tpaName: "", discountPercent: "", overrideRates: "", effectiveDate: todayIso() }
 
 export function AdminTariffsPage() {
   const { toast } = useToast()
@@ -88,15 +80,20 @@ export function AdminTariffsPage() {
   const { data: departments = [] } = useGetDepartments(companyId || undefined, clinicId)
   const { data: tariffsData, isLoading: isLoadingTariffs, isError: isTariffsError, error: tariffsError } = useGetTariffs({ pageSize: 100 })
   const { data: packagesData, isLoading: isLoadingPackages, isError: isPackagesError, error: packagesError } = useGetPackages({ pageSize: 100 })
+  const { data: tpasData, isLoading: isLoadingTpas, isError: isTpasError, error: tpasError } = useGetTpas({ pageSize: 100 })
   const createTariff = useCreateTariff()
   const updateTariff = useUpdateTariff()
   const deleteTariff = useDeleteTariff()
   const createPackage = useCreatePackage()
   const updatePackage = useUpdatePackage()
   const deletePackage = useDeletePackage()
+  const createTpa = useCreateTpa()
+  const updateTpa = useUpdateTpa()
+  const deleteTpa = useDeleteTpa()
 
   const tariffs = tariffsData?.items ?? []
   const packages = packagesData?.items ?? []
+  const tpas = tpasData?.items ?? []
 
   const [tariffDrawerOpen, setTariffDrawerOpen] = useState(false)
   const [editingTariff, setEditingTariff] = useState<MediTrackTariff | null>(null)
@@ -105,7 +102,7 @@ export function AdminTariffsPage() {
   const [pmjayDrawerOpen, setPmjayDrawerOpen] = useState(false)
   const [editingPackage, setEditingPackage] = useState<MediTrackPackage | null>(null)
   const [pmjayForm, setPmjayForm] = useState(PMJAY_EMPTY_FORM)
-  const [deleteTarget, setDeleteTarget] = useState<{ type: "tariff" | "package"; id: string; name: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ type: "tariff" | "package" | "tpa"; id: string; name: string } | null>(null)
 
   const { data: rateHistory = [], isLoading: isLoadingHistory } = useGetTariffRates(historyTarget?.id, !!historyTarget)
 
@@ -116,6 +113,7 @@ export function AdminTariffsPage() {
 
   const isSavingTariff = createTariff.isPending || updateTariff.isPending
   const isSavingPackage = createPackage.isPending || updatePackage.isPending
+  const isSavingTpa = createTpa.isPending || updateTpa.isPending
 
   function openAddTariff() {
     setEditingTariff(null)
@@ -151,6 +149,27 @@ export function AdminTariffsPage() {
       includedServices: row.includedServices || "",
     })
     setPmjayDrawerOpen(true)
+  }
+
+  const [tpaDrawerOpen, setTpaDrawerOpen] = useState(false)
+  const [editingTpa, setEditingTpa] = useState<MediTrackTpa | null>(null)
+  const [tpaForm, setTpaForm] = useState(TPA_EMPTY_FORM)
+
+  function openAddTpa() {
+    setEditingTpa(null)
+    setTpaForm({ ...TPA_EMPTY_FORM, effectiveDate: todayIso() })
+    setTpaDrawerOpen(true)
+  }
+
+  function openEditTpa(row: MediTrackTpa) {
+    setEditingTpa(row)
+    setTpaForm({
+      tpaName: row.tpaName || "",
+      discountPercent: row.discountPercent || "",
+      overrideRates: row.overrideRates || "",
+      effectiveDate: row.effectiveDate?.slice(0, 10) || todayIso(),
+    })
+    setTpaDrawerOpen(true)
   }
 
   async function handleTariffSubmit(e: FormEvent<HTMLFormElement>) {
@@ -235,14 +254,22 @@ export function AdminTariffsPage() {
       if (deleteTarget.type === "tariff") {
         await deleteTariff.mutateAsync(deleteTarget.id)
         toast({ title: "Rate deleted", description: `${deleteTarget.name} was removed from the tariff master.` })
-      } else {
+      } else if (deleteTarget.type === "package") {
         await deletePackage.mutateAsync(deleteTarget.id)
         toast({ title: "Package deleted", description: `${deleteTarget.name} was removed from PMJAY Packages.` })
+      } else {
+        await deleteTpa.mutateAsync(deleteTarget.id)
+        toast({ title: "TPA deleted", description: `${deleteTarget.name} was removed from TPA rate cards.` })
       }
       setDeleteTarget(null)
     } catch (err) {
       toast({
-        title: deleteTarget.type === "tariff" ? "Could not delete rate" : "Could not delete package",
+        title:
+          deleteTarget.type === "tariff"
+            ? "Could not delete rate"
+            : deleteTarget.type === "package"
+              ? "Could not delete package"
+              : "Could not delete TPA",
         description: getToastErrorMessage(err, "Failed to delete"),
         variant: "destructive",
       })
@@ -315,14 +342,10 @@ export function AdminTariffsPage() {
   ]
 
   /* ---- TPA Rate Cards ---- */
-  const [tpaCards, setTpaCards] = useState<TpaCard[]>(TPA_CARDS)
-  const [addTpaOpen, setAddTpaOpen] = useState(false)
-  const [tpaForm, setTpaForm] = useState(TPA_EMPTY_FORM)
-
-  function handleAddTpa(e: FormEvent<HTMLFormElement>) {
+  async function handleTpaSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    const insurerName = tpaForm.insurer.trim()
-    if (!insurerName) {
+    const tpaName = tpaForm.tpaName.trim()
+    if (!tpaName) {
       toast({ title: "TPA name required", description: "Enter the insurer/TPA's name.", variant: "destructive" })
       return
     }
@@ -330,38 +353,35 @@ export function AdminTariffsPage() {
       toast({ title: "Effective date required", description: "Every negotiated-rate change needs an effective-from date.", variant: "destructive" })
       return
     }
-    const effective = parseDate(tpaForm.effectiveDate)
-    const isFutureDated = !!effective && effective.getTime() > TODAY.getTime()
-    const discountLabel = tpaForm.discountPct ? `${tpaForm.discountPct}% off base tariff` : undefined
-    const overrideRates = tpaForm.overrideRates.trim() || undefined
-    const dateLabel = formatDateLabel(tpaForm.effectiveDate)
+    const payload = {
+      tpaName,
+      discountPercent: tpaForm.discountPercent.trim() || null,
+      overrideRates: tpaForm.overrideRates.trim() || null,
+      effectiveDate: tpaForm.effectiveDate,
+    }
 
-    setTpaCards((prev) => {
-      const existingIndex = prev.findIndex((c) => c.insurer.toLowerCase() === insurerName.toLowerCase())
-      if (existingIndex === -1) {
-        const newCard: TpaCard = isFutureDated
-          ? { id: String(Date.now()), insurer: insurerName, pending: { discount: discountLabel, overrideRates, date: dateLabel } }
-          : { id: String(Date.now()), insurer: insurerName, discount: discountLabel, overrideRates, lastNegotiated: dateLabel, editedBy: "R. Desai" }
-        return [...prev, newCard]
+    try {
+      if (editingTpa) {
+        const updated = await updateTpa.mutateAsync({
+          id: editingTpa.id,
+          ...payload,
+          isActive: editingTpa.isActive,
+        })
+        toast({ title: "TPA updated", description: `${updated.tpaName} was saved.` })
+      } else {
+        const created = await createTpa.mutateAsync(payload)
+        toast({ title: "TPA added", description: `${created.tpaName} was added to TPA rate cards.` })
       }
-      return prev.map((c, i) =>
-        i === existingIndex
-          ? isFutureDated
-            ? { ...c, pending: { discount: discountLabel, overrideRates, date: dateLabel } }
-            : { ...c, discount: discountLabel ?? c.discount, overrideRates: overrideRates ?? c.overrideRates, lastNegotiated: dateLabel, editedBy: "R. Desai", pending: undefined }
-          : c
-      )
-    })
-
-    toast({
-      title: isFutureDated ? "Rate card change scheduled" : "Rate card updated",
-      description: isFutureDated
-        ? `${insurerName}'s negotiated rate takes effect ${dateLabel}.`
-        : `${insurerName}'s negotiated rate is now in effect.`,
-    })
-
-    setAddTpaOpen(false)
-    setTpaForm(TPA_EMPTY_FORM)
+      setTpaDrawerOpen(false)
+      setEditingTpa(null)
+      setTpaForm({ ...TPA_EMPTY_FORM, effectiveDate: todayIso() })
+    } catch (err) {
+      toast({
+        title: editingTpa ? "Could not update TPA" : "Could not add TPA",
+        description: getToastErrorMessage(err, "Failed to save TPA rate card"),
+        variant: "destructive",
+      })
+    }
   }
 
   return (
@@ -421,45 +441,54 @@ export function AdminTariffsPage() {
       <AdminCard
         title="TPA Rate Cards"
         action={
-          <MtButton
-            className="gap-2"
-            onClick={() => {
-              setTpaForm(TPA_EMPTY_FORM)
-              setAddTpaOpen(true)
-            }}
-          >
+          <MtButton className="gap-2" onClick={openAddTpa}>
             <Plus className="h-4 w-4" />
             Add TPA
           </MtButton>
         }
       >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {tpaCards.map((card) => (
-            <div key={card.id} className="border border-adminreg-border bg-adminreg-header/40 p-4">
-              <p className="text-sm font-semibold text-adminreg-text">{card.insurer}</p>
-              {card.discount || card.overrideRates ? (
-                <>
-                  {card.discount && <p className="mt-1.5 text-sm text-adminreg-olive-700">{card.discount}</p>}
-                  {card.overrideRates && <p className="mt-1 text-xs text-adminreg-muted">Override rates: {card.overrideRates}</p>}
-                  <p className="mt-1 text-xs text-adminreg-muted">
-                    Last negotiated {card.lastNegotiated} · {card.editedBy}
-                  </p>
-                </>
-              ) : (
-                !card.pending && (
+        {isLoadingTpas ? (
+          <TableSkeleton rows={4} columns={2} />
+        ) : isTpasError ? (
+          <p className="px-5 py-8 text-sm text-adminreg-red">{getToastErrorMessage(tpasError, "Failed to load TPA rate cards")}</p>
+        ) : tpas.length === 0 ? (
+          <p className="px-5 py-8 text-sm text-adminreg-muted">No TPA rate cards yet. Add a negotiated rate card to start this register.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {tpas.map((card) => (
+              <div key={card.id} className="border border-adminreg-border bg-adminreg-header/40 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-sm font-semibold text-adminreg-text">{card.tpaName}</p>
+                  <RowActions
+                    actions={[
+                      { icon: Pencil, label: "Edit", onClick: () => openEditTpa(card) },
+                      {
+                        icon: Trash2,
+                        label: "Delete",
+                        destructive: true,
+                        onClick: () => setDeleteTarget({ type: "tpa", id: card.id, name: card.tpaName }),
+                      },
+                    ]}
+                  />
+                </div>
+                {card.discountPercent && (
+                  <p className="mt-1.5 text-sm text-adminreg-olive-700">{card.discountPercent}% off base tariff</p>
+                )}
+                {card.overrideRates && (
+                  <p className="mt-1 text-xs text-adminreg-muted">Override rates: {card.overrideRates}</p>
+                )}
+                {!card.discountPercent && !card.overrideRates && (
                   <p className="mt-1.5 text-xs font-medium text-adminreg-amber-text">
                     No negotiated rates entered yet — showing base tariff for all services.
                   </p>
-                )
-              )}
-              {card.pending && (
-                <p className="mt-1.5 text-xs font-medium text-adminreg-amber-text">
-                  ↻ {card.pending.discount || card.pending.overrideRates || "New rate"} takes effect {card.pending.date}
+                )}
+                <p className="mt-1 text-xs text-adminreg-muted">
+                  Effective {formatDateLabel(card.effectiveDate)} · Updated {formatDateLabel(card.updatedAt)}
                 </p>
-              )}
-            </div>
-          ))}
-        </div>
+              </div>
+            ))}
+          </div>
+        )}
       </AdminCard>
 
       <FormDialog
@@ -569,25 +598,30 @@ export function AdminTariffsPage() {
       </FormDialog>
 
       <FormDialog
-        open={addTpaOpen}
-        onOpenChange={setAddTpaOpen}
-        title="Add TPA rate card"
-        onSubmit={handleAddTpa}
+        open={tpaDrawerOpen}
+        onOpenChange={(open) => {
+          setTpaDrawerOpen(open)
+          if (!open) setEditingTpa(null)
+        }}
+        title={editingTpa ? "Edit TPA rate card" : "Add TPA rate card"}
+        onSubmit={handleTpaSubmit}
         footer={
           <>
-            <MtButton type="button" variant="ghost" onClick={() => setAddTpaOpen(false)}>Cancel</MtButton>
-            <MtButton type="submit">Add rate card</MtButton>
+            <MtButton type="button" variant="ghost" onClick={() => setTpaDrawerOpen(false)}>Cancel</MtButton>
+            <MtButton type="submit" disabled={isSavingTpa}>
+              {isSavingTpa ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {editingTpa ? "Save changes" : "Add rate card"}
+            </MtButton>
           </>
         }
       >
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">TPA name</Label>
-          <Input value={tpaForm.insurer} onChange={(e) => setTpaForm((f) => ({ ...f, insurer: e.target.value }))} placeholder="e.g. Star Health Insurance" required />
-          <p className="text-xs text-adminreg-muted">Matches an existing card by name, or adds a new one if it doesn't match yet.</p>
+          <Input value={tpaForm.tpaName} onChange={(e) => setTpaForm((f) => ({ ...f, tpaName: e.target.value }))} placeholder="e.g. Star Health Insurance" required />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Negotiated discount (% off base tariff)</Label>
-          <Input type="number" min={0} max={100} value={tpaForm.discountPct} onChange={(e) => setTpaForm((f) => ({ ...f, discountPct: e.target.value }))} placeholder="e.g. 10" />
+          <Input type="number" min={0} max={100} value={tpaForm.discountPercent} onChange={(e) => setTpaForm((f) => ({ ...f, discountPercent: e.target.value }))} placeholder="e.g. 10" />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Or specify override rates</Label>
@@ -644,7 +678,7 @@ export function AdminTariffsPage() {
       <AdminModal
         open={!!deleteTarget}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title={deleteTarget?.type === "package" ? "Delete package" : "Delete rate"}
+        title={deleteTarget?.type === "package" ? "Delete package" : deleteTarget?.type === "tpa" ? "Delete TPA" : "Delete rate"}
         lines={
           deleteTarget
             ? [
@@ -653,7 +687,7 @@ export function AdminTariffsPage() {
               ]
             : []
         }
-        confirmLabel={deleteTariff.isPending || deletePackage.isPending ? "Deleting…" : "Delete"}
+        confirmLabel={deleteTariff.isPending || deletePackage.isPending || deleteTpa.isPending ? "Deleting…" : "Delete"}
         danger
         onConfirm={handleConfirmDelete}
       />
