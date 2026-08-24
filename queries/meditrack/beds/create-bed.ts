@@ -3,7 +3,7 @@ import { getMessageFromErrorBody } from "@/utils/apiErrorHandler";
 import type { Bed } from "./types";
 
 export interface CreateBedRequest {
-  departmentId: string;
+  wardId: string;
   bedNumber: string;
   status?: string;
   patientId?: string | null;
@@ -30,7 +30,7 @@ export const useCreateBed = () => {
     retry: false,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["beds"] });
-      queryClient.invalidateQueries({ queryKey: ["departments"] });
+      queryClient.invalidateQueries({ queryKey: ["meditrack-wards"] });
     },
   });
 };

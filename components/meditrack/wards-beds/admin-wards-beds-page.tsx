@@ -12,8 +12,20 @@ import { getToastErrorMessage } from "@/utils/apiErrorHandler"
 import { getCompanyId } from "@/utils/clientCookie"
 import { useRootContext } from "@/context/RootContext"
 import { useGetUsers } from "@/queries/users/get-users"
-import { useCreateDepartment, useGetDepartments, useUpdateDepartment, type Department } from "@/queries/departments"
-import { useCreateBed, useGetBeds, useGetBedsByDepartment, useUpdateBed, toApiBedStatus, toUiBedStatus, type Bed } from "@/queries/meditrack/beds"
+import {
+  useCreateWard,
+  useGetWards,
+  useUpdateWard,
+  type MediTrackWard,
+} from "@/queries/meditrack/wards"
+import {
+  useCreateBed,
+  useGetBedsByWard,
+  useUpdateBed,
+  toApiBedStatus,
+  toUiBedStatus,
+  type Bed,
+} from "@/queries/meditrack/beds"
 import { MtDataTable, RowActions, FormDialog, MtButton, TableSkeleton, type MtColumn } from "@/components/meditrack/shared"
 import { AdminPageHeader } from "@/components/meditrack/admin/register/AdminPageHeader"
 import { AdminCard } from "@/components/meditrack/admin/register/AdminCard"
@@ -21,30 +33,7 @@ import { AdminModal } from "@/components/meditrack/admin/register/AdminModal"
 import { BED_STATUS_CLASS, type BedStatus } from "@/components/meditrack/admin/register/theme"
 
 const LEGEND: BedStatus[] = ["Occupied", "Vacant", "Cleaning", "Out of service"]
-
-interface WardStat {
-  departmentId: string
-  code: string
-  name: string
-  headUserName?: string | null
-  isActive: boolean
-  sanctioned: number
-}
-
-/** Deterministic 2-3 letter ward code from its name (no such field on the
- * Department record itself) — "General Medicine" → "GM", "Cardiology ICU" →
- * "CI" — mirrors the bed-number prefix convention already used for bed IDs. */
-function wardCode(name: string): string {
-  const initials = name
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-  return (initials || name.slice(0, 2).toUpperCase()).slice(0, 3)
-}
-
-const WARD_EMPTY_FORM = { name: "", headUserId: "unassigned" }
+const WARD_EMPTY_FORM = { code: "", name: "", sanctioned: "0", headUserId: "unassigned" }
 
 export function AdminWardsBedsPage() {
   const { toast } = useToast()
@@ -52,45 +41,32 @@ export function AdminWardsBedsPage() {
   const companyId = clinic?.companyId || user?.companyId || getCompanyId() || ""
   const clinicId = clinic?.id || undefined
 
-  const { data: departments = [], isLoading: isLoadingDepartments } = useGetDepartments(companyId || undefined, clinicId)
-  const [activeDepartmentId, setActiveDepartmentId] = useState<string>("")
-  const selectedDepartmentId = activeDepartmentId || departments[0]?.departmentId || ""
-  const selectedDepartment = departments.find((d) => d.departmentId === selectedDepartmentId)
+  const { data: wards = [], isLoading: isLoadingWards, isError: isWardsError, error: wardsError } = useGetWards(clinicId)
+  const [activeWardId, setActiveWardId] = useState<string>("")
+  const selectedWardId = activeWardId || wards[0]?.id || ""
+  const selectedWard = wards.find((w) => w.id === selectedWardId)
 
-  const { data: beds = [], isLoading: isLoadingBeds, isError, error } = useGetBedsByDepartment(selectedDepartmentId, !!selectedDepartmentId)
+  const { data: beds = [], isLoading: isLoadingBeds, isError, error } = useGetBedsByWard(selectedWardId, !!selectedWardId)
   const createBed = useCreateBed()
   const updateBed = useUpdateBed()
 
-  // Ward master (all beds, ungrouped by the department filter above) — drives
-  // the sanctioned bed count in the Ward Master table below.
-  const { data: allBeds = [], isLoading: isLoadingAllBeds } = useGetBeds(undefined, true)
-  const wardStats: WardStat[] = useMemo(
-    () =>
-      departments.map((dept) => ({
-        departmentId: dept.departmentId,
-        code: wardCode(dept.name),
-        name: dept.name,
-        headUserName: dept.headUserName,
-        isActive: dept.isActive,
-        sanctioned: allBeds.filter((b) => b.departmentId === dept.departmentId).length,
-      })),
-    [departments, allBeds]
-  )
-
-  // Add ward / Edit ward — a ward *is* a department, so these reuse the same
-  // create/update-department mutations the Departments admin page uses.
   const { data: usersResponse } = useGetUsers(1, 100, "", !!companyId, companyId)
   const headOptions = useMemo(() => (usersResponse?.items ?? []).filter((u) => u.isActive !== false), [usersResponse])
-  const createDepartment = useCreateDepartment()
-  const updateDepartment = useUpdateDepartment()
+  const createWard = useCreateWard()
+  const updateWard = useUpdateWard()
   const [addWardOpen, setAddWardOpen] = useState(false)
-  const [editingWard, setEditingWard] = useState<Department | null>(null)
+  const [editingWard, setEditingWard] = useState<MediTrackWard | null>(null)
   const [wardForm, setWardForm] = useState(WARD_EMPTY_FORM)
-  const isSavingWard = createDepartment.isPending || updateDepartment.isPending
+  const isSavingWard = createWard.isPending || updateWard.isPending
 
-  function openEditWard(dept: Department) {
-    setEditingWard(dept)
-    setWardForm({ name: dept.name || "", headUserId: dept.headUserId || "unassigned" })
+  function openEditWard(ward: MediTrackWard) {
+    setEditingWard(ward)
+    setWardForm({
+      code: ward.code || "",
+      name: ward.name || "",
+      sanctioned: String(ward.sanctioned ?? 0),
+      headUserId: ward.headUserId || "unassigned",
+    })
   }
 
   async function handleAddWard(e: FormEvent<HTMLFormElement>) {
@@ -100,8 +76,10 @@ export function AdminWardsBedsPage() {
       return
     }
     try {
-      const created = await createDepartment.mutateAsync({
+      const created = await createWard.mutateAsync({
         name: wardForm.name.trim(),
+        code: wardForm.code.trim() || null,
+        sanctioned: Number(wardForm.sanctioned) || 0,
         isActive: true,
         companyId,
         clinicId: clinicId || null,
@@ -119,14 +97,15 @@ export function AdminWardsBedsPage() {
     e.preventDefault()
     if (!editingWard) return
     try {
-      const updated = await updateDepartment.mutateAsync({
-        id: editingWard.departmentId,
+      const updated = await updateWard.mutateAsync({
+        id: editingWard.id,
         name: wardForm.name.trim(),
+        code: wardForm.code.trim() || null,
+        sanctioned: Number(wardForm.sanctioned) || 0,
         isActive: editingWard.isActive,
         companyId: editingWard.companyId || companyId || null,
         clinicId: editingWard.clinicId || clinicId || null,
         headUserId: wardForm.headUserId === "unassigned" ? null : wardForm.headUserId,
-        bedIds: editingWard.bedIds,
       })
       setEditingWard(null)
       setWardForm(WARD_EMPTY_FORM)
@@ -136,10 +115,10 @@ export function AdminWardsBedsPage() {
     }
   }
 
-  const wardColumns: MtColumn<WardStat>[] = [
-    { key: "code", header: "Code", render: (r) => <span className="font-mono text-xs text-adminreg-muted">{r.code}</span> },
+  const wardColumns: MtColumn<MediTrackWard>[] = [
+    { key: "code", header: "Code", render: (r) => <span className="font-mono text-xs text-adminreg-muted">{r.code || "—"}</span> },
     { key: "name", header: "Name", alwaysVisible: true, render: (r) => <span className="font-medium text-adminreg-text">{r.name}</span> },
-    { key: "sanctioned", header: "Sanctioned", render: (r) => r.sanctioned, sortValue: (r) => r.sanctioned },
+    { key: "sanctioned", header: "Sanctioned", render: (r) => r.sanctioned ?? 0, sortValue: (r) => r.sanctioned ?? 0 },
     { key: "head", header: "Head", render: (r) => r.headUserName || "Unassigned" },
     {
       key: "status",
@@ -162,10 +141,7 @@ export function AdminWardsBedsPage() {
             {
               icon: Pencil,
               label: "Edit",
-              onClick: () => {
-                const dept = departments.find((d) => d.departmentId === r.departmentId)
-                if (dept) openEditWard(dept)
-              },
+              onClick: () => openEditWard(r),
             },
           ]}
         />
@@ -193,27 +169,25 @@ export function AdminWardsBedsPage() {
 
   async function handleAdd(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    if (!selectedDepartmentId) {
-      toast({ title: "Select a ward", description: "Create a department first, then add beds.", variant: "destructive" })
+    if (!selectedWardId) {
+      toast({ title: "Select a ward", description: "Create a ward first, then add beds.", variant: "destructive" })
       return
     }
     try {
       const created = await createBed.mutateAsync({
-        departmentId: selectedDepartmentId,
+        wardId: selectedWardId,
         bedNumber: form.bedNumber.trim(),
         status: toApiBedStatus(form.status),
         isActive: true,
       })
       setAddOpen(false)
       setForm({ bedNumber: "", status: "Vacant" })
-      toast({ title: "Bed added", description: `${created.bedNumber} was added to ${selectedDepartment?.name || "the ward"}.` })
+      toast({ title: "Bed added", description: `${created.bedNumber} was added to ${selectedWard?.name || "the ward"}.` })
     } catch (err) {
       toast({ title: "Could not add bed", description: getToastErrorMessage(err, "Failed to create bed"), variant: "destructive" })
     }
   }
 
-  // Bed detail modal — toggles a bed into/out of "Out of service", a third
-  // state distinct from occupied/vacant, set aside for maintenance/repair.
   const [bedModalTarget, setBedModalTarget] = useState<Bed | null>(null)
   const bedModalStatus = bedModalTarget ? toUiBedStatus(bedModalTarget.status) : null
 
@@ -223,13 +197,16 @@ export function AdminWardsBedsPage() {
     try {
       await updateBed.mutateAsync({
         id: bedModalTarget.id,
-        departmentId: bedModalTarget.departmentId,
+        wardId: bedModalTarget.wardId,
         bedNumber: bedModalTarget.bedNumber,
         status: toApiBedStatus(nextStatus),
         patientId: bedModalTarget.patientId ?? null,
         isActive: bedModalTarget.isActive,
       })
-      toast({ title: nextStatus === "Out of service" ? "Bed marked out of service" : "Bed marked vacant", description: `${bedModalTarget.bedNumber} is now ${nextStatus.toLowerCase()}.` })
+      toast({
+        title: nextStatus === "Out of service" ? "Bed marked out of service" : "Bed marked vacant",
+        description: `${bedModalTarget.bedNumber} is now ${nextStatus.toLowerCase()}.`,
+      })
       setBedModalTarget(null)
     } catch (err) {
       toast({ title: "Could not update bed", description: getToastErrorMessage(err, "Failed to update bed"), variant: "destructive" })
@@ -240,7 +217,21 @@ export function AdminWardsBedsPage() {
     <>
       <div className="space-y-1.5">
         <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Ward Name</Label>
-        <Input value={wardForm.name} onChange={(e) => setWardForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Neurology" required />
+        <Input value={wardForm.name} onChange={(e) => setWardForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. General Medicine" required />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Code</Label>
+        <Input value={wardForm.code} onChange={(e) => setWardForm((f) => ({ ...f, code: e.target.value }))} placeholder="e.g. GM" />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Sanctioned beds</Label>
+        <Input
+          type="number"
+          min={0}
+          value={wardForm.sanctioned}
+          onChange={(e) => setWardForm((f) => ({ ...f, sanctioned: e.target.value }))}
+          placeholder="0"
+        />
       </div>
       <div className="space-y-1.5">
         <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Head of Ward</Label>
@@ -263,31 +254,33 @@ export function AdminWardsBedsPage() {
     <div className="space-y-5">
       <AdminPageHeader title="Wards & Beds" subtitle="Live bed status by ward, and ward master configuration." />
 
-      {isLoadingDepartments ? (
+      {isLoadingWards ? (
         <TableSkeleton rows={2} columns={4} />
-      ) : departments.length === 0 ? (
-        <p className="text-sm text-adminreg-muted">No departments yet. Add a department first, then create beds for it.</p>
+      ) : isWardsError ? (
+        <p className="text-sm text-adminreg-red">{getToastErrorMessage(wardsError, "Failed to load wards")}</p>
+      ) : wards.length === 0 ? (
+        <p className="text-sm text-adminreg-muted">No wards yet. Add a ward first, then create beds for it.</p>
       ) : (
         <div className="flex flex-wrap gap-2">
-          {departments.map((dept) => (
+          {wards.map((ward) => (
             <button
-              key={dept.departmentId}
+              key={ward.id}
               type="button"
-              onClick={() => setActiveDepartmentId(dept.departmentId)}
+              onClick={() => setActiveWardId(ward.id)}
               className={cn(
                 "border px-4 py-2 text-sm font-semibold transition-colors",
-                dept.departmentId === selectedDepartmentId
+                ward.id === selectedWardId
                   ? "border-adminreg-olive bg-adminreg-olive-soft text-adminreg-olive-700"
                   : "border-adminreg-border bg-adminreg-card text-adminreg-muted hover:text-adminreg-text"
               )}
             >
-              {dept.name}
+              {ward.name}
             </button>
           ))}
         </div>
       )}
 
-      <MtButton className="gap-2" onClick={() => setAddOpen(true)} disabled={!selectedDepartmentId}>
+      <MtButton className="gap-2" onClick={() => setAddOpen(true)} disabled={!selectedWardId}>
         <Plus className="h-4 w-4" />
         Add bed
       </MtButton>
@@ -307,7 +300,7 @@ export function AdminWardsBedsPage() {
         ))}
       </div>
 
-      <AdminCard title={`${selectedDepartment?.name || "Ward"} — ${beds.length} beds`}>
+      <AdminCard title={`${selectedWard?.name || "Ward"} — ${beds.length} beds`}>
         {isLoadingBeds ? (
           <TableSkeleton rows={4} columns={5} />
         ) : isError ? (
@@ -352,12 +345,18 @@ export function AdminWardsBedsPage() {
           </MtButton>
         }
       >
-        {isLoadingDepartments || isLoadingAllBeds ? (
+        {isLoadingWards ? (
           <TableSkeleton rows={4} columns={6} />
-        ) : departments.length === 0 ? (
-          <p className="p-5 text-sm text-adminreg-muted">No departments yet. Add a department first, then create beds for it.</p>
+        ) : isWardsError ? (
+          <p className="p-5 text-sm text-adminreg-red">{getToastErrorMessage(wardsError, "Failed to load wards")}</p>
         ) : (
-          <MtDataTable columns={wardColumns} rows={wardStats} keyExtractor={(r) => r.departmentId} />
+          <MtDataTable
+            columns={wardColumns}
+            rows={wards}
+            keyExtractor={(r) => r.id}
+            emptyTitle="No wards yet"
+            emptyDescription="Add a ward to start the ward master."
+          />
         )}
       </AdminCard>
 
@@ -365,7 +364,7 @@ export function AdminWardsBedsPage() {
         open={addOpen}
         onOpenChange={setAddOpen}
         title="Add bed"
-        description={selectedDepartment ? `New bed in ${selectedDepartment.name}` : undefined}
+        description={selectedWard ? `New bed in ${selectedWard.name}` : undefined}
         onSubmit={handleAdd}
         footer={
           <>
@@ -421,7 +420,7 @@ export function AdminWardsBedsPage() {
         open={!!editingWard}
         onOpenChange={(open) => !open && setEditingWard(null)}
         title="Edit ward"
-        description={editingWard ? `Code ${wardCode(editingWard.name)}` : undefined}
+        description={editingWard?.code ? `Code ${editingWard.code}` : undefined}
         onSubmit={handleEditWard}
         footer={
           <>

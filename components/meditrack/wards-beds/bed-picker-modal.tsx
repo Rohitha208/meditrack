@@ -95,8 +95,8 @@ export function BedPickerModal({ open, onOpenChange, beds, selectedIds, onConfir
                   >
                     <p className="font-semibold text-adminreg-text">{bed.bedNumber}</p>
                     <p className={cn("mt-0.5 text-xs font-medium", cls.text)}>{uiStatus}</p>
-                    {bed.departmentName && (
-                      <p className="mt-1 text-[10px] text-adminreg-muted">{bed.departmentName}</p>
+                    {bed.wardName && (
+                      <p className="mt-1 text-[10px] text-adminreg-muted">{bed.wardName}</p>
                     )}
                     {bed.patientName && (
                       <p className="mt-1 font-mono text-[10px] text-adminreg-muted">{bed.patientName}</p>
