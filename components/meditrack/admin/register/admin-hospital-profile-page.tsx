@@ -1,26 +1,19 @@
 "use client"
 
-import { Plus } from "lucide-react"
+import { useState, type FormEvent } from "react"
+import { Loader2, Plus } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { MtButton } from "@/components/meditrack/shared"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { useToast } from "@/hooks/use-toast"
+import { getToastErrorMessage } from "@/utils/apiErrorHandler"
+import { getCompanyId } from "@/utils/clientCookie"
+import { useRootContext } from "@/context/RootContext"
+import { useCreateMediTrackClinic, useGetMediTrackClinics } from "@/queries/meditrack/clinics"
+import { FormDialog, MtButton, MtDataTable, TableSkeleton, type MtColumn } from "@/components/meditrack/shared"
 import { AdminPageHeader } from "./AdminPageHeader"
 import { AdminCard } from "./AdminCard"
-
-// Frontend/UI only — static register content, no backend.
-
-interface Branch {
-  code: string
-  name: string
-  address: string
-  beds: number
-  status: "Active" | "Inactive"
-}
-
-const BRANCHES: Branch[] = [
-  { code: "BR-01", name: "Sri Ramachandra — Main Campus", address: "Bannerghatta Road, Bengaluru", beds: 135, status: "Active" },
-  { code: "BR-02", name: "Sri Ramachandra — Whitefield", address: "Whitefield, Bengaluru", beds: 60, status: "Active" },
-]
 
 type LicenseTone = "valid" | "warning" | "critical"
 
@@ -46,7 +39,105 @@ const LICENSE_TONE_CLASS: Record<LicenseTone, { border: string; bg: string; text
   critical: { border: "border-adminreg-red", bg: "bg-adminreg-red-soft", text: "text-adminreg-red-text" },
 }
 
+const EMPTY_FORM = {
+  name: "",
+  addressLine1: "",
+  city: "",
+  state: "",
+  postalCode: "",
+  country: "India",
+  licenseNumber: "",
+}
+
+function formatAddress(row: {
+  addressLine1?: string | null
+  addressLine2?: string | null
+  city?: string | null
+  state?: string | null
+  postalCode?: string | null
+}) {
+  return [row.addressLine1, row.addressLine2, row.city, row.state, row.postalCode].filter(Boolean).join(", ") || "—"
+}
+
 export function AdminHospitalProfilePage() {
+  const { toast } = useToast()
+  const { user, clinic } = useRootContext()
+  const companyId = clinic?.companyId || user?.companyId || getCompanyId() || ""
+
+  const { data: clinicsData, isLoading, isError, error } = useGetMediTrackClinics(
+    { pageSize: 100, companyId: companyId || undefined },
+    !!companyId
+  )
+  const createClinic = useCreateMediTrackClinic()
+  const clinics = clinicsData?.items ?? []
+
+  const [addOpen, setAddOpen] = useState(false)
+  const [form, setForm] = useState(EMPTY_FORM)
+
+  function openAdd() {
+    setForm(EMPTY_FORM)
+    setAddOpen(true)
+  }
+
+  async function handleAdd(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!companyId) {
+      toast({ title: "Cannot save", description: "Company is missing. Please log in again.", variant: "destructive" })
+      return
+    }
+    try {
+      const created = await createClinic.mutateAsync({
+        companyId,
+        name: form.name.trim(),
+        addressLine1: form.addressLine1.trim() || null,
+        city: form.city.trim() || null,
+        state: form.state.trim() || null,
+        postalCode: form.postalCode.trim() || null,
+        country: form.country.trim() || null,
+        licenseNumber: form.licenseNumber.trim() || null,
+        subscriptionStatus: "Active",
+      })
+      setAddOpen(false)
+      setForm(EMPTY_FORM)
+      toast({ title: "Branch added", description: `${created.name} was added.` })
+    } catch (err) {
+      toast({
+        title: "Could not add branch",
+        description: getToastErrorMessage(err, "Failed to create clinic"),
+        variant: "destructive",
+      })
+    }
+  }
+
+  const columns: MtColumn<(typeof clinics)[number]>[] = [
+    {
+      key: "code",
+      header: "Code",
+      render: (r) => <span className="font-mono text-xs text-adminreg-muted">{r.licenseNumber || "—"}</span>,
+    },
+    {
+      key: "name",
+      header: "Branch name",
+      alwaysVisible: true,
+      render: (r) => <span className="font-medium text-adminreg-text">{r.name}</span>,
+      sortValue: (r) => r.name,
+    },
+    {
+      key: "address",
+      header: "Address",
+      render: (r) => <span className="text-adminreg-muted">{formatAddress(r)}</span>,
+    },
+    {
+      key: "status",
+      header: "Status",
+      render: (r) => (
+        <span className="text-xs font-semibold text-adminreg-olive-700">
+          {r.subscriptionStatus || "Active"}
+        </span>
+      ),
+    },
+  ]
+
   return (
     <div className="space-y-5">
       <AdminPageHeader title="Hospital Profile" subtitle="Branches, accreditation, licenses and compliance documents." />
@@ -55,34 +146,25 @@ export function AdminHospitalProfilePage() {
         title="Branches"
         noPadding
         action={
-          <MtButton className="gap-2">
+          <MtButton className="gap-2" onClick={openAdd}>
             <Plus className="h-4 w-4" />
             Add branch
           </MtButton>
         }
       >
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-adminreg-border bg-adminreg-header text-left text-[11px] font-semibold uppercase tracking-wide text-adminreg-muted">
-              <th className="px-5 py-3">Code</th>
-              <th className="px-5 py-3">Branch name</th>
-              <th className="px-5 py-3">Address</th>
-              <th className="px-5 py-3">Beds</th>
-              <th className="px-5 py-3">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {BRANCHES.map((b) => (
-              <tr key={b.code} className="border-b border-adminreg-divider last:border-0">
-                <td className="px-5 py-3 font-mono text-xs text-adminreg-muted">{b.code}</td>
-                <td className="px-5 py-3 font-medium text-adminreg-text">{b.name}</td>
-                <td className="px-5 py-3 text-adminreg-muted">{b.address}</td>
-                <td className="px-5 py-3">{b.beds}</td>
-                <td className="px-5 py-3 text-xs font-semibold text-adminreg-olive-700">{b.status}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {isLoading ? (
+          <TableSkeleton rows={4} columns={4} />
+        ) : isError ? (
+          <p className="px-5 py-8 text-sm text-adminreg-red">{getToastErrorMessage(error, "Failed to load branches")}</p>
+        ) : (
+          <MtDataTable
+            columns={columns}
+            rows={clinics}
+            keyExtractor={(r) => r.id}
+            emptyTitle="No branches yet"
+            emptyDescription="Add a branch to start the hospital profile."
+          />
+        )}
       </AdminCard>
 
       <AdminCard title="Accreditation & Licenses">
@@ -105,6 +187,68 @@ export function AdminHospitalProfilePage() {
           })}
         </div>
       </AdminCard>
+
+      <FormDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        title="Add branch"
+        onSubmit={handleAdd}
+        footer={
+          <>
+            <MtButton type="button" variant="ghost" onClick={() => setAddOpen(false)}>Cancel</MtButton>
+            <MtButton type="submit" disabled={createClinic.isPending}>
+              {createClinic.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Add branch
+            </MtButton>
+          </>
+        }
+      >
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Branch name</Label>
+          <Input
+            value={form.name}
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            placeholder="e.g. Sri Ramachandra — Main Campus"
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Code</Label>
+          <Input
+            value={form.licenseNumber}
+            onChange={(e) => setForm((f) => ({ ...f, licenseNumber: e.target.value }))}
+            placeholder="e.g. BR-01"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Address line 1</Label>
+          <Input
+            value={form.addressLine1}
+            onChange={(e) => setForm((f) => ({ ...f, addressLine1: e.target.value }))}
+            placeholder="e.g. Bannerghatta Road"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">City</Label>
+            <Input value={form.city} onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))} placeholder="e.g. Bengaluru" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">State</Label>
+            <Input value={form.state} onChange={(e) => setForm((f) => ({ ...f, state: e.target.value }))} placeholder="e.g. Karnataka" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Postal code</Label>
+            <Input value={form.postalCode} onChange={(e) => setForm((f) => ({ ...f, postalCode: e.target.value }))} placeholder="e.g. 560076" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Country</Label>
+            <Input value={form.country} onChange={(e) => setForm((f) => ({ ...f, country: e.target.value }))} placeholder="India" />
+          </div>
+        </div>
+      </FormDialog>
     </div>
   )
 }
