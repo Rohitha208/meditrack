@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getJwtToken } from '@/utils/serverCookie'
  
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL
+
+function authHeader(request: NextRequest): Record<string, string> {
+  const token = getJwtToken(request)
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+function requireToken(request: NextRequest) {
+  return getJwtToken(request)
+    ? null
+    : NextResponse.json({ message: 'Unauthorized' }, { status: 401 })
+}
  
 // GET /api/companies/[id] - Get company by ID
 export async function GET(
@@ -8,12 +20,16 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const denied = requireToken(request)
+    if (denied) return denied
+
     const { id } = await params
  
     const response = await fetch(`${API_BASE_URL}/api/company/${id}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeader(request),
       },
     })
  
@@ -44,6 +60,9 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const denied = requireToken(request)
+    if (denied) return denied
+
     const { id } = await params
     const contentType = request.headers.get("content-type") || "";
 
@@ -60,6 +79,8 @@ export async function PUT(
           }
           return fetch(`${API_BASE_URL}/api/company/${id}/upload`, {
             method: "PUT",
+            
+            headers: authHeader(request),
             body: forwardForm,
           });
         })()
@@ -69,6 +90,7 @@ export async function PUT(
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',
+              ...authHeader(request),
             },
             body: JSON.stringify(body),
           });
@@ -116,12 +138,16 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const denied = requireToken(request)
+    if (denied) return denied
+
     const { id } = await params
  
     const response = await fetch(`${API_BASE_URL}/api/company/${id}`, {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeader(request),
       },
     })
  

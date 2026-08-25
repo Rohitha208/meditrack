@@ -1,6 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getJwtToken } from '@/utils/serverCookie'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL
+
+ 
+function authHeader(request: NextRequest): Record<string, string> {
+  const token = getJwtToken(request)
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+function requireToken(request: NextRequest) {
+  return getJwtToken(request)
+    ? null
+    : NextResponse.json({ message: 'Unauthorized' }, { status: 401 })
+}
 
 async function toProxyResponse(upstream: Response) {
   const contentType = upstream.headers.get("content-type") || "";
@@ -28,6 +41,9 @@ async function toProxyResponse(upstream: Response) {
 // GET /api/companies - Get companies with optional pagination
 export async function GET(request: NextRequest) {
   try {
+    const denied = requireToken(request)
+    if (denied) return denied
+
     const { searchParams } = new URL(request.url);
     const pageNumber = searchParams.get('pageNumber');
     const pageSize = searchParams.get('pageSize');
@@ -46,6 +62,7 @@ export async function GET(request: NextRequest) {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeader(request),
       },
     })
 
@@ -67,6 +84,9 @@ export async function GET(request: NextRequest) {
 // POST /api/companies - Create a new company
 export async function POST(request: NextRequest) {
   try {
+    const denied = requireToken(request)
+    if (denied) return denied
+
     const contentType = request.headers.get("content-type") || "";
 
     // Multipart: forward to POST /api/company/upload (individual form fields + optional file).
@@ -83,6 +103,7 @@ export async function POST(request: NextRequest) {
           }
           return fetch(`${API_BASE_URL}/api/company/upload`, {
             method: "POST",
+            headers: authHeader(request),
             body: forwardForm,
           });
         })()
@@ -92,6 +113,7 @@ export async function POST(request: NextRequest) {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
+              ...authHeader(request),
             },
             body: JSON.stringify(body),
           });
