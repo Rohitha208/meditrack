@@ -5,6 +5,8 @@ import type { MediTrackTpa } from "./types";
 export interface UpdateTpaRequest {
   id: string;
   tpaName: string;
+  payerType?: string | null;
+  empanelmentStatus?: string | null;
   discountPercent?: string | null;
   overrideRates?: string | null;
   effectiveDate?: string | null;

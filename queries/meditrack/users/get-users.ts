@@ -10,6 +10,8 @@ export interface MediTrackUser {
   roleId: string;
   roleName: string;
   companyId?: string;
+  departmentId?: string | null;
+  specialtyId?: string | null;
   isActive: boolean;
   lastLogin: string | null;
   createdAt: string | null;

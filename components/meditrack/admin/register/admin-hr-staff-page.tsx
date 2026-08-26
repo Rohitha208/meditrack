@@ -1,20 +1,20 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
 import { MtDataTable, StatusBadge, TableSkeleton, type MtColumn } from "@/components/meditrack/shared"
 import { AdminPageHeader } from "./AdminPageHeader"
 import { AdminCard } from "./AdminCard"
+import { BranchSelect, useBranchScope } from "./use-branch-scope"
 import { useToast } from "@/hooks/use-toast"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
-import { getCompanyId } from "@/utils/clientCookie"
-import { useRootContext } from "@/context/RootContext"
 import { useGetMediTrackUsers } from "@/queries/meditrack/users"
 import {
   addDaysIso,
   getWeekStartIso,
   isShiftType,
   nextShift,
+  toShiftDateKey,
   useGetDutyRoster,
   useUpsertDutyRoster,
   type ShiftType,
@@ -39,14 +39,31 @@ function dateForDay(weekStart: string, day: Day): string {
   return addDaysIso(weekStart, DAYS.indexOf(day))
 }
 
+function shiftKey(userId: string, shiftDate: string) {
+  return `${String(userId).toLowerCase()}:${toShiftDateKey(shiftDate)}`
+}
+
 export function AdminHrStaffPage() {
   const { toast } = useToast()
-  const { user, clinic } = useRootContext()
-  const companyId = clinic?.companyId || user?.companyId || getCompanyId() || ""
-  const clinicId = clinic?.id || ""
+  const {
+    companyId,
+    branchId,
+    setBranchId,
+    clinicId,
+    hasBranch,
+    branches,
+    isLoadingBranches,
+    noBranchMessage,
+  } = useBranchScope()
 
   const [tab, setTab] = useState<"personnel" | "roster">("roster")
   const weekStart = useMemo(() => getWeekStartIso(), [])
+  /** Local overrides so the grid updates even if GET refetch lags or filters oddly. */
+  const [shiftOverrides, setShiftOverrides] = useState<Record<string, ShiftType>>({})
+
+  useEffect(() => {
+    setShiftOverrides({})
+  }, [clinicId, weekStart])
 
   const {
     data: usersData,
@@ -60,7 +77,7 @@ export function AdminHrStaffPage() {
       companyId: companyId || undefined,
       clinicIds: clinicId ? [clinicId] : undefined,
     },
-    !!companyId
+    !!companyId && hasBranch
   )
 
   const users = usersData?.items ?? []
@@ -71,8 +88,9 @@ export function AdminHrStaffPage() {
     isError: isRosterError,
     error: rosterError,
   } = useGetDutyRoster(
-    clinicId ? { clinicId, weekStart, companyId: companyId || undefined } : null,
-    tab === "roster" && !!clinicId
+    // Filter by clinic only — companyId on GET was hiding saved rows (null company_id).
+    clinicId ? { clinicId, weekStart } : null,
+    tab === "roster" && hasBranch
   )
 
   const upsertShift = useUpsertDutyRoster()
@@ -81,31 +99,46 @@ export function AdminHrStaffPage() {
   const shiftByUserAndDate = useMemo(() => {
     const map = new Map<string, ShiftType>()
     rosterEntries.forEach((entry) => {
-      const date = String(entry.shiftDate).slice(0, 10)
-      const type = isShiftType(entry.shiftType) ? entry.shiftType : "OFF"
-      map.set(`${entry.userId}:${date}`, type)
+      const key = shiftKey(entry.userId, entry.shiftDate)
+      const type = isShiftType(String(entry.shiftType)) ? (entry.shiftType as ShiftType) : "OFF"
+      map.set(key, type)
+    })
+    Object.entries(shiftOverrides).forEach(([key, type]) => {
+      map.set(key, type)
     })
     return map
-  }, [rosterEntries])
+  }, [rosterEntries, shiftOverrides])
 
   async function cycleShift(userId: string, day: Day) {
     if (!clinicId) {
-      toast({ title: "Clinic required", description: "Select a clinic to edit the duty roster.", variant: "destructive" })
+      toast({ title: "Branch required", description: "Select a branch to edit the duty roster.", variant: "destructive" })
       return
     }
     const shiftDate = dateForDay(weekStart, day)
-    const key = `${userId}:${shiftDate}`
+    const key = shiftKey(userId, shiftDate)
     const current = shiftByUserAndDate.get(key) || "OFF"
     const next = nextShift(current)
+
+    // Update UI immediately
+    setShiftOverrides((prev) => ({ ...prev, [key]: next }))
     setPendingKey(key)
+
     try {
       await upsertShift.mutateAsync({
         userId,
         clinicId,
+        companyId: companyId || null,
         shiftDate,
         shiftType: next,
       })
     } catch (err) {
+      // Roll back this cell on failure
+      setShiftOverrides((prev) => {
+        const copy = { ...prev }
+        if (current === "OFF") delete copy[key]
+        else copy[key] = current
+        return copy
+      })
       toast({
         title: "Could not update shift",
         description: getToastErrorMessage(err, "Failed to save shift"),
@@ -140,7 +173,18 @@ export function AdminHrStaffPage() {
 
   return (
     <div>
-      <AdminPageHeader title="HR & Staff" subtitle="Staff directory, leave and the weekly duty roster." />
+      <AdminPageHeader
+        title="HR & Staff"
+        subtitle="Staff directory and weekly duty roster — scoped by branch."
+        actions={
+          <BranchSelect
+            value={branchId}
+            onValueChange={setBranchId}
+            branches={branches}
+            isLoading={isLoadingBranches}
+          />
+        }
+      />
 
       <div className="mb-5 flex gap-2">
         <button
@@ -171,7 +215,9 @@ export function AdminHrStaffPage() {
 
       {tab === "personnel" ? (
         <AdminCard title="Personnel" noPadding>
-          {isLoadingUsers ? (
+          {!hasBranch ? (
+            <p className="px-5 py-8 text-sm text-adminreg-red">{noBranchMessage}</p>
+          ) : isLoadingUsers ? (
             <TableSkeleton rows={6} columns={3} />
           ) : isUsersError ? (
             <p className="px-5 py-8 text-sm text-adminreg-red">
@@ -183,17 +229,18 @@ export function AdminHrStaffPage() {
               rows={users}
               keyExtractor={(r) => r.id}
               emptyTitle="No staff found"
-              emptyDescription="Users for this hospital will appear here."
+              emptyDescription="Users for this branch will appear here."
             />
           )}
         </AdminCard>
       ) : (
         <AdminCard title="Weekly Duty Roster">
           <p className="mb-4 text-xs text-adminreg-muted">
-            Click a cell to assign or change a shift directly on the grid. Week of {weekStart}.
+            Click a cell to cycle shifts: <span className="font-semibold text-adminreg-text">OFF → M → E → N → OFF</span>
+            {" "}(Morning / Evening / Night). Week of {weekStart}.
           </p>
-          {!clinicId ? (
-            <p className="text-sm text-adminreg-red">Select a clinic to load the duty roster.</p>
+          {!hasBranch ? (
+            <p className="text-sm text-adminreg-red">{noBranchMessage}</p>
           ) : isLoadingUsers || isLoadingRoster ? (
             <TableSkeleton rows={6} columns={6} />
           ) : isRosterError ? (
@@ -201,7 +248,7 @@ export function AdminHrStaffPage() {
               {getToastErrorMessage(rosterError, "Failed to load duty roster")}
             </p>
           ) : users.length === 0 ? (
-            <p className="text-sm text-adminreg-muted">No staff found for this clinic.</p>
+            <p className="text-sm text-adminreg-muted">No staff found for this branch.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[560px] text-sm">
@@ -221,7 +268,7 @@ export function AdminHrStaffPage() {
                         <td className="py-3 pr-4 font-semibold text-adminreg-text">{name}</td>
                         {DAYS.map((day) => {
                           const shiftDate = dateForDay(weekStart, day)
-                          const key = `${staff.id}:${shiftDate}`
+                          const key = shiftKey(staff.id, shiftDate)
                           const shift = shiftByUserAndDate.get(key) || "OFF"
                           const busy = pendingKey === key && upsertShift.isPending
                           return (

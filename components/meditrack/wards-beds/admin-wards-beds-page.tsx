@@ -9,9 +9,8 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
-import { getCompanyId } from "@/utils/clientCookie"
-import { useRootContext } from "@/context/RootContext"
-import { useGetUsers } from "@/queries/users/get-users"
+import { useGetMediTrackUsers } from "@/queries/meditrack/users"
+import { BranchFormField, BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
 import {
   useCreateWard,
   useGetWards,
@@ -37,12 +36,23 @@ const WARD_EMPTY_FORM = { code: "", name: "", sanctioned: "0", headUserId: "unas
 
 export function AdminWardsBedsPage() {
   const { toast } = useToast()
-  const { user, clinic } = useRootContext()
-  const companyId = clinic?.companyId || user?.companyId || getCompanyId() || ""
-  const clinicId = clinic?.id || undefined
+  const {
+    companyId,
+    branchId,
+    setBranchId,
+    clinicId,
+    hasBranch,
+    branches,
+    isLoadingBranches,
+    noBranchMessage,
+  } = useBranchScope()
 
-  const { data: wards = [], isLoading: isLoadingWards, isError: isWardsError, error: wardsError } = useGetWards(clinicId)
+  const { data: wards = [], isLoading: isLoadingWards, isError: isWardsError, error: wardsError } = useGetWards(
+    clinicId,
+    hasBranch
+  )
   const [activeWardId, setActiveWardId] = useState<string>("")
+  const [formBranchId, setFormBranchId] = useState("")
   const selectedWardId = activeWardId || wards[0]?.id || ""
   const selectedWard = wards.find((w) => w.id === selectedWardId)
 
@@ -50,8 +60,6 @@ export function AdminWardsBedsPage() {
   const createBed = useCreateBed()
   const updateBed = useUpdateBed()
 
-  const { data: usersResponse } = useGetUsers(1, 100, "", !!companyId, companyId)
-  const headOptions = useMemo(() => (usersResponse?.items ?? []).filter((u) => u.isActive !== false), [usersResponse])
   const createWard = useCreateWard()
   const updateWard = useUpdateWard()
   const [addWardOpen, setAddWardOpen] = useState(false)
@@ -59,8 +67,31 @@ export function AdminWardsBedsPage() {
   const [wardForm, setWardForm] = useState(WARD_EMPTY_FORM)
   const isSavingWard = createWard.isPending || updateWard.isPending
 
+  const headBranchId = formBranchId || branchId
+  const wardFormOpen = addWardOpen || !!editingWard
+
+  const { data: headUsersData, isLoading: isLoadingHeadUsers } = useGetMediTrackUsers(
+    {
+      pageNumber: 1,
+      pageSize: 100,
+      companyId: companyId || undefined,
+      clinicIds: headBranchId ? [headBranchId] : undefined,
+    },
+    !!companyId && !!headBranchId && wardFormOpen
+  )
+  const headOptions = useMemo(
+    () => (headUsersData?.items ?? []).filter((u) => u.isActive !== false),
+    [headUsersData]
+  )
+
+  function handleFormBranchChange(nextBranchId: string) {
+    setFormBranchId(nextBranchId)
+    setWardForm((f) => ({ ...f, headUserId: "unassigned" }))
+  }
+
   function openEditWard(ward: MediTrackWard) {
     setEditingWard(ward)
+    setFormBranchId(ward.clinicId || branchId)
     setWardForm({
       code: ward.code || "",
       name: ward.name || "",
@@ -75,6 +106,10 @@ export function AdminWardsBedsPage() {
       toast({ title: "Cannot save", description: "Company is missing. Please log in again.", variant: "destructive" })
       return
     }
+    if (!formBranchId) {
+      toast({ title: "Branch required", description: "Select a branch for this ward.", variant: "destructive" })
+      return
+    }
     try {
       const created = await createWard.mutateAsync({
         name: wardForm.name.trim(),
@@ -82,7 +117,7 @@ export function AdminWardsBedsPage() {
         sanctioned: Number(wardForm.sanctioned) || 0,
         isActive: true,
         companyId,
-        clinicId: clinicId || null,
+        clinicId: formBranchId,
         headUserId: wardForm.headUserId === "unassigned" ? null : wardForm.headUserId,
       })
       setAddWardOpen(false)
@@ -96,6 +131,10 @@ export function AdminWardsBedsPage() {
   async function handleEditWard(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!editingWard) return
+    if (!formBranchId) {
+      toast({ title: "Branch required", description: "Select a branch for this ward.", variant: "destructive" })
+      return
+    }
     try {
       const updated = await updateWard.mutateAsync({
         id: editingWard.id,
@@ -104,7 +143,7 @@ export function AdminWardsBedsPage() {
         sanctioned: Number(wardForm.sanctioned) || 0,
         isActive: editingWard.isActive,
         companyId: editingWard.companyId || companyId || null,
-        clinicId: editingWard.clinicId || clinicId || null,
+        clinicId: formBranchId,
         headUserId: wardForm.headUserId === "unassigned" ? null : wardForm.headUserId,
       })
       setEditingWard(null)
@@ -215,6 +254,12 @@ export function AdminWardsBedsPage() {
 
   const wardFormFields = (
     <>
+      <BranchFormField
+        value={formBranchId}
+        onValueChange={handleFormBranchChange}
+        branches={branches}
+        isLoading={isLoadingBranches}
+      />
       <div className="space-y-1.5">
         <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Ward Name</Label>
         <Input value={wardForm.name} onChange={(e) => setWardForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. General Medicine" required />
@@ -236,7 +281,7 @@ export function AdminWardsBedsPage() {
       <div className="space-y-1.5">
         <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Head of Ward</Label>
         <Select value={wardForm.headUserId} onValueChange={(v) => setWardForm((f) => ({ ...f, headUserId: v }))}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectTrigger><SelectValue placeholder={isLoadingHeadUsers ? "Loading staff…" : "Select head"} /></SelectTrigger>
           <SelectContent>
             <SelectItem value="unassigned">Unassigned</SelectItem>
             {headOptions.map((u) => (
@@ -252,9 +297,25 @@ export function AdminWardsBedsPage() {
 
   return (
     <div className="space-y-5">
-      <AdminPageHeader title="Wards & Beds" subtitle="Live bed status by ward, and ward master configuration." />
+      <AdminPageHeader
+        title="Wards & Beds"
+        subtitle="Live bed status by ward — scoped by branch."
+        actions={
+          <BranchSelect
+            value={branchId}
+            onValueChange={(id) => {
+              setBranchId(id)
+              setActiveWardId("")
+            }}
+            branches={branches}
+            isLoading={isLoadingBranches}
+          />
+        }
+      />
 
-      {isLoadingWards ? (
+      {!hasBranch ? (
+        <p className="text-sm text-adminreg-red">{noBranchMessage}</p>
+      ) : isLoadingWards ? (
         <TableSkeleton rows={2} columns={4} />
       ) : isWardsError ? (
         <p className="text-sm text-adminreg-red">{getToastErrorMessage(wardsError, "Failed to load wards")}</p>
@@ -337,8 +398,10 @@ export function AdminWardsBedsPage() {
             className="gap-2"
             onClick={() => {
               setWardForm(WARD_EMPTY_FORM)
+              setFormBranchId(branchId)
               setAddWardOpen(true)
             }}
+            disabled={!hasBranch}
           >
             <Plus className="h-4 w-4" />
             Add ward

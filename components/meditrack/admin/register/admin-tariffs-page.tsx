@@ -12,6 +12,7 @@ import { getToastErrorMessage } from "@/utils/apiErrorHandler"
 import { getCompanyId } from "@/utils/clientCookie"
 import { useRootContext } from "@/context/RootContext"
 import { useGetDepartments } from "@/queries/departments"
+import { BranchSelect, useBranchScope } from "./use-branch-scope"
 import {
   useCreateTariff,
   useDeleteTariff,
@@ -75,9 +76,16 @@ export function AdminTariffsPage() {
   const { toast } = useToast()
   const { user, clinic } = useRootContext()
   const companyId = clinic?.companyId || user?.companyId || getCompanyId() || ""
-  const clinicId = clinic?.id || undefined
+  const {
+    branchId,
+    setBranchId,
+    clinicId,
+    hasBranch,
+    branches,
+    isLoadingBranches,
+  } = useBranchScope()
 
-  const { data: departments = [] } = useGetDepartments(companyId || undefined, clinicId)
+  const { data: departments = [] } = useGetDepartments(companyId || undefined, clinicId, !!companyId && hasBranch)
   const { data: tariffsData, isLoading: isLoadingTariffs, isError: isTariffsError, error: tariffsError } = useGetTariffs({ pageSize: 100 })
   const { data: packagesData, isLoading: isLoadingPackages, isError: isPackagesError, error: packagesError } = useGetPackages({ pageSize: 100 })
   const { data: tpasData, isLoading: isLoadingTpas, isError: isTpasError, error: tpasError } = useGetTpas({ pageSize: 100 })
@@ -386,7 +394,18 @@ export function AdminTariffsPage() {
 
   return (
     <div className="space-y-5">
-      <AdminPageHeader title="Tariffs & Packages" subtitle="Service tariffs, PMJAY packages and TPA negotiated rate cards." />
+      <AdminPageHeader
+        title="Tariffs & Packages"
+        subtitle="Service tariffs, PMJAY packages and TPA negotiated rate cards — departments scoped by branch."
+        actions={
+          <BranchSelect
+            value={branchId}
+            onValueChange={setBranchId}
+            branches={branches}
+            isLoading={isLoadingBranches}
+          />
+        }
+      />
 
       <AdminCard
         title="Tariff Master"

@@ -71,14 +71,8 @@ export function MediTrackLoginForm() {
 
       setProductType(data.user.productType || data.user.companyProductType || company?.productType)
       fetchUser(data, data.user.roleName)
-      // MediTrack has no generic dashboard anymore — every hospital tenant
-      // lands straight on the Admin Overview by default. Deliberately
-      // ignoring `data.redirectUrl` here: it's a shared login-response field
-      // that (for a MediTrack tenant) still points at the old generic
-      // `/dashboard` route, which briefly rendered PawTrack's dashboard
-      // before redirecting here — this form always knows the destination,
-      // so there's no reason to detour through that redirect.
-      router.push("/admin/dashboard")
+      const isSuperAdmin = data.user.roleName === "Super Admin"
+      router.push(isSuperAdmin ? "/admin/companies" : "/admin/dashboard")
       toast({ title: "Login Successful", description: `Welcome to ${productBrandName}`, variant: "success" })
     },
     onError: (error: any) => {

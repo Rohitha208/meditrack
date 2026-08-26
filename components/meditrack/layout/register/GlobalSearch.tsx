@@ -32,7 +32,7 @@ export function GlobalSearch() {
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search patients, providers, records..."
+        placeholder="Search patients, doctors, records..."
         className="w-full rounded-none border border-adminreg-border bg-adminreg-bg px-3 py-2 font-archivo text-sm text-adminreg-text placeholder:text-adminreg-muted focus:outline-none focus:ring-1 focus:ring-adminreg-olive"
       />
       {results.length > 0 && (

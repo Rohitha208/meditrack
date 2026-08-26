@@ -1,11 +1,13 @@
 "use client"
 
 import { useEffect, useState, type ReactNode } from "react"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { Menu } from "lucide-react"
 import { UnifiedSidebar } from "./UnifiedSidebar"
 import { GlobalSearch } from "./GlobalSearch"
 import { formatDate } from "@/components/meditrack/shared"
+import { SUPER_ADMIN_PATHS } from "@/components/meditrack/admin/register/theme"
+import { useRootContext } from "@/context/RootContext"
 
 /** Full-bleed unified shell for /admin/* and /opd/* — one sidebar (module
  * switcher + role-aware nav + role switcher), a top bar with global search
@@ -18,13 +20,27 @@ import { formatDate } from "@/components/meditrack/shared"
  * edge to edge — so the shell must not add a second layer of padding there. */
 export function UnifiedShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
+  const router = useRouter()
+  const { userType } = useRootContext()
   const isAdmin = pathname.startsWith("/admin")
+  const isSuperAdmin = !!userType?.isSuperAdmin
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   // Belt-and-braces: also close on route change (covers back/forward nav,
   // deep links, and anything that navigates without the sidebar's own
   // click-to-close handler seeing it).
   useEffect(() => setMobileNavOpen(false), [pathname])
+
+  useEffect(() => {
+    if (!isSuperAdmin) return
+    if (pathname.startsWith("/opd")) {
+      router.replace("/admin/companies")
+      return
+    }
+    if (!pathname.startsWith("/admin")) return
+    const allowed = SUPER_ADMIN_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+    if (!allowed) router.replace("/admin/companies")
+  }, [isSuperAdmin, pathname, router])
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-adminreg-bg font-archivo text-adminreg-text">

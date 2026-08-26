@@ -8,9 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
-import { getCompanyId } from "@/utils/clientCookie"
-import { useRootContext } from "@/context/RootContext"
-import { useGetUsers } from "@/queries/users/get-users"
+import { useGetMediTrackUsers } from "@/queries/meditrack/users"
 import {
   useCreateDepartment,
   useGetDepartmentById,
@@ -18,8 +16,6 @@ import {
   useUpdateDepartment,
   type Department,
 } from "@/queries/departments"
-import { useGetBeds } from "@/queries/meditrack/beds"
-import { BedPickerModal } from "@/components/meditrack/wards-beds"
 import {
   MtDataTable,
   RowActions,
@@ -32,8 +28,9 @@ import {
 } from "@/components/meditrack/shared"
 import { AdminPageHeader } from "@/components/meditrack/admin/register/AdminPageHeader"
 import { AdminCard } from "@/components/meditrack/admin/register/AdminCard"
+import { BranchFormField, BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
 
-const EMPTY_FORM = { name: "", headUserId: "unassigned", bedIds: [] as string[] }
+const EMPTY_FORM = { name: "", headUserId: "unassigned" }
 
 function displayHead(dept: Department) {
   const name = dept.headUserName?.trim()
@@ -42,26 +39,53 @@ function displayHead(dept: Department) {
 
 export function AdminDepartmentsPage() {
   const { toast } = useToast()
-  const { user, clinic } = useRootContext()
-  const companyId = clinic?.companyId || user?.companyId || getCompanyId() || ""
-  const clinicId = clinic?.id || undefined
+  const {
+    companyId,
+    branchId,
+    setBranchId,
+    clinicId,
+    hasBranch,
+    branches,
+    isLoadingBranches,
+    noBranchMessage,
+  } = useBranchScope()
 
-  const { data: departments = [], isLoading, isError, error } = useGetDepartments(companyId || undefined, clinicId)
+  const { data: departments = [], isLoading, isError, error } = useGetDepartments(
+    companyId || undefined,
+    clinicId,
+    !!companyId && hasBranch
+  )
   const createDepartment = useCreateDepartment()
   const updateDepartment = useUpdateDepartment()
-
-  const { data: usersResponse } = useGetUsers(1, 100, "", !!companyId, companyId)
-  const { data: allBeds = [], isLoading: isLoadingBeds } = useGetBeds(undefined, true)
-  const headOptions = useMemo(() => {
-    return (usersResponse?.items ?? []).filter((u) => u.isActive !== false)
-  }, [usersResponse])
 
   const [addOpen, setAddOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [viewId, setViewId] = useState<string | null>(null)
   const [editing, setEditing] = useState<Department | null>(null)
   const [form, setForm] = useState(EMPTY_FORM)
-  const [bedPickerOpen, setBedPickerOpen] = useState(false)
+  const [formBranchId, setFormBranchId] = useState("")
+
+  const headBranchId = formBranchId || branchId
+  const deptFormOpen = addOpen || editOpen
+
+  const { data: headUsersData, isLoading: isLoadingHeadUsers } = useGetMediTrackUsers(
+    {
+      pageNumber: 1,
+      pageSize: 100,
+      companyId: companyId || undefined,
+      clinicIds: headBranchId ? [headBranchId] : undefined,
+    },
+    !!companyId && !!headBranchId && deptFormOpen
+  )
+  const headOptions = useMemo(
+    () => (headUsersData?.items ?? []).filter((u) => u.isActive !== false),
+    [headUsersData]
+  )
+
+  function handleFormBranchChange(nextBranchId: string) {
+    setFormBranchId(nextBranchId)
+    setForm((f) => ({ ...f, headUserId: "unassigned" }))
+  }
 
   const { data: viewedDepartment, isLoading: isLoadingView } = useGetDepartmentById(viewId || "", !!viewId)
 
@@ -69,6 +93,7 @@ export function AdminDepartmentsPage() {
 
   function openAdd() {
     setForm(EMPTY_FORM)
+    setFormBranchId(branchId)
     setAddOpen(true)
   }
 
@@ -77,8 +102,8 @@ export function AdminDepartmentsPage() {
     setForm({
       name: dept.name || "",
       headUserId: dept.headUserId || "unassigned",
-      bedIds: dept.bedIds ?? [],
     })
+    setFormBranchId(dept.clinicId || branchId)
     setEditOpen(true)
   }
 
@@ -88,15 +113,18 @@ export function AdminDepartmentsPage() {
       toast({ title: "Cannot save", description: "Company is missing. Please log in again.", variant: "destructive" })
       return
     }
+    if (!formBranchId) {
+      toast({ title: "Branch required", description: "Select a branch for this department.", variant: "destructive" })
+      return
+    }
 
     try {
       const created = await createDepartment.mutateAsync({
         name: form.name.trim(),
         isActive: true,
         companyId,
-        clinicId: clinicId || null,
+        clinicId: formBranchId,
         headUserId: form.headUserId === "unassigned" ? null : form.headUserId,
-        bedIds: form.bedIds,
       })
       setAddOpen(false)
       setForm(EMPTY_FORM)
@@ -109,6 +137,10 @@ export function AdminDepartmentsPage() {
   async function handleEdit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!editing) return
+    if (!formBranchId) {
+      toast({ title: "Branch required", description: "Select a branch for this department.", variant: "destructive" })
+      return
+    }
 
     try {
       const updated = await updateDepartment.mutateAsync({
@@ -116,10 +148,9 @@ export function AdminDepartmentsPage() {
         name: form.name.trim(),
         isActive: editing.isActive,
         companyId: editing.companyId || companyId || null,
-        clinicId: editing.clinicId || clinicId || null,
+        clinicId: formBranchId,
         headUserId: form.headUserId === "unassigned" ? null : form.headUserId,
         tariffGroupId: editing.tariffGroupId || null,
-        bedIds: form.bedIds,
       })
       setEditOpen(false)
       setEditing(null)
@@ -140,7 +171,7 @@ export function AdminDepartmentsPage() {
           <div>
             <span className="text-adminreg-muted">Unassigned</span>
             {(!r.providerCount || r.providerCount === 0) && (
-              <p className="text-xs text-adminreg-red">No providers assigned yet</p>
+              <p className="text-xs text-adminreg-red">No doctors assigned yet</p>
             )}
           </div>
         ) : (
@@ -148,9 +179,8 @@ export function AdminDepartmentsPage() {
         ),
       sortValue: (r) => displayHead(r),
     },
-    { key: "beds", header: "Beds", render: (r) => r.bedIds?.length ?? 0, sortValue: (r) => r.bedIds?.length ?? 0 },
-    { key: "tariffGroup", header: "Tariff Group", render: (r) => "—" },
-    { key: "providers", header: "Providers", render: (r) => r.providerCount ?? 0, sortValue: (r) => r.providerCount ?? 0 },
+    { key: "tariffGroup", header: "Tariff Group", render: () => "—" },
+    { key: "providers", header: "Doctors", render: (r) => r.providerCount ?? 0, sortValue: (r) => r.providerCount ?? 0 },
     {
       key: "action",
       header: "Action",
@@ -170,6 +200,12 @@ export function AdminDepartmentsPage() {
 
   const departmentFormFields = (
     <>
+      <BranchFormField
+        value={formBranchId}
+        onValueChange={handleFormBranchChange}
+        branches={branches}
+        isLoading={isLoadingBranches}
+      />
       <div className="space-y-1.5">
         <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Department Name</Label>
         <Input
@@ -182,7 +218,7 @@ export function AdminDepartmentsPage() {
       <div className="space-y-1.5">
         <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Head of Department</Label>
         <Select value={form.headUserId} onValueChange={(v) => setForm((f) => ({ ...f, headUserId: v }))}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectTrigger><SelectValue placeholder={isLoadingHeadUsers ? "Loading staff…" : "Select head"} /></SelectTrigger>
           <SelectContent>
             <SelectItem value="unassigned">Unassigned</SelectItem>
             {headOptions.map((u) => (
@@ -193,18 +229,6 @@ export function AdminDepartmentsPage() {
           </SelectContent>
         </Select>
       </div>
-      <div className="space-y-1.5">
-        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Beds</Label>
-        <MtButton
-          type="button"
-          variant="outline"
-          onClick={() => setBedPickerOpen(true)}
-          className="w-full justify-between px-3 text-left"
-        >
-          {form.bedIds.length > 0 ? `${form.bedIds.length} bed${form.bedIds.length === 1 ? "" : "s"} selected` : "Select beds"}
-        </MtButton>
-        <p className="text-xs text-adminreg-muted">Open the picker to choose vacant, occupied, cleaning, or out-of-service beds.</p>
-      </div>
     </>
   )
 
@@ -212,18 +236,28 @@ export function AdminDepartmentsPage() {
     <div>
       <AdminPageHeader
         title="Departments"
-        subtitle="Department master data — heads, beds and tariff mapping."
+        subtitle="Department master data — scoped by branch."
         actions={
-          <MtButton className="gap-2" onClick={openAdd}>
-            <Plus className="h-4 w-4" />
-            Add department
-          </MtButton>
+          <div className="flex flex-wrap items-center gap-3">
+            <BranchSelect
+              value={branchId}
+              onValueChange={setBranchId}
+              branches={branches}
+              isLoading={isLoadingBranches}
+            />
+            <MtButton className="gap-2" onClick={openAdd} disabled={!hasBranch}>
+              <Plus className="h-4 w-4" />
+              Add department
+            </MtButton>
+          </div>
         }
       />
 
       <AdminCard title="Department Master" noPadding>
-        {isLoading ? (
-          <TableSkeleton rows={6} columns={5} />
+        {!hasBranch ? (
+          <p className="px-5 py-8 text-sm text-adminreg-red">{noBranchMessage}</p>
+        ) : isLoading ? (
+          <TableSkeleton rows={6} columns={4} />
         ) : isError ? (
           <p className="px-5 py-8 text-sm text-adminreg-red">{getToastErrorMessage(error, "Failed to load departments")}</p>
         ) : (
@@ -232,7 +266,7 @@ export function AdminDepartmentsPage() {
             rows={departments}
             keyExtractor={(r) => r.departmentId}
             emptyTitle="No departments yet"
-            emptyDescription="Add a department to start mapping heads, beds and providers."
+            emptyDescription="Add a department to start mapping heads and doctors."
           />
         )}
       </AdminCard>
@@ -289,11 +323,10 @@ export function AdminDepartmentsPage() {
           <div className="divide-y divide-adminreg-border">
             <InfoRow label="Department" value={viewedDepartment.name} />
             <InfoRow label="Head" value={displayHead(viewedDepartment)} />
-            <InfoRow label="Beds" value={viewedDepartment.bedIds?.length ?? 0} />
-            <InfoRow label="Providers" value={viewedDepartment.providerCount ?? 0} />
+            <InfoRow label="Doctors" value={viewedDepartment.providerCount ?? 0} />
             {viewedDepartment.providers && viewedDepartment.providers.length > 0 && (
               <div className="pt-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Assigned providers</p>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Assigned doctors</p>
                 <ul className="space-y-1.5">
                   {viewedDepartment.providers.map((p) => (
                     <li key={p.id} className="text-sm text-adminreg-text">
@@ -308,15 +341,6 @@ export function AdminDepartmentsPage() {
           <p className="text-sm text-adminreg-muted">Department not found.</p>
         )}
       </DetailDrawer>
-
-      <BedPickerModal
-        open={bedPickerOpen}
-        onOpenChange={setBedPickerOpen}
-        beds={allBeds}
-        selectedIds={form.bedIds}
-        isLoading={isLoadingBeds}
-        onConfirm={(ids) => setForm((f) => ({ ...f, bedIds: ids }))}
-      />
     </div>
   )
 }

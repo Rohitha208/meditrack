@@ -31,12 +31,22 @@ export interface AdminRegisterNavItem {
 
 export const ADMIN_NAV_GROUPS = ["Insights", "Clinical Configuration", "Operations", "People & Access", "System"] as const
 
+export const SUPER_ADMIN_NAV_GROUP = "Platform" as const
+
+/** Sidebar entries when logged in as Super Admin — companies + hospital admins only. */
+export const SUPER_ADMIN_REGISTER_NAV: AdminRegisterNavItem[] = [
+  { code: "SA01", label: "Companies", href: "/admin/companies", icon: Building2, group: SUPER_ADMIN_NAV_GROUP },
+  { code: "SA02", label: "Admins", href: "/admin/admins", icon: UsersRound, group: SUPER_ADMIN_NAV_GROUP },
+]
+
+export const SUPER_ADMIN_PATHS = SUPER_ADMIN_REGISTER_NAV.map((item) => item.href)
+
 export const ADMIN_REGISTER_NAV: AdminRegisterNavItem[] = [
   { code: "00", label: "Overview", href: "/admin/dashboard", icon: LayoutDashboard, group: "Insights" },
   { code: "10", label: "Audit Log", href: "/admin/audit-logs", icon: ScrollText, group: "Insights" },
   { code: "01", label: "Hospital Profile", href: "/admin/hospital-profile", icon: Building2, group: "Clinical Configuration" },
   { code: "02", label: "Departments", href: "/admin/departments", icon: Boxes, group: "Clinical Configuration" },
-  { code: "03", label: "Providers", href: "/admin/providers", icon: UserRound, group: "Clinical Configuration" },
+  { code: "03", label: "Doctors", href: "/admin/providers", icon: UserRound, group: "Clinical Configuration" },
   { code: "04", label: "Master Data", href: "/admin/masters", icon: Database, group: "Clinical Configuration" },
   { code: "05", label: "Wards & Beds", href: "/admin/wards-beds", icon: BedDouble, group: "Operations" },
   { code: "06", label: "Tariffs & Packages", href: "/admin/tariffs", icon: Receipt, group: "Operations" },
