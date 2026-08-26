@@ -8,15 +8,51 @@ import { ModuleSwitcher } from "./ModuleSwitcher"
 import { RoleSwitcher } from "./RoleSwitcher"
 import { useStaffRole } from "./RoleProvider"
 import { canAccessAppointmentBooking, isStageEditable, isStageVisible } from "./rbac"
-import { ADMIN_NAV_GROUPS, ADMIN_REGISTER_NAV, isAdminRegisterPathActive } from "@/components/meditrack/admin/register/theme"
+import {
+  ADMIN_NAV_GROUPS,
+  ADMIN_REGISTER_NAV,
+  SUPER_ADMIN_NAV_GROUP,
+  SUPER_ADMIN_REGISTER_NAV,
+  isAdminRegisterPathActive,
+} from "@/components/meditrack/admin/register/theme"
+import { useRootContext } from "@/context/RootContext"
 import { STAGE_DEFS } from "@/components/meditrack/opd/thread/theme"
 import { APPOINTMENT_TABS } from "@/components/meditrack/opd/appointments/theme"
 
 const PATIENT = { name: "Meera Kulkarni", ageSex: "34 / Female", uhid: "UHID-0004821", visitId: "OPD-20260812-0091" }
 const HANDOFFS = ["A. Bhatt · 09:14", "A. Bhatt · 09:16", "A. Bhatt · 09:18", "K. Rao · 09:31", "Dr. Nair · 09:52", "M. Pillai · 10:20", "Dr. Nair · 10:24", "S. Verma · 10:41"]
 
-function AdminNav() {
+function AdminNav({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const pathname = usePathname()
+
+  if (isSuperAdmin) {
+    return (
+      <nav className="adminreg-scroll-dark flex-1 overflow-y-auto px-3 py-3">
+        <div className="mb-4">
+          <p className="mb-1.5 px-2.5 font-plexmono text-[9px] uppercase tracking-[0.1em] text-adminreg-sidebar-text-muted">{SUPER_ADMIN_NAV_GROUP}</p>
+          <div className="space-y-0.5">
+            {SUPER_ADMIN_REGISTER_NAV.map((item) => {
+              const active = isAdminRegisterPathActive(pathname, item.href)
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    "flex items-center gap-3 px-2.5 py-2 text-[13px] font-medium transition-colors",
+                    active ? "bg-adminreg-olive font-bold text-adminreg-card" : "text-adminreg-sidebar-text-secondary hover:bg-white/5 hover:text-adminreg-sidebar-text"
+                  )}
+                >
+                  <item.icon className={cn("h-4 w-4 flex-shrink-0", active ? "text-adminreg-card" : "text-adminreg-sidebar-text-muted")} />
+                  <span className="truncate">{item.label}</span>
+                </Link>
+              )
+            })}
+          </div>
+        </div>
+      </nav>
+    )
+  }
+
   return (
     <nav className="adminreg-scroll-dark flex-1 overflow-y-auto px-3 py-3">
       {ADMIN_NAV_GROUPS.map((group) => {
@@ -46,6 +82,15 @@ function AdminNav() {
         )
       })}
     </nav>
+  )
+}
+
+function SuperAdminRoleBadge() {
+  return (
+    <div className="flex-shrink-0 border-t border-adminreg-sidebar-border px-3 py-3">
+      <p className="mb-2 px-2 font-plexmono text-[9px] uppercase tracking-[0.1em] text-adminreg-sidebar-text-muted">Signed in as</p>
+      <div className="px-2.5 py-2 bg-adminreg-indigo font-bold text-adminreg-card text-[13px]">Super Admin</div>
+    </div>
   )
 }
 
@@ -119,6 +164,8 @@ function OpdNav() {
 function SidebarContent() {
   const pathname = usePathname()
   const isOpd = pathname.startsWith("/opd")
+  const { userType } = useRootContext()
+  const isSuperAdmin = !!userType?.isSuperAdmin
 
   return (
     <>
@@ -127,9 +174,9 @@ function SidebarContent() {
         <p className="mt-0.5 font-plexmono text-[9px] uppercase tracking-[0.08em] text-adminreg-sidebar-text-muted">Unified Application Shell</p>
       </div>
 
-      <ModuleSwitcher />
-      {isOpd ? <OpdNav /> : <AdminNav />}
-      <RoleSwitcher />
+      <ModuleSwitcher isSuperAdmin={isSuperAdmin} />
+      {isOpd && !isSuperAdmin ? <OpdNav /> : <AdminNav isSuperAdmin={isSuperAdmin} />}
+      {isSuperAdmin ? <SuperAdminRoleBadge /> : <RoleSwitcher />}
     </>
   )
 }

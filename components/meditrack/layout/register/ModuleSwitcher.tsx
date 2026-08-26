@@ -30,15 +30,19 @@ const MODULES: ModuleDef[] = [
  * Admin is dimmed (not removed from the DOM) for roles that can't access
  * it, per the spec's stated tradeoff.
  */
-export function ModuleSwitcher() {
+export function ModuleSwitcher({ isSuperAdmin = false }: { isSuperAdmin?: boolean }) {
   const pathname = usePathname()
   const { role } = useStaffRole()
 
   return (
     <div className="flex-shrink-0 space-y-1 border-b border-adminreg-sidebar-border px-3 py-3">
       {MODULES.map((m) => {
+        const href = isSuperAdmin && m.key === "admin" ? "/admin/companies" : m.href
         const active = m.match(pathname)
-        const disabled = m.href === null || (m.key === "admin" && !canAccessAdmin(role))
+        const disabled =
+          href === null ||
+          (isSuperAdmin && m.key !== "admin") ||
+          (m.key === "admin" && !canAccessAdmin(role) && !isSuperAdmin)
         const content = (
           <div
             className={cn(
@@ -58,7 +62,7 @@ export function ModuleSwitcher() {
         return disabled ? (
           <div key={m.key} aria-disabled className="cursor-not-allowed">{content}</div>
         ) : (
-          <Link key={m.key} href={m.href!}>{content}</Link>
+          <Link key={m.key} href={href!}>{content}</Link>
         )
       })}
     </div>

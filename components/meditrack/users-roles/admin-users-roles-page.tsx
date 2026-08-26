@@ -1,12 +1,16 @@
 "use client"
 
 import { useMemo, useState, type FormEvent } from "react"
-import { Loader2, Plus } from "lucide-react"
+import { Eye, Loader2, Pencil, Plus, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
+  ConfirmDialog,
+  DetailDrawer,
   FormDialog,
+  InfoRow,
   MtButton,
   MtDataTable,
+  RowActions,
   StatusBadge,
   TableSkeleton,
   getInitials,
@@ -16,13 +20,19 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Combobox } from "@/components/ui/combobox"
 import { AdminPageHeader } from "@/components/meditrack/admin/register/AdminPageHeader"
 import { AdminCard } from "@/components/meditrack/admin/register/AdminCard"
-import { useRootContext } from "@/context/RootContext"
-import { getCompanyId } from "@/utils/clientCookie"
+import { BranchFormField, BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
 import { useToast } from "@/hooks/use-toast"
-import { useCreateMediTrackUser, useGetMediTrackUsers } from "@/queries/meditrack/users"
+import {
+  useCreateMediTrackUser,
+  useDeleteMediTrackUser,
+  useGetMediTrackUsers,
+  useUpdateMediTrackUser,
+  type MediTrackUser,
+} from "@/queries/meditrack/users"
 import { useGetMediTrackRoles } from "@/queries/meditrack/roles"
 import { useGetMediTrackScreens, useGetMediTrackScreenAccess, useUpdateScreenAccess } from "@/queries/meditrack/screens"
 import { useGetDepartments } from "@/queries/departments"
@@ -81,17 +91,31 @@ const EMPTY_USER_FORM = {
   password: "",
   roleId: "",
   departmentId: ALL_DEPARTMENTS,
+  branchId: "",
 }
 
 export function AdminUsersRolesPage() {
   const { toast } = useToast()
-  const { user, clinic } = useRootContext()
-  const companyId = clinic?.companyId || user?.companyId || getCompanyId() || ""
-  const clinicId = clinic?.id || undefined
+  const {
+    companyId,
+    branchId,
+    setBranchId,
+    clinicId,
+    hasBranch,
+    branches,
+    isLoadingBranches,
+    noBranchMessage,
+  } = useBranchScope()
 
   const [tab, setTab] = useState<"users" | "permissions">("users")
   const [roleFilter, setRoleFilter] = useState("all")
   const [addOpen, setAddOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [viewOpen, setViewOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState<MediTrackUser | null>(null)
+  const [viewUser, setViewUser] = useState<MediTrackUser | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<MediTrackUser | null>(null)
   const [form, setForm] = useState(EMPTY_USER_FORM)
 
   const { data: roles = [], isLoading: isLoadingRoles } = useGetMediTrackRoles(true)
@@ -99,9 +123,32 @@ export function AdminUsersRolesPage() {
     () => roles.filter((role) => role.value !== "super_admin"),
     [roles]
   )
+  const roleFilterOptions = useMemo(
+    () => [
+      { value: "all", label: "All roles" },
+      ...hospitalRoles.map((role) => ({ value: role.id, label: role.name })),
+    ],
+    [hospitalRoles]
+  )
 
-  const { data: departments = [] } = useGetDepartments(companyId || undefined, clinicId, !!companyId && addOpen)
+  const { data: departments = [] } = useGetDepartments(
+    companyId || undefined,
+    clinicId,
+    !!companyId && hasBranch && (tab === "users" || addOpen || editOpen)
+  )
+  const departmentNameById = useMemo(() => {
+    const map = new Map<string, string>()
+    departments.forEach((d) => map.set(d.departmentId, d.name))
+    return map
+  }, [departments])
   const createUser = useCreateMediTrackUser()
+  const updateUser = useUpdateMediTrackUser()
+  const deleteUser = useDeleteMediTrackUser()
+
+  function departmentLabel(departmentId?: string | null) {
+    if (!departmentId) return "—"
+    return departmentNameById.get(departmentId) || "—"
+  }
 
   const selectedRoleIds = roleFilter === "all" ? [] : [roleFilter]
   const {
@@ -115,8 +162,9 @@ export function AdminUsersRolesPage() {
       pageSize: 100,
       companyId: companyId || undefined,
       roleIds: selectedRoleIds,
+      clinicIds: clinicId ? [clinicId] : undefined,
     },
-    !!companyId && tab === "users"
+    !!companyId && hasBranch && tab === "users"
   )
 
   const { data: screens = [], isLoading: isLoadingScreens } = useGetMediTrackScreens(tab === "permissions")
@@ -125,7 +173,7 @@ export function AdminUsersRolesPage() {
     isLoading: isLoadingAccess,
     isError: isAccessError,
     error: accessError,
-  } = useGetMediTrackScreenAccess(clinicId, undefined, tab === "permissions")
+  } = useGetMediTrackScreenAccess(clinicId, undefined, tab === "permissions" && hasBranch)
 
   const updateAccess = useUpdateScreenAccess()
   const users = usersData?.items ?? []
@@ -149,14 +197,42 @@ export function AdminUsersRolesPage() {
     setForm({
       ...EMPTY_USER_FORM,
       roleId: defaultRoleId,
+      branchId,
     })
     setAddOpen(true)
   }
 
-  async function handleAddUser(e: FormEvent<HTMLFormElement>) {
+  function openEditUser(user: MediTrackUser) {
+    setEditingUser(user)
+    setForm({
+      fullName: displayName(user.firstName, user.lastName, ""),
+      email: user.email || "",
+      password: "",
+      roleId: user.roleId || defaultRoleId,
+      departmentId: user.departmentId || ALL_DEPARTMENTS,
+      branchId: branchId,
+    })
+    setEditOpen(true)
+  }
+
+  function openViewUser(user: MediTrackUser) {
+    setViewUser(user)
+    setViewOpen(true)
+  }
+
+  function openDeleteUser(user: MediTrackUser) {
+    setDeleteTarget(user)
+    setDeleteOpen(true)
+  }
+
+  async function handleSaveUser(e: FormEvent<HTMLFormElement>, mode: "add" | "edit") {
     e.preventDefault()
     if (!companyId) {
       toast({ title: "Cannot save", description: "Company is missing. Please log in again.", variant: "destructive" })
+      return
+    }
+    if (!form.branchId) {
+      toast({ title: "Branch required", description: "Select a branch for this user.", variant: "destructive" })
       return
     }
     if (!form.roleId) {
@@ -171,26 +247,68 @@ export function AdminUsersRolesPage() {
     }
 
     try {
-      const created = await createUser.mutateAsync({
-        firstName,
-        lastName: lastName || null,
-        email: form.email.trim(),
-        passwordHash: form.password,
-        roleId: form.roleId,
-        companyId,
-        departmentId: form.departmentId === ALL_DEPARTMENTS ? null : form.departmentId,
-        clinicIds: clinicId ? [clinicId] : null,
-      })
-      setAddOpen(false)
-      setForm(EMPTY_USER_FORM)
-      toast({
-        title: "User added",
-        description: `${displayName(created.firstName, created.lastName, created.email)} was added.`,
-      })
+      if (mode === "add") {
+        const created = await createUser.mutateAsync({
+          firstName,
+          lastName: lastName || null,
+          email: form.email.trim(),
+          passwordHash: form.password,
+          roleId: form.roleId,
+          companyId,
+          departmentId: form.departmentId === ALL_DEPARTMENTS ? null : form.departmentId,
+          clinicIds: [form.branchId],
+        })
+        setAddOpen(false)
+        setForm(EMPTY_USER_FORM)
+        toast({
+          title: "User added",
+          description: `${displayName(created.firstName, created.lastName, created.email)} was added.`,
+        })
+      } else if (editingUser) {
+        await updateUser.mutateAsync({
+          id: editingUser.id,
+          firstName,
+          lastName: lastName || null,
+          email: form.email.trim(),
+          roleId: form.roleId,
+          companyId: editingUser.companyId || companyId,
+          departmentId: form.departmentId === ALL_DEPARTMENTS ? null : form.departmentId,
+          specialtyId: editingUser.specialtyId || null,
+          clinicIds: [form.branchId],
+          isActive: editingUser.isActive,
+          ...(form.password.trim() ? { passwordHash: form.password.trim() } : {}),
+        })
+        setEditOpen(false)
+        setEditingUser(null)
+        setForm(EMPTY_USER_FORM)
+        toast({
+          title: "User updated",
+          description: `${displayName(firstName, lastName, form.email)} was saved.`,
+        })
+      }
     } catch (err) {
       toast({
-        title: "Could not add user",
-        description: getToastErrorMessage(err, "Failed to create user"),
+        title: mode === "add" ? "Could not add user" : "Could not update user",
+        description: getToastErrorMessage(err, mode === "add" ? "Failed to create user" : "Failed to update user"),
+        variant: "destructive",
+      })
+    }
+  }
+
+  async function handleDeleteUser() {
+    if (!deleteTarget) return
+    try {
+      await deleteUser.mutateAsync(deleteTarget.id)
+      toast({
+        title: "User deleted",
+        description: `${displayName(deleteTarget.firstName, deleteTarget.lastName, deleteTarget.email)} was removed.`,
+      })
+      setDeleteOpen(false)
+      setDeleteTarget(null)
+    } catch (err) {
+      toast({
+        title: "Could not delete user",
+        description: getToastErrorMessage(err, "Failed to delete user"),
         variant: "destructive",
       })
     }
@@ -223,6 +341,12 @@ export function AdminUsersRolesPage() {
       sortValue: (r) => r.roleName || r.role || "",
     },
     {
+      key: "department",
+      header: "Department",
+      render: (r) => departmentLabel(r.departmentId),
+      sortValue: (r) => departmentLabel(r.departmentId),
+    },
+    {
       key: "status",
       header: "Status",
       render: (r) => <StatusBadge status={r.isActive ? "Active" : "Inactive"} />,
@@ -232,20 +356,114 @@ export function AdminUsersRolesPage() {
       header: "Last Login",
       render: (r) => formatLastLogin(r.lastLogin),
     },
+    {
+      key: "action",
+      header: "Action",
+      alwaysVisible: true,
+      className: "text-right",
+      headerClassName: "text-right",
+      render: (r) => (
+        <RowActions
+          actions={[
+            { icon: Eye, label: "View", onClick: () => openViewUser(r) },
+            { icon: Pencil, label: "Edit", onClick: () => openEditUser(r) },
+            { icon: Trash2, label: "Delete", destructive: true, onClick: () => openDeleteUser(r) },
+          ]}
+        />
+      ),
+    },
   ]
+
+  const userFormFields = (
+    <>
+      <BranchFormField
+        value={form.branchId}
+        onValueChange={(v) => setForm((f) => ({ ...f, branchId: v }))}
+        branches={branches}
+        isLoading={isLoadingBranches}
+      />
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Full name</Label>
+        <Input
+          value={form.fullName}
+          onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
+          placeholder="e.g. Anjali Nair"
+          required
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Email</Label>
+        <Input
+          type="email"
+          name="user-email"
+          autoComplete="off"
+          value={form.email}
+          onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+          placeholder="e.g. anjali@hospital.com"
+          required
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">
+          {editOpen ? "Password (optional)" : "Password"}
+        </Label>
+        <Input
+          type="password"
+          name="user-password"
+          autoComplete="new-password"
+          value={form.password}
+          onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+          placeholder={editOpen ? "Leave blank to keep current" : "Min. 6 characters"}
+          minLength={editOpen ? undefined : 6}
+          required={!editOpen}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Role</Label>
+        <Select value={form.roleId || defaultRoleId} onValueChange={(v) => setForm((f) => ({ ...f, roleId: v }))}>
+          <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
+          <SelectContent className="max-h-56">
+            {hospitalRoles.map((role) => (
+              <SelectItem key={role.id} value={role.id}>{role.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Department scope</Label>
+        <Select value={form.departmentId} onValueChange={(v) => setForm((f) => ({ ...f, departmentId: v }))}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent className="max-h-56">
+            <SelectItem value={ALL_DEPARTMENTS}>All departments</SelectItem>
+            {departments.map((d) => (
+              <SelectItem key={d.departmentId} value={d.departmentId}>{d.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </>
+  )
 
   return (
     <div>
       <AdminPageHeader
         title="Users & Roles"
-        subtitle="User accounts, access status and role permission matrix."
+        subtitle="User accounts and role permissions — scoped by branch."
         actions={
-          tab === "users" ? (
-            <MtButton className="gap-2" onClick={openAddUser}>
-              <Plus className="h-4 w-4" />
-              Add user
-            </MtButton>
-          ) : undefined
+          <div className="flex flex-wrap items-center gap-3">
+            <BranchSelect
+              value={branchId}
+              onValueChange={setBranchId}
+              branches={branches}
+              isLoading={isLoadingBranches}
+            />
+            {tab === "users" ? (
+              <MtButton className="gap-2" onClick={openAddUser} disabled={!hasBranch}>
+                <Plus className="h-4 w-4" />
+                Add user
+              </MtButton>
+            ) : null}
+          </div>
         }
       />
 
@@ -278,23 +496,24 @@ export function AdminUsersRolesPage() {
 
       {tab === "users" ? (
         <AdminCard title="User Accounts" noPadding>
+          {!hasBranch ? (
+            <p className="px-5 py-8 text-sm text-adminreg-red">{noBranchMessage}</p>
+          ) : (
+            <>
           <div className="border-b border-adminreg-border px-5 py-4">
-            <Select value={roleFilter} onValueChange={setRoleFilter}>
-              <SelectTrigger className="w-full sm:w-56">
-                <SelectValue placeholder="All roles" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All roles</SelectItem>
-                {hospitalRoles.map((role) => (
-                  <SelectItem key={role.id} value={role.id}>
-                    {role.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Combobox
+              options={roleFilterOptions}
+              value={roleFilter}
+              onValueChange={(v) => setRoleFilter(v || "all")}
+              placeholder="All roles"
+              searchPlaceholder="Search roles..."
+              emptyText="No role found."
+              className="h-10 w-full max-w-[220px] border-adminreg-border bg-adminreg-card text-sm font-medium text-adminreg-text shadow-none hover:bg-adminreg-header"
+              contentClassName="w-[220px]"
+            />
           </div>
           {isLoadingUsers || isLoadingRoles ? (
-            <TableSkeleton rows={6} columns={4} />
+            <TableSkeleton rows={6} columns={5} />
           ) : isUsersError ? (
             <p className="px-5 py-8 text-sm text-adminreg-red">
               {getToastErrorMessage(usersError, "Failed to load users")}
@@ -305,13 +524,17 @@ export function AdminUsersRolesPage() {
               rows={users}
               keyExtractor={(r) => r.id}
               emptyTitle="No users found"
-              emptyDescription="Users for this hospital will appear here."
+              emptyDescription="Users for this branch will appear here."
             />
+          )}
+            </>
           )}
         </AdminCard>
       ) : (
         <AdminCard title="Role Permission Matrix">
-          {isLoadingRoles || isLoadingScreens || isLoadingAccess ? (
+          {!hasBranch ? (
+            <p className="text-sm text-adminreg-red">{noBranchMessage}</p>
+          ) : isLoadingRoles || isLoadingScreens || isLoadingAccess ? (
             <TableSkeleton rows={6} columns={5} />
           ) : isAccessError ? (
             <p className="text-sm text-adminreg-red">
@@ -389,7 +612,7 @@ export function AdminUsersRolesPage() {
         open={addOpen}
         onOpenChange={setAddOpen}
         title="Add user"
-        onSubmit={handleAddUser}
+        onSubmit={(e) => handleSaveUser(e, "add")}
         footer={
           <>
             <MtButton type="button" variant="ghost" onClick={() => setAddOpen(false)}>Cancel</MtButton>
@@ -400,60 +623,75 @@ export function AdminUsersRolesPage() {
           </>
         }
       >
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Full name</Label>
-          <Input
-            value={form.fullName}
-            onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
-            placeholder="e.g. Anjali Nair"
-            required
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Email</Label>
-          <Input
-            type="email"
-            value={form.email}
-            onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-            placeholder="e.g. anjali@hospital.com"
-            required
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Password</Label>
-          <Input
-            type="password"
-            value={form.password}
-            onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-            placeholder="Min. 6 characters"
-            minLength={6}
-            required
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Role</Label>
-          <Select value={form.roleId || defaultRoleId} onValueChange={(v) => setForm((f) => ({ ...f, roleId: v }))}>
-            <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
-            <SelectContent>
-              {hospitalRoles.map((role) => (
-                <SelectItem key={role.id} value={role.id}>{role.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Department scope</Label>
-          <Select value={form.departmentId} onValueChange={(v) => setForm((f) => ({ ...f, departmentId: v }))}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_DEPARTMENTS}>All departments</SelectItem>
-              {departments.map((d) => (
-                <SelectItem key={d.departmentId} value={d.departmentId}>{d.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {userFormFields}
       </FormDialog>
+
+      <FormDialog
+        open={editOpen}
+        onOpenChange={(open) => {
+          setEditOpen(open)
+          if (!open) {
+            setEditingUser(null)
+            setForm(EMPTY_USER_FORM)
+          }
+        }}
+        title="Edit user"
+        onSubmit={(e) => handleSaveUser(e, "edit")}
+        footer={
+          <>
+            <MtButton
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setEditOpen(false)
+                setEditingUser(null)
+                setForm(EMPTY_USER_FORM)
+              }}
+            >
+              Cancel
+            </MtButton>
+            <MtButton type="submit" disabled={updateUser.isPending}>
+              {updateUser.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Save changes
+            </MtButton>
+          </>
+        }
+      >
+        {userFormFields}
+      </FormDialog>
+
+      <DetailDrawer
+        open={viewOpen}
+        onOpenChange={(open) => {
+          setViewOpen(open)
+          if (!open) setViewUser(null)
+        }}
+        title={viewUser ? displayName(viewUser.firstName, viewUser.lastName, viewUser.email) : "User details"}
+      >
+        {viewUser ? (
+          <div className="divide-y divide-adminreg-border">
+            <InfoRow label="Name" value={displayName(viewUser.firstName, viewUser.lastName, viewUser.email)} />
+            <InfoRow label="Email" value={viewUser.email || "—"} />
+            <InfoRow label="Role" value={viewUser.roleName || viewUser.role || "—"} />
+            <InfoRow label="Department" value={departmentLabel(viewUser.departmentId)} />
+            <InfoRow label="Status" value={viewUser.isActive ? "Active" : "Inactive"} />
+            <InfoRow label="Last login" value={formatLastLogin(viewUser.lastLogin)} />
+          </div>
+        ) : null}
+      </DetailDrawer>
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={(open) => {
+          setDeleteOpen(open)
+          if (!open) setDeleteTarget(null)
+        }}
+        title="Delete user"
+        description={`Delete "${deleteTarget ? displayName(deleteTarget.firstName, deleteTarget.lastName, deleteTarget.email) : "this user"}"? This cannot be undone.`}
+        confirmLabel={deleteUser.isPending ? "Deleting…" : "Delete"}
+        destructive
+        onConfirm={handleDeleteUser}
+      />
     </div>
   )
 }

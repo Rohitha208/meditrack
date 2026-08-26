@@ -437,9 +437,9 @@ export function OpdVisitThreadPage() {
 
       {from === "providers" && !dismissedDeepLink && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-adminreg-indigo bg-adminreg-indigo-soft px-4 py-2.5 font-archivo text-xs text-adminreg-indigo-dark sm:px-6 md:px-8">
-          <span>↳ Viewing via Provider Management — Dr. Anjali Nair · Cardiology</span>
+          <span>↳ Viewing via Doctor Management — Dr. Anjali Nair · Cardiology</span>
           <div className="flex flex-shrink-0 items-center gap-3">
-            <a href="/admin/providers" className="font-semibold underline">Back to Provider Management</a>
+            <a href="/admin/providers" className="font-semibold underline">Back to Doctor Management</a>
             <button type="button" onClick={() => setDismissedDeepLink(true)} className="text-adminreg-indigo-dark hover:opacity-70">✕</button>
           </div>
         </div>
