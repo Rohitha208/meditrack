@@ -1,6 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getJwtToken } from '@/utils/serverCookie'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL
+
+// Forwards the JWT when there is one.
+//
+// This route runs in two situations, and only one of them has a token:
+//
+//   after login  — CompanyContext loads the company for the header on every
+//                  page. The token exists, and forwarding it is what makes
+//                  the backend answer instead of returning 401.
+//
+//   login page   — the company's name and logo are shown before anyone has
+//                  signed in, so there is no token to send. That call still
+//                  fails, because the endpoint it uses requires auth. Fixing
+//                  it properly needs an anonymous lookup on the backend that
+//                  returns only the name and logo; that is not done here.
+//
+// Empty object rather than `Bearer null`: sending a header with no real token
+// would be a malformed credential, while sending nothing is simply anonymous.
+function authHeader(request: NextRequest): Record<string, string> {
+  const token = getJwtToken(request)
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
 
 // GET /api/companies/by-subdomain - Get company by subdomain (using domain parameter)
 export async function GET(request: NextRequest) {
@@ -23,6 +45,7 @@ export async function GET(request: NextRequest) {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeader(request),
       },
     })
 
@@ -35,6 +58,7 @@ export async function GET(request: NextRequest) {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
+          ...authHeader(request),
         },
       });
       
