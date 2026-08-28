@@ -46,6 +46,14 @@ import {
   useDeleteProviderAvailability,
   useGetProviderAvailability,
 } from "@/queries/meditrack/provider-availability"
+import {
+  formatLeaveDate,
+  toApiDate,
+  useCreateDoctorLeave,
+  useDeleteDoctorLeave,
+  useGetDoctorLeaves,
+  type DoctorLeave,
+} from "@/queries/meditrack/doctor-leave"
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const
 type Day = (typeof DAYS)[number]
@@ -127,6 +135,8 @@ export function AdminProvidersPage() {
   const updateUser = useUpdateMediTrackUser()
   const createAvailability = useCreateProviderAvailability()
   const deleteAvailability = useDeleteProviderAvailability()
+  const createLeave = useCreateDoctorLeave()
+  const deleteLeave = useDeleteDoctorLeave()
   const doctors = usersData?.items ?? []
 
   const [selected, setSelected] = useState<MediTrackUser | null>(null)
@@ -139,12 +149,22 @@ export function AdminProvidersPage() {
     error: availabilityError,
   } = useGetProviderAvailability(selected?.id, !!selected)
 
+  const {
+    data: doctorLeaves = [],
+    isLoading: isLoadingLeaves,
+    isError: isLeavesError,
+    error: leavesError,
+  } = useGetDoctorLeaves(
+    { userId: selected?.id, clinicId: clinicId || undefined },
+    !!selected
+  )
+
   const [addOpen, setAddOpen] = useState(false)
   const [doctorForm, setDoctorForm] = useState(EMPTY_FORM)
 
   const [leaveTarget, setLeaveTarget] = useState<MediTrackUser | null>(null)
   const [leaveForm, setLeaveForm] = useState({ from: "", to: "", reason: "" })
-  const [leavesByDoctor, setLeavesByDoctor] = useState<Record<string, { from: string; to: string; reason: string }[]>>({})
+  const [deleteLeaveTarget, setDeleteLeaveTarget] = useState<DoctorLeave | null>(null)
 
   const [deactivateTarget, setDeactivateTarget] = useState<MediTrackUser | null>(null)
 
@@ -153,17 +173,55 @@ export function AdminProvidersPage() {
     return departmentNameById.get(doctor.departmentId) || "—"
   }
 
-  function handleAddLeave(e: FormEvent<HTMLFormElement>) {
+  async function handleAddLeave(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!leaveTarget) return
-    const entry = { from: leaveForm.from || "—", to: leaveForm.to || leaveForm.from || "—", reason: leaveForm.reason || "Not specified" }
-    setLeavesByDoctor((prev) => ({ ...prev, [leaveTarget.id]: [...(prev[leaveTarget.id] ?? []), entry] }))
-    toast({
-      title: "Leave added",
-      description: `${displayName(leaveTarget.firstName, leaveTarget.lastName, leaveTarget.email)} marked on leave ${entry.from}${entry.to !== entry.from ? ` – ${entry.to}` : ""}.`,
-    })
-    setLeaveForm({ from: "", to: "", reason: "" })
-    setLeaveTarget(null)
+    const from = leaveForm.from
+    const to = leaveForm.to || leaveForm.from
+    if (!from) {
+      toast({ title: "From date required", description: "Select a leave start date.", variant: "destructive" })
+      return
+    }
+    try {
+      const created = await createLeave.mutateAsync({
+        userId: leaveTarget.id,
+        roleId: leaveTarget.roleId || doctorRoleId || null,
+        clinicId: clinicId || null,
+        fromDate: toApiDate(from),
+        toDate: toApiDate(to),
+        reason: leaveForm.reason.trim() || null,
+      })
+      toast({
+        title: "Leave added",
+        description: `${displayName(leaveTarget.firstName, leaveTarget.lastName, leaveTarget.email)} marked on leave ${formatLeaveDate(created.fromDate)}${created.toDate !== created.fromDate ? ` – ${formatLeaveDate(created.toDate)}` : ""}.`,
+      })
+      setLeaveForm({ from: "", to: "", reason: "" })
+      setLeaveTarget(null)
+    } catch (err) {
+      toast({
+        title: "Could not add leave",
+        description: getToastErrorMessage(err, "Failed to create leave"),
+        variant: "destructive",
+      })
+    }
+  }
+
+  async function confirmDeleteLeave() {
+    if (!deleteLeaveTarget) return
+    try {
+      await deleteLeave.mutateAsync(deleteLeaveTarget.id)
+      toast({
+        title: "Leave removed",
+        description: `Leave ${formatLeaveDate(deleteLeaveTarget.fromDate)}${deleteLeaveTarget.toDate !== deleteLeaveTarget.fromDate ? ` – ${formatLeaveDate(deleteLeaveTarget.toDate)}` : ""} was deleted.`,
+      })
+      setDeleteLeaveTarget(null)
+    } catch (err) {
+      toast({
+        title: "Could not delete leave",
+        description: getToastErrorMessage(err, "Failed to delete leave"),
+        variant: "destructive",
+      })
+    }
   }
 
   async function confirmDeactivate() {
@@ -512,19 +570,42 @@ export function AdminProvidersPage() {
             className="mt-5"
             action={<MtButton className="gap-2" onClick={() => setLeaveTarget(selected)}><Plus className="h-4 w-4" />Add leave</MtButton>}
           >
-            {(leavesByDoctor[selected.id] ?? []).length === 0 ? (
+            {isLoadingLeaves ? (
+              <TableSkeleton rows={3} columns={2} />
+            ) : isLeavesError ? (
+              <p className="text-sm text-adminreg-red">{getToastErrorMessage(leavesError, "Failed to load leave")}</p>
+            ) : doctorLeaves.length === 0 ? (
               <p className="text-sm text-adminreg-muted">No leave recorded for {selectedName}.</p>
             ) : (
               <ul className="space-y-2">
-                {(leavesByDoctor[selected.id] ?? []).map((l, i) => (
-                  <li key={i} className="flex flex-col gap-0.5 border border-adminreg-border bg-adminreg-header/40 px-3.5 py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between">
-                    <span className="font-medium text-adminreg-text">
-                      {l.from}
-                      {l.to !== l.from ? ` – ${l.to}` : ""}
-                    </span>
-                    <span className="text-adminreg-muted">{l.reason}</span>
-                  </li>
-                ))}
+                {doctorLeaves.map((l) => {
+                  const from = formatLeaveDate(l.fromDate)
+                  const to = formatLeaveDate(l.toDate)
+                  return (
+                    <li
+                      key={l.id}
+                      className="flex flex-col gap-2 border border-adminreg-border bg-adminreg-header/40 px-3.5 py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <span className="font-medium text-adminreg-text">
+                          {from}
+                          {to !== from ? ` – ${to}` : ""}
+                        </span>
+                        <span className="mt-0.5 block text-adminreg-muted sm:mt-0 sm:ml-3 sm:inline">
+                          {l.reason || "Not specified"}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteLeaveTarget(l)}
+                        disabled={deleteLeave.isPending}
+                        className="shrink-0 text-sm font-medium text-adminreg-red hover:underline disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  )
+                })}
               </ul>
             )}
           </AdminCard>
@@ -649,7 +730,10 @@ export function AdminProvidersPage() {
         footer={
           <>
             <MtButton type="button" variant="ghost" onClick={() => setLeaveTarget(null)}>Cancel</MtButton>
-            <MtButton type="submit">Add leave</MtButton>
+            <MtButton type="submit" disabled={createLeave.isPending}>
+              {createLeave.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Add leave
+            </MtButton>
           </>
         }
       >
@@ -668,6 +752,20 @@ export function AdminProvidersPage() {
           <Textarea value={leaveForm.reason} onChange={(e) => setLeaveForm((f) => ({ ...f, reason: e.target.value }))} placeholder="e.g. Conference — out of station" rows={3} />
         </div>
       </FormDialog>
+
+      <ConfirmDialog
+        open={!!deleteLeaveTarget}
+        onOpenChange={(open) => !open && setDeleteLeaveTarget(null)}
+        title="Remove leave?"
+        description={
+          deleteLeaveTarget
+            ? `Remove leave ${formatLeaveDate(deleteLeaveTarget.fromDate)}${formatLeaveDate(deleteLeaveTarget.toDate) !== formatLeaveDate(deleteLeaveTarget.fromDate) ? ` – ${formatLeaveDate(deleteLeaveTarget.toDate)}` : ""}? This cannot be undone.`
+            : ""
+        }
+        confirmLabel={deleteLeave.isPending ? "Removing…" : "Remove"}
+        destructive
+        onConfirm={confirmDeleteLeave}
+      />
 
       <ConfirmDialog
         open={!!deactivateTarget}
