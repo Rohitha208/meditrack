@@ -12,11 +12,11 @@ import { RoleProvider } from "@/components/meditrack/layout/register/RoleProvide
 
 function MediTrackLayoutBase({ children }: { children: ReactNode }) {
   const pathname = usePathname()
-  const isUnified = pathname.startsWith("/admin") || pathname.startsWith("/opd")
+  const isUnified = pathname.startsWith("/admin") || pathname.startsWith("/opd") || pathname.startsWith("/ipd")
 
   // RoleProvider wraps both branches so the "preview as role" selection
-  // survives client-side navigation between Admin and OPD (it lives above
-  // the branch, not inside either shell).
+  // survives client-side navigation between Admin/OPD/IPD (it lives above
+  // the branch, not inside any one shell).
   return (
     <RoleProvider>
       {isUnified ? (
@@ -42,7 +42,7 @@ function MediTrackLayoutBase({ children }: { children: ReactNode }) {
  * content — wrapped around every screen for a human/hospital tenant, with
  * the same `withAuth` guard PawTrack's own MainLayout uses. Mounted
  * conditionally in app/(pages)/layout.tsx, next to PawTrack's own
- * MainLayout, so it never touches PawTrack's rendered output. Admin and OPD
- * share one unified shell (module switcher + role-aware nav); every other
- * MediTrack route keeps the original light shell. */
+ * MainLayout, so it never touches PawTrack's rendered output. Admin, OPD and
+ * IPD share one unified shell (module switcher + role-aware nav); every
+ * other MediTrack route keeps the original light shell. */
 export const MediTrackLayout = withAuth(MediTrackLayoutBase)

@@ -12,7 +12,7 @@ import { getToastErrorMessage } from "@/utils/apiErrorHandler"
 import { useGetCompanies } from "@/queries/companies/get-company"
 import { useCreateUser } from "@/queries/users/create-user"
 import { useGetUsers, type User } from "@/queries/users/get-users"
-import { useGetRole } from "@/queries/roles/get-role"
+import { useGetRole, type Role } from "@/queries/roles/get-role"
 import {
   FormDialog,
   MtButton,
@@ -55,7 +55,7 @@ export function AdminAdminsPage() {
   const { toast } = useToast()
   const { data: rolesData, isLoading: isLoadingRoles } = useGetRole(1, 100, "", true)
   const administratorRole = useMemo(
-    () => rolesData?.data?.find((role) => role.name === "Administrator"),
+    () => rolesData?.data?.find((role: Role) => role.name === "Administrator"),
     [rolesData?.data]
   )
   const administratorRoleId = administratorRole?.id || ""

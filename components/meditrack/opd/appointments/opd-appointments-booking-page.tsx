@@ -70,6 +70,15 @@ export function OpdAppointmentsBookingPage() {
   const [selectedSlot, setSelectedSlot] = useState("10:20 AM")
   const [confirmationSent, setConfirmationSent] = useState(false)
   const [checkinResult, setCheckinResult] = useState<"idle" | "found" | "notfound">("found")
+  const [cancelReason, setCancelReason] = useState("")
+  const [cancelReasonTouched, setCancelReasonTouched] = useState(false)
+  const [appointmentCancelled, setAppointmentCancelled] = useState(false)
+
+  function handleCancelAppointment() {
+    setCancelReasonTouched(true)
+    if (!cancelReason.trim()) return
+    setAppointmentCancelled(true)
+  }
 
   return (
     <div className="min-h-full">
@@ -90,7 +99,7 @@ export function OpdAppointmentsBookingPage() {
               type="button"
               onClick={() => goToTab(i)}
               className={cn(
-                "border px-3.5 py-2 text-[13px] font-semibold transition-colors",
+                "min-w-[150px] flex-1 border px-3.5 py-2.5 text-center text-[13px] font-semibold leading-snug transition-colors sm:flex-none",
                 tab === i ? "border-adminreg-indigo bg-adminreg-indigo-soft text-adminreg-indigo-dark" : "border-adminreg-border bg-adminreg-bg text-adminreg-muted hover:text-adminreg-text"
               )}
             >
@@ -269,13 +278,30 @@ export function OpdAppointmentsBookingPage() {
           {tab === 3 && (
             <Panel className="max-w-[560px]">
               <SectionLabel>Cancel appointment</SectionLabel>
-              <p className="text-sm font-semibold text-adminreg-text">Dr. Anjali Nair — Cardiology · APT-20260812-0087 · 19 Aug 2026, 11:20 AM</p>
-              <div className="mt-4">
-                <FieldLabel>Reason</FieldLabel>
-                <textarea disabled={!editable} rows={3} placeholder="e.g. Patient no longer needs this visit" className="mt-1 w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-60" />
-              </div>
-              <p className="mt-3 text-[11px] text-adminreg-muted">No fee has been collected at this stage — cancelling here has no refund step, unlike a same-day fee or token void. The slot returns to the bookable pool immediately.</p>
-              {editable && <AdminButton type="button" variant="danger" className="mt-4">Cancel appointment</AdminButton>}
+              {appointmentCancelled ? (
+                <InlineSuccess>Appointment cancelled. The 19 Aug 2026, 11:20 AM slot with Dr. Anjali Nair has returned to the bookable pool.</InlineSuccess>
+              ) : (
+                <>
+                  <p className="text-sm font-semibold text-adminreg-text">Dr. Anjali Nair — Cardiology · APT-20260812-0087 · 19 Aug 2026, 11:20 AM</p>
+                  <div className="mt-4">
+                    <FieldLabel>Reason</FieldLabel>
+                    <textarea
+                      disabled={!editable}
+                      value={cancelReason}
+                      onChange={(e) => setCancelReason(e.target.value)}
+                      rows={3}
+                      placeholder="e.g. Patient no longer needs this visit"
+                      className={cn(
+                        "mt-1 w-full border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-60",
+                        cancelReasonTouched && !cancelReason.trim() ? "border-adminreg-red" : "border-adminreg-border"
+                      )}
+                    />
+                    {cancelReasonTouched && !cancelReason.trim() && <p className="mt-1 text-[11px] text-adminreg-red-text">A reason is required before cancelling.</p>}
+                  </div>
+                  <p className="mt-3 text-[11px] text-adminreg-muted">No fee has been collected at this stage — cancelling here has no refund step, unlike a same-day fee or token void. The slot returns to the bookable pool immediately.</p>
+                  {editable && <AdminButton type="button" variant="danger" className="mt-4" onClick={handleCancelAppointment}>Cancel appointment</AdminButton>}
+                </>
+              )}
             </Panel>
           )}
 

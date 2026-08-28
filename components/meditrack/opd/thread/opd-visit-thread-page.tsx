@@ -30,6 +30,24 @@ import {
   ViewOnlyBanner,
 } from "@/components/meditrack/opd/shared/ui"
 import { STAGE_DEFS, MODE_BADGE_TONE, SUPERSEDED_CLASS } from "./theme"
+// Admission referral (Stage 5) — reviewable via a 5-state chip row, same
+// convention as the Registration search-outcome chips.
+type DemoReferralState = "not-referred" | "confirming" | "pending" | "processing" | "admitted"
+
+const REFERRAL_STATE_CHIPS: { key: DemoReferralState; label: string }[] = [
+  { key: "not-referred", label: "Not referred" },
+  { key: "confirming", label: "Confirming" },
+  { key: "pending", label: "Pending" },
+  { key: "processing", label: "Processing" },
+  { key: "admitted", label: "Admitted" },
+]
+
+const REFERRAL_STATE_BADGE: Partial<Record<DemoReferralState, string>> = {
+  confirming: "Not yet sent to admission desk",
+  pending: "Pending pickup",
+  processing: "Being processed by admission desk",
+  admitted: "Admitted",
+}
 
 // ---------------------------------------------------------------------------
 // Frontend/UI only — the OPD "visit thread" (Registration through Visit
@@ -43,6 +61,70 @@ import { STAGE_DEFS, MODE_BADGE_TONE, SUPERSEDED_CLASS } from "./theme"
 // ---------------------------------------------------------------------------
 
 const PATIENT = { name: "Meera Kulkarni", ageSex: "34 / Female", uhid: "UHID-0004821", visitId: "OPD-20260812-0091" }
+
+// ---------------------------------------------------------------------------
+// Registration search — four distinct outcome states (§1 of the handoff),
+// switched via a demo "SEARCH OUTCOME" chip row rather than real search
+// logic, same convention as Day-of Check-in's found/not-found toggle.
+// ---------------------------------------------------------------------------
+type RegOutcome = "idle" | "no-match" | "single" | "multiple"
+
+const REG_OUTCOME_CHIPS: { key: RegOutcome; label: string }[] = [
+  { key: "idle", label: "Pre-search" },
+  { key: "no-match", label: "No match" },
+  { key: "single", label: "1 match" },
+  { key: "multiple", label: "3 matches" },
+]
+
+interface RegCandidate {
+  name: string
+  ageSex: string
+  uhid: string
+  phone: string
+  abha: string
+  lastVisit: string
+  department: string
+  doctor: string
+  visitCount: number
+  relation: string
+}
+
+const REG_SINGLE_MATCH: RegCandidate = {
+  name: "Meera Kulkarni",
+  ageSex: "34 / Female",
+  uhid: "UHID-0004821",
+  phone: "+91 98457 20142",
+  abha: "42-7719-3308-1145",
+  lastVisit: "04 Jun 2026",
+  department: "Cardiology",
+  doctor: "Dr. Anjali Nair",
+  visitCount: 7,
+  relation: "Self",
+}
+
+const REG_MULTI_CANDIDATES: RegCandidate[] = [
+  { ...REG_SINGLE_MATCH, relation: "Self" },
+  { name: "Meera S. Kulkarni", ageSex: "61 / Female", uhid: "UHID-0011932", phone: "+91 98457 20142", abha: "Not linked", lastVisit: "19 Feb 2025", department: "Orthopaedics", doctor: "Dr. S. Raghavan", visitCount: 2, relation: "Mother — shares the same contact number" },
+  { name: "Rohit Kulkarni", ageSex: "8 / Male", uhid: "UHID-0009044", phone: "+91 98457 20142", abha: "Not linked", lastVisit: "28 Jan 2026", department: "Pediatrics", doctor: "Dr. Priya Iyer", visitCount: 3, relation: "Son — shares the same contact number" },
+]
+
+interface NewPatientForm {
+  fullName: string
+  dob: string
+  gender: string
+  mobile: string
+}
+
+const EMPTY_NEW_PATIENT: NewPatientForm = { fullName: "", dob: "", gender: "", mobile: "" }
+
+function newPatientErrors(form: NewPatientForm): Partial<Record<keyof NewPatientForm, string>> {
+  const errs: Partial<Record<keyof NewPatientForm, string>> = {}
+  if (!form.fullName.trim()) errs.fullName = "Full name is required"
+  if (!form.dob.trim()) errs.dob = "Date of birth is required"
+  if (!form.gender.trim()) errs.gender = "Gender is required"
+  if (!form.mobile.trim()) errs.mobile = "Mobile number is required"
+  return errs
+}
 
 interface Addendum {
   by: string
@@ -138,6 +220,51 @@ export function OpdVisitThreadPage() {
   const [modal, setModal] = useState<ModalCfg | null>(null)
   const [modalReason, setModalReason] = useState("")
   const [modalAck, setModalAck] = useState(false)
+
+  // Registration search (Stage 0) — see REG_OUTCOME_CHIPS above.
+  const [regOutcome, setRegOutcome] = useState<RegOutcome>("idle")
+  const [regQuery, setRegQuery] = useState("")
+  const [selectedCandidate, setSelectedCandidate] = useState<number | null>(null)
+  const [showNewPatientForm, setShowNewPatientForm] = useState(false)
+  const [newPatientOrigin, setNewPatientOrigin] = useState<"search" | "direct">("direct")
+  const [newPatientForm, setNewPatientForm] = useState<NewPatientForm>(EMPTY_NEW_PATIENT)
+  const [newPatientTouched, setNewPatientTouched] = useState(false)
+  const [visitOpenedFromCapture, setVisitOpenedFromCapture] = useState(false)
+
+  // Admission referral (Stage 5 → IPD) — §3 of the handoff: "one record, two
+  // desks". See ipd-stay-page.tsx's worklist for the other side of this
+  // same story (independent demo state, not a live shared store).
+  //
+  // One state variable drives both the confirm panel and the referral card,
+  // switched via a review chip row — same convention as Registration's
+  // "search outcome" chips — rather than a forward-only progression, so any
+  // state can be inspected directly.
+  const [demoReferralState, setDemoReferralState] = useState<DemoReferralState>("not-referred")
+  const [admitReason, setAdmitReason] = useState("Unstable angina with a rising troponin — needs a monitored bed and inpatient workup today.")
+
+  function fileAdmissionReferral() {
+    if (!admitReason.trim()) return
+    setDemoReferralState("pending")
+  }
+
+  function selectRegOutcome(o: RegOutcome) {
+    setRegOutcome(o)
+    setSelectedCandidate(null)
+    setShowNewPatientForm(false)
+  }
+  function openNewPatientForm(origin: "search" | "direct") {
+    setNewPatientOrigin(origin)
+    setNewPatientForm({ ...EMPTY_NEW_PATIENT, mobile: origin === "search" ? regQuery : "" })
+    setNewPatientTouched(false)
+    setShowNewPatientForm(true)
+  }
+  function submitNewPatient(openVisit: boolean) {
+    setNewPatientTouched(true)
+    if (Object.keys(newPatientErrors(newPatientForm)).length > 0) return
+    setShowNewPatientForm(false)
+    if (openVisit) setVisitOpenedFromCapture(true)
+    patch({ bannerText: openVisit ? `${newPatientForm.fullName} registered — visit opened.` : `${newPatientForm.fullName} registered. No visit opened yet.` })
+  }
 
   const patch = (p: Partial<ThreadState>) => setState((prev) => ({ ...prev, ...p }))
   const goToStage = (n: number) => router.push(`/opd/visit-thread?stage=${Math.max(0, Math.min(8, n))}`)
@@ -456,14 +583,205 @@ export function OpdVisitThreadPage() {
           {s === 0 && (
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
               <Panel>
-                <SectionLabel>Search existing patient</SectionLabel>
-                <input placeholder="UHID, phone number, or ABHA number" disabled={!editable} className="w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-60" />
-                <div className="mt-3.5 border border-adminreg-amber bg-adminreg-amber-soft p-3.5">
-                  <div className="mb-1.5 text-xs font-bold text-adminreg-amber-text">2 POSSIBLE MATCHES FOUND — LIKELY DUPLICATE</div>
-                  <div className="text-xs text-adminreg-muted">&quot;Meera Kulkarni&quot; · +91 98••••142 — UHID-0004821 (last visit 04 Jun 2026)</div>
-                  <div className="mt-1 text-xs text-adminreg-muted">&quot;Meera S. Kulkarni&quot; · +91 97••••881 — UHID-0011932 (last visit 19 Feb 2025)</div>
-                  {editable && <AdminButton type="button" variant="secondary" className="mt-2.5" onClick={openMerge}>Review &amp; merge records</AdminButton>}
+                <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                  <SectionLabel>Search existing patient</SectionLabel>
+                  <div className="flex flex-wrap gap-1">
+                    <span className="mr-1 self-center font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-muted2">Search outcome</span>
+                    {REG_OUTCOME_CHIPS.map((c) => (
+                      <button
+                        key={c.key}
+                        type="button"
+                        onClick={() => selectRegOutcome(c.key)}
+                        className={cn(
+                          "border px-2 py-1 font-plexmono text-[9.5px] font-bold uppercase tracking-[0.03em] transition-colors",
+                          regOutcome === c.key ? "border-adminreg-indigo bg-adminreg-indigo-soft text-adminreg-indigo-dark" : "border-adminreg-border bg-adminreg-bg text-adminreg-muted hover:text-adminreg-text"
+                        )}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+
+                <div className="flex gap-2">
+                  <input
+                    value={regQuery}
+                    onChange={(e) => setRegQuery(e.target.value)}
+                    placeholder="UHID, phone number, or ABHA number"
+                    disabled={!editable}
+                    className="w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-60"
+                  />
+                  {editable && <AdminButton type="button" onClick={() => selectRegOutcome("no-match")} className="flex-shrink-0">Search</AdminButton>}
+                </div>
+
+                {showNewPatientForm ? (
+                  <div className="mt-3.5 border border-adminreg-border bg-adminreg-bg p-3.5">
+                    <div className="mb-3 flex items-center justify-between">
+                      <span className="font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted">
+                        {newPatientOrigin === "search" ? `Reached from search · 0 records found` : "Direct entry · no search run"}
+                      </span>
+                      <span className="font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted">New patient capture</span>
+                    </div>
+
+                    {newPatientTouched && Object.keys(newPatientErrors(newPatientForm)).length > 0 && (
+                      <div className="mb-3 border border-adminreg-red bg-adminreg-red-soft px-3 py-2 text-xs font-semibold text-adminreg-red-text">
+                        {Object.keys(newPatientErrors(newPatientForm)).length} of 4 mandatory fields still need attention
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="col-span-2">
+                        <div className="mb-1 flex items-center justify-between">
+                          <FieldLabel>Full name</FieldLabel>
+                          <span className="font-plexmono text-[9px] uppercase text-adminreg-amber-text">Required</span>
+                        </div>
+                        <input
+                          value={newPatientForm.fullName}
+                          onChange={(e) => setNewPatientForm((f) => ({ ...f, fullName: e.target.value }))}
+                          placeholder="As spelled on the ID document"
+                          className={cn(
+                            "w-full border bg-adminreg-card px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo",
+                            newPatientTouched && newPatientErrors(newPatientForm).fullName ? "border-adminreg-red" : "border-adminreg-border"
+                          )}
+                        />
+                        {newPatientTouched && newPatientErrors(newPatientForm).fullName && <p className="mt-1 text-[11px] text-adminreg-red-text">{newPatientErrors(newPatientForm).fullName}</p>}
+                      </div>
+                      <div>
+                        <div className="mb-1 flex items-center justify-between">
+                          <FieldLabel>Date of birth</FieldLabel>
+                          <span className="font-plexmono text-[9px] uppercase text-adminreg-amber-text">Required</span>
+                        </div>
+                        <input
+                          value={newPatientForm.dob}
+                          onChange={(e) => setNewPatientForm((f) => ({ ...f, dob: e.target.value }))}
+                          placeholder="DD / MM / YYYY"
+                          className={cn(
+                            "w-full border bg-adminreg-card px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo",
+                            newPatientTouched && newPatientErrors(newPatientForm).dob ? "border-adminreg-red" : "border-adminreg-border"
+                          )}
+                        />
+                        {newPatientTouched && newPatientErrors(newPatientForm).dob && <p className="mt-1 text-[11px] text-adminreg-red-text">{newPatientErrors(newPatientForm).dob}</p>}
+                      </div>
+                      <div>
+                        <div className="mb-1 flex items-center justify-between">
+                          <FieldLabel>Gender</FieldLabel>
+                          <span className="font-plexmono text-[9px] uppercase text-adminreg-amber-text">Required</span>
+                        </div>
+                        <input
+                          value={newPatientForm.gender}
+                          onChange={(e) => setNewPatientForm((f) => ({ ...f, gender: e.target.value }))}
+                          placeholder="Female / Male / Other"
+                          className={cn(
+                            "w-full border bg-adminreg-card px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo",
+                            newPatientTouched && newPatientErrors(newPatientForm).gender ? "border-adminreg-red" : "border-adminreg-border"
+                          )}
+                        />
+                        {newPatientTouched && newPatientErrors(newPatientForm).gender && <p className="mt-1 text-[11px] text-adminreg-red-text">{newPatientErrors(newPatientForm).gender}</p>}
+                      </div>
+                      <div className="col-span-2">
+                        <div className="mb-1 flex items-center justify-between">
+                          <FieldLabel>Mobile</FieldLabel>
+                          <span className="flex items-center gap-1.5">
+                            {newPatientOrigin === "search" && newPatientForm.mobile && (
+                              <span className="border border-adminreg-border bg-adminreg-card px-1.5 py-0.5 font-plexmono text-[8.5px] uppercase text-adminreg-muted">Prefilled from search</span>
+                            )}
+                            <span className="font-plexmono text-[9px] uppercase text-adminreg-amber-text">Required</span>
+                          </span>
+                        </div>
+                        <input
+                          value={newPatientForm.mobile}
+                          onChange={(e) => setNewPatientForm((f) => ({ ...f, mobile: e.target.value }))}
+                          placeholder="+91 98457 20142"
+                          className={cn(
+                            "w-full border bg-adminreg-card px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo",
+                            newPatientTouched && newPatientErrors(newPatientForm).mobile ? "border-adminreg-red" : "border-adminreg-border"
+                          )}
+                        />
+                        {newPatientTouched && newPatientErrors(newPatientForm).mobile && <p className="mt-1 text-[11px] text-adminreg-red-text">{newPatientErrors(newPatientForm).mobile}</p>}
+                      </div>
+                    </div>
+
+                    <div className="mt-3.5 flex flex-wrap gap-2">
+                      <AdminButton type="button" accent="indigo" onClick={() => submitNewPatient(true)}>Register and open visit</AdminButton>
+                      <AdminButton type="button" variant="secondary" onClick={() => submitNewPatient(false)}>Save without opening a visit</AdminButton>
+                    </div>
+                    <p className="mt-2.5 text-[11px] text-adminreg-muted">Name, date of birth, gender and mobile number are required before either action will save.</p>
+                  </div>
+                ) : regOutcome === "idle" ? (
+                  <div className="mt-3.5 border border-dashed border-adminreg-border bg-adminreg-bg p-5 text-center">
+                    <p className="font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted">No search run yet</p>
+                    <p className="mt-1.5 text-xs text-adminreg-muted">Enter a UHID, phone number, or ABHA number. All three indexes are searched together and the outcome appears here.</p>
+                    {editable && (
+                      <p className="mt-2.5 text-xs text-adminreg-muted">
+                        Patient says they have never been here before?{" "}
+                        <span onClick={() => openNewPatientForm("direct")} className="cursor-pointer font-semibold text-adminreg-indigo underline">Register new patient</span>
+                      </p>
+                    )}
+                  </div>
+                ) : regOutcome === "no-match" ? (
+                  <div className="mt-3.5 border border-adminreg-indigo bg-adminreg-indigo-soft p-3.5">
+                    <div className="mb-1.5 text-xs font-bold text-adminreg-indigo-dark">Search completed · 0 records found</div>
+                    <div className="font-plexmono text-[10px] text-adminreg-indigo-dark">
+                      Query &quot;{regQuery || "+91 98457 20142"}&quot; · {new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                      <br />
+                      UHID index ✕ &nbsp; Phone index ✕ &nbsp; ABHA registry ✕
+                    </div>
+                    <p className="mt-2 text-xs text-adminreg-indigo-dark">No existing record, so nothing can be attached to the wrong UHID here. Continue into new-patient capture below.</p>
+                    {editable && <AdminButton type="button" accent="indigo" className="mt-2.5" onClick={() => openNewPatientForm("search")}>Continue to new-patient capture</AdminButton>}
+                  </div>
+                ) : regOutcome === "single" || (regOutcome === "multiple" && selectedCandidate !== null) ? (
+                  (() => {
+                    const candidate = regOutcome === "single" ? REG_SINGLE_MATCH : REG_MULTI_CANDIDATES[selectedCandidate!]
+                    return (
+                      <div className="mt-3.5 border-t-[3px] border-adminreg-olive bg-adminreg-olive-soft p-3.5">
+                        {regOutcome === "multiple" && (
+                          <div className="mb-2.5 flex items-center justify-between">
+                            <span className="font-plexmono text-[9.5px] uppercase tracking-[0.03em] text-adminreg-olive-dark">Selected from 3 candidates</span>
+                            <span onClick={() => setSelectedCandidate(null)} className="cursor-pointer text-[11px] text-adminreg-olive-dark underline">← Back to the list</span>
+                          </div>
+                        )}
+                        <div className="mb-1.5 text-sm font-bold text-adminreg-olive-dark">{candidate.name}</div>
+                        <div className="grid grid-cols-2 gap-2.5 text-xs text-adminreg-text">
+                          <div><FieldLabel>Age / Sex</FieldLabel><FieldValue>{candidate.ageSex}</FieldValue></div>
+                          <div><FieldLabel>UHID</FieldLabel><FieldValue>{candidate.uhid}</FieldValue></div>
+                          <div><FieldLabel>Phone</FieldLabel><FieldValue>{candidate.phone}</FieldValue></div>
+                          <div><FieldLabel>ABHA</FieldLabel><FieldValue>{candidate.abha}</FieldValue></div>
+                        </div>
+                        <div className="mt-2.5 border-t border-adminreg-olive/30 pt-2.5 text-xs text-adminreg-olive-dark">
+                          Last seen {candidate.lastVisit} · {candidate.department}, {candidate.doctor} · {candidate.visitCount} visits on record
+                        </div>
+                        <p className="mt-2.5 text-[11px] text-adminreg-muted">Confirm identity with the patient — name and age spoken back, not just read out — before a visit is created against this UHID.</p>
+                        {editable && (
+                          <div className="mt-2.5 flex items-center gap-3">
+                            <AdminButton type="button" accent="indigo" onClick={() => patch({ bannerText: `Visit opened for ${candidate.name}.` })}>Confirm &amp; open visit</AdminButton>
+                            <span onClick={() => selectRegOutcome("idle")} className="cursor-pointer text-[11px] text-adminreg-indigo underline">Not this person? Refine search</span>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()
+                ) : (
+                  <div className="mt-3.5 border border-adminreg-amber bg-adminreg-amber-soft p-3.5">
+                    <div className="mb-2 text-xs font-bold text-adminreg-amber-text">3 records match — select the right person</div>
+                    <p className="mb-2.5 text-[11px] text-adminreg-amber-text">One phone number, three registered people. Check age and last visit against the person standing at the desk before selecting.</p>
+                    <div className="space-y-2">
+                      {REG_MULTI_CANDIDATES.map((c, i) => (
+                        <div key={c.uhid} className="flex items-center justify-between gap-3 border border-adminreg-border bg-adminreg-card px-3 py-2.5">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-adminreg-text">{c.name} <span className="font-plexmono text-[10px] font-normal text-adminreg-muted">— {c.uhid}</span></div>
+                            <div className="text-[11px] text-adminreg-muted">{c.ageSex} · last visit {c.lastVisit} · {c.department}</div>
+                            <div className="text-[11px] italic text-adminreg-muted">{c.relation}</div>
+                          </div>
+                          {editable && <AdminButton type="button" variant="secondary" className="flex-shrink-0" onClick={() => setSelectedCandidate(i)}>Select</AdminButton>}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2.5 flex items-center justify-between">
+                      {editable && <span onClick={() => openNewPatientForm("direct")} className="cursor-pointer text-[11px] text-adminreg-muted underline">None of these — register as new</span>}
+                      {editable && <AdminButton type="button" variant="secondary" onClick={openMerge}>Review &amp; merge records</AdminButton>}
+                    </div>
+                  </div>
+                )}
               </Panel>
               <Panel>
                 <div className="flex items-start justify-between">
@@ -645,7 +963,16 @@ export function OpdVisitThreadPage() {
                       <AdminButton type="button" accent="indigo" onClick={goNext}>Order diagnostics</AdminButton>
                       <AdminButton type="button" variant="secondary" onClick={() => { patch({ diagnosticsSkipped: true }); goToStage(6) }}>Skip — prescribe directly</AdminButton>
                       <AdminButton type="button" variant="secondary">Refer to specialist</AdminButton>
-                      <AdminButton type="button" variant="secondary">Admit patient (→ IPD)</AdminButton>
+                      {demoReferralState === "not-referred" && (
+                        <AdminButton type="button" variant="secondary" className="border-adminreg-ipd text-adminreg-ipd hover:bg-adminreg-ipd/10" onClick={() => setDemoReferralState("confirming")}>
+                          Admission needed (→ IPD)
+                        </AdminButton>
+                      )}
+                      {demoReferralState === "confirming" && (
+                        <AdminButton type="button" className="border-adminreg-ipd bg-adminreg-ipd text-adminreg-card hover:bg-adminreg-ipd/90">
+                          Admission needed (→ IPD)
+                        </AdminButton>
+                      )}
                     </div>
                   </>
                 )}
@@ -653,6 +980,135 @@ export function OpdVisitThreadPage() {
                   <span className="text-xs">Chest X-ray — ordered</span>
                   {!state.cxrCancelled ? (editable && <LinkAction tone="void" onClick={openCancelOrder}>Cancel before collection</LinkAction>) : <SupersededTag />}
                 </div>
+
+                {editable && demoReferralState === "confirming" && (
+                  <div className="mt-3.5 border-t-[3px] border-adminreg-ipd bg-adminreg-ipd/[0.06] p-3.5">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <div>
+                        <span className="mb-1.5 inline-block border border-adminreg-ipd bg-adminreg-card px-2 py-0.5 font-plexmono text-[9.5px] font-bold uppercase tracking-[0.04em] text-adminreg-ipd">
+                          {REFERRAL_STATE_BADGE.confirming}
+                        </span>
+                        <div className="font-plexmono text-[10px] font-bold uppercase tracking-[0.04em] text-adminreg-ipd">Confirm admission referral</div>
+                      </div>
+                      <span onClick={() => setDemoReferralState("not-referred")} className="cursor-pointer text-[11px] text-adminreg-muted underline">Cancel</span>
+                    </div>
+                    <p className="mb-2.5 text-xs text-adminreg-muted">This does not cancel anything already ordered in this consultation — it just opens a referral for the admission desk to pick up.</p>
+                    <FieldLabel>Admission reason</FieldLabel>
+                    <textarea
+                      value={admitReason}
+                      onChange={(e) => setAdmitReason(e.target.value)}
+                      rows={2}
+                      placeholder="e.g. Unstable angina with a rising troponin — needs a monitored bed and inpatient workup today."
+                      className="mt-1 w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-ipd"
+                    />
+                    <div className="mt-2.5 border border-adminreg-border bg-adminreg-card p-3">
+                      <p className="mb-1.5 font-plexmono text-[9.5px] uppercase tracking-[0.03em] text-adminreg-muted2">Carried into the referral — exactly what admission desk will see</p>
+                      <div className="space-y-2 text-xs text-adminreg-text">
+                        <div>
+                          <div className="font-semibold">Working diagnosis</div>
+                          <div>Suspected early bronchospasm; cardiac cause not excluded</div>
+                          <div className="text-[10px] text-adminreg-muted">Clinical notes, signed 09:58</div>
+                        </div>
+                        <div>
+                          <div className="font-semibold">Vitals at referral</div>
+                          <div>BP 168/104 · HR 96 · SpO2 91% (flagged at triage)</div>
+                          <div className="text-[10px] text-adminreg-muted">Vitals &amp; Triage</div>
+                        </div>
+                        <div>
+                          <div className="font-semibold">Diagnostics on file</div>
+                          <div>Chest X-ray ordered 09:58 — awaiting collection</div>
+                          <div className="text-[10px] text-adminreg-muted">Diagnostics, this visit</div>
+                        </div>
+                        <div>
+                          <div className="font-semibold">Referring doctor</div>
+                          <div>Dr. Anjali Nair · Cardiology</div>
+                          <div className="text-[10px] text-adminreg-muted">OPD-20260812-0091</div>
+                        </div>
+                      </div>
+                    </div>
+                    <AdminButton type="button" className="mt-3 border-adminreg-ipd bg-adminreg-ipd text-adminreg-card hover:bg-adminreg-ipd/90" disabled={!admitReason.trim()} onClick={fileAdmissionReferral}>
+                      Confirm admission — bed allocation (→ IPD)
+                    </AdminButton>
+                  </div>
+                )}
+
+                {(demoReferralState === "pending" || demoReferralState === "processing" || demoReferralState === "admitted") && (
+                  <div className="mt-3.5">
+                    <div className="mb-2.5 flex flex-wrap items-center gap-2">
+                      <span className="mr-1 self-center font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-muted2">Referral state</span>
+                      {REFERRAL_STATE_CHIPS.map((c) => (
+                        <button
+                          key={c.key}
+                          type="button"
+                          onClick={() => setDemoReferralState(c.key)}
+                          className={cn(
+                            "border px-2 py-1 font-plexmono text-[9.5px] font-bold uppercase tracking-[0.03em] transition-colors",
+                            demoReferralState === c.key ? "border-adminreg-ipd bg-adminreg-ipd text-adminreg-card" : "border-adminreg-border bg-adminreg-bg text-adminreg-muted hover:text-adminreg-text"
+                          )}
+                        >
+                          {c.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className={cn("border-t-[3px] p-3.5", demoReferralState === "admitted" ? "border-adminreg-olive bg-adminreg-olive-soft" : "border-adminreg-ipd bg-adminreg-ipd/[0.06]")}>
+                      <div className="mb-2.5 flex items-center justify-between">
+                        <span className={cn("font-plexmono text-[10px] font-bold uppercase tracking-[0.04em]", demoReferralState === "admitted" ? "text-adminreg-olive-dark" : "text-adminreg-ipd")}>
+                          Admission referral · REF-20260812-0031
+                        </span>
+                        <span className={cn("border px-2 py-0.5 font-plexmono text-[9.5px] font-bold uppercase", demoReferralState === "admitted" ? "border-adminreg-olive text-adminreg-olive-dark" : "border-adminreg-ipd text-adminreg-ipd")}>
+                          {REFERRAL_STATE_BADGE[demoReferralState]}
+                        </span>
+                      </div>
+
+                      <div className="space-y-2.5">
+                        <div className="flex gap-2.5">
+                          <span className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 border border-adminreg-ipd bg-adminreg-ipd" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-xs font-semibold text-adminreg-text">Referral filed by doctor</span>
+                              <span className="flex-shrink-0 font-plexmono text-[10px] text-adminreg-muted">12 Aug, 09:58</span>
+                            </div>
+                            <p className="text-[11px] text-adminreg-muted">Reason and carried-over context sent to the admission desk.</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-2.5">
+                          <span className={cn("mt-0.5 h-3.5 w-3.5 flex-shrink-0 border border-adminreg-ipd", demoReferralState !== "pending" && "bg-adminreg-ipd")} />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-xs font-semibold text-adminreg-text">Picked up by admission desk</span>
+                              <span className="flex-shrink-0 font-plexmono text-[10px] text-adminreg-muted">{demoReferralState === "pending" ? "—" : "12 Aug, 10:04"}</span>
+                            </div>
+                            <p className="text-[11px] text-adminreg-muted">
+                              {demoReferralState === "pending" ? "Waiting. Sitting on the IPD referral worklist, unclaimed." : "A. Bhatt opened the referral and is completing Stage 1."}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex gap-2.5">
+                          <span className={cn("mt-0.5 h-3.5 w-3.5 flex-shrink-0 border border-adminreg-ipd", demoReferralState === "admitted" && "bg-adminreg-ipd")} />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-xs font-semibold text-adminreg-text">Admission order generated</span>
+                              <span className="flex-shrink-0 font-plexmono text-[10px] text-adminreg-muted">{demoReferralState === "admitted" ? "12 Aug, 10:11" : "—"}</span>
+                            </div>
+                            <p className="text-[11px] text-adminreg-muted">
+                              {demoReferralState === "admitted" ? "Bed GM-004, General Medicine. The stay is live in IPD." : "Pending — no bed committed yet."}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <p className="mt-3 border-t border-adminreg-divider pt-2.5 text-[11px] text-adminreg-muted">
+                        Reason filed: {admitReason}
+                        <br />
+                        Chest X-ray ordered 09:58 is unaffected and still awaiting collection.
+                      </p>
+                      {demoReferralState === "admitted" && (
+                        <a href="/ipd/stay?stage=1" className="mt-2 inline-block text-[11px] font-semibold text-adminreg-olive-dark underline">Open IPD admission IPD-20260809-0042 →</a>
+                      )}
+                    </div>
+                  </div>
+                )}
               </Panel>
             </div>
           )}
