@@ -5,6 +5,7 @@ import type { Bed } from "./types";
 export interface UpdateBedRequest {
   id: string;
   wardId: string;
+  categoryId?: string | null;
   bedNumber: string;
   status: string;
   patientId?: string | null;

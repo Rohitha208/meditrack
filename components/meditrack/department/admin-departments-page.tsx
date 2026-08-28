@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState, type FormEvent } from "react"
-import { Eye, Loader2, Pencil, Plus } from "lucide-react"
+import { Eye, Loader2, Pencil, Plus, Trash2 } from "lucide-react"
 
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -11,12 +11,14 @@ import { getToastErrorMessage } from "@/utils/apiErrorHandler"
 import { useGetMediTrackUsers } from "@/queries/meditrack/users"
 import {
   useCreateDepartment,
+  useDeleteDepartment,
   useGetDepartmentById,
   useGetDepartments,
   useUpdateDepartment,
   type Department,
 } from "@/queries/departments"
 import {
+  ConfirmDialog,
   MtDataTable,
   RowActions,
   FormDialog,
@@ -57,10 +59,12 @@ export function AdminDepartmentsPage() {
   )
   const createDepartment = useCreateDepartment()
   const updateDepartment = useUpdateDepartment()
+  const deleteDepartment = useDeleteDepartment()
 
   const [addOpen, setAddOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [viewId, setViewId] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [editing, setEditing] = useState<Department | null>(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [formBranchId, setFormBranchId] = useState("")
@@ -161,6 +165,22 @@ export function AdminDepartmentsPage() {
     }
   }
 
+  async function handleDelete() {
+    if (!deleteTarget) return
+    try {
+      await deleteDepartment.mutateAsync(deleteTarget.id)
+      if (viewId === deleteTarget.id) setViewId(null)
+      setDeleteTarget(null)
+      toast({ title: "Department deleted", description: `${deleteTarget.name} was removed.` })
+    } catch (err) {
+      toast({
+        title: "Could not delete department",
+        description: getToastErrorMessage(err, "Failed to delete department"),
+        variant: "destructive",
+      })
+    }
+  }
+
   const columns: MtColumn<Department>[] = [
     { key: "name", header: "Department", alwaysVisible: true, render: (r) => <span className="font-semibold text-adminreg-text">{r.name}</span>, sortValue: (r) => r.name },
     {
@@ -192,6 +212,12 @@ export function AdminDepartmentsPage() {
           actions={[
             { icon: Eye, label: "View", onClick: () => setViewId(r.departmentId) },
             { icon: Pencil, label: "Edit", onClick: () => openEdit(r) },
+            {
+              icon: Trash2,
+              label: "Delete",
+              destructive: true,
+              onClick: () => setDeleteTarget({ id: r.departmentId, name: r.name }),
+            },
           ]}
         />
       ),
@@ -341,6 +367,18 @@ export function AdminDepartmentsPage() {
           <p className="text-sm text-adminreg-muted">Department not found.</p>
         )}
       </DetailDrawer>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null)
+        }}
+        title="Delete department"
+        description={`Delete "${deleteTarget?.name || "this department"}"? This cannot be undone.`}
+        confirmLabel={deleteDepartment.isPending ? "Deleting…" : "Delete"}
+        destructive
+        onConfirm={handleDelete}
+      />
     </div>
   )
 }

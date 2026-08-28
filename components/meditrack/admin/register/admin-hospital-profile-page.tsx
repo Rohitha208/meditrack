@@ -1,17 +1,35 @@
 "use client"
 
 import { useState, type FormEvent } from "react"
-import { Loader2, Plus } from "lucide-react"
+import { Eye, Loader2, Pencil, Plus, Trash2 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
 import { getCompanyId } from "@/utils/clientCookie"
 import { useRootContext } from "@/context/RootContext"
-import { useCreateMediTrackClinic, useGetMediTrackClinics } from "@/queries/meditrack/clinics"
-import { FormDialog, MtButton, MtDataTable, TableSkeleton, type MtColumn } from "@/components/meditrack/shared"
+import {
+  useCreateMediTrackClinic,
+  useDeleteMediTrackClinic,
+  useGetMediTrackClinicById,
+  useGetMediTrackClinics,
+  useUpdateMediTrackClinic,
+  type MediTrackClinic,
+} from "@/queries/meditrack/clinics"
+import {
+  ConfirmDialog,
+  DetailDrawer,
+  FormDialog,
+  InfoRow,
+  MtButton,
+  MtDataTable,
+  RowActions,
+  TableSkeleton,
+  type MtColumn,
+} from "@/components/meditrack/shared"
 import { AdminPageHeader } from "./AdminPageHeader"
 import { AdminCard } from "./AdminCard"
 
@@ -47,6 +65,7 @@ const EMPTY_FORM = {
   postalCode: "",
   country: "India",
   licenseNumber: "",
+  subscriptionStatus: "Active",
 }
 
 function formatAddress(row: {
@@ -59,6 +78,19 @@ function formatAddress(row: {
   return [row.addressLine1, row.addressLine2, row.city, row.state, row.postalCode].filter(Boolean).join(", ") || "—"
 }
 
+function clinicToForm(clinic: MediTrackClinic) {
+  return {
+    name: clinic.name || "",
+    addressLine1: clinic.addressLine1 || "",
+    city: clinic.city || "",
+    state: clinic.state || "",
+    postalCode: clinic.postalCode || "",
+    country: clinic.country || "India",
+    licenseNumber: clinic.licenseNumber || "",
+    subscriptionStatus: clinic.subscriptionStatus || "Active",
+  }
+}
+
 export function AdminHospitalProfilePage() {
   const { toast } = useToast()
   const { user, clinic } = useRootContext()
@@ -69,14 +101,35 @@ export function AdminHospitalProfilePage() {
     !!companyId
   )
   const createClinic = useCreateMediTrackClinic()
+  const updateClinic = useUpdateMediTrackClinic()
+  const deleteClinic = useDeleteMediTrackClinic()
   const clinics = clinicsData?.items ?? []
 
   const [addOpen, setAddOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [viewId, setViewId] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [editing, setEditing] = useState<MediTrackClinic | null>(null)
   const [form, setForm] = useState(EMPTY_FORM)
+
+  const { data: viewedClinic, isLoading: isLoadingView } = useGetMediTrackClinicById(viewId || "", !!viewId)
+
+  const isSaving = createClinic.isPending || updateClinic.isPending
+  const isDeleting = deleteClinic.isPending
 
   function openAdd() {
     setForm(EMPTY_FORM)
     setAddOpen(true)
+  }
+
+  function openEdit(row: MediTrackClinic) {
+    setEditing(row)
+    setForm(clinicToForm(row))
+    setEditOpen(true)
+  }
+
+  function openDelete(row: MediTrackClinic) {
+    setDeleteTarget({ id: row.id, name: row.name })
   }
 
   async function handleAdd(e: FormEvent<HTMLFormElement>) {
@@ -95,7 +148,7 @@ export function AdminHospitalProfilePage() {
         postalCode: form.postalCode.trim() || null,
         country: form.country.trim() || null,
         licenseNumber: form.licenseNumber.trim() || null,
-        subscriptionStatus: "Active",
+        subscriptionStatus: form.subscriptionStatus || "Active",
       })
       setAddOpen(false)
       setForm(EMPTY_FORM)
@@ -108,6 +161,117 @@ export function AdminHospitalProfilePage() {
       })
     }
   }
+
+  async function handleEdit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!editing) return
+    const editCompanyId = editing.companyId || companyId
+    if (!editCompanyId) {
+      toast({ title: "Cannot save", description: "Company is missing. Please log in again.", variant: "destructive" })
+      return
+    }
+    try {
+      const updated = await updateClinic.mutateAsync({
+        id: editing.id,
+        companyId: editCompanyId,
+        name: form.name.trim(),
+        addressLine1: form.addressLine1.trim() || null,
+        city: form.city.trim() || null,
+        state: form.state.trim() || null,
+        postalCode: form.postalCode.trim() || null,
+        country: form.country.trim() || null,
+        licenseNumber: form.licenseNumber.trim() || null,
+        subscriptionStatus: form.subscriptionStatus || "Active",
+      })
+      setEditOpen(false)
+      setEditing(null)
+      setForm(EMPTY_FORM)
+      toast({ title: "Branch updated", description: `${updated.name} was saved.` })
+    } catch (err) {
+      toast({
+        title: "Could not update branch",
+        description: getToastErrorMessage(err, "Failed to update clinic"),
+        variant: "destructive",
+      })
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return
+    try {
+      await deleteClinic.mutateAsync(deleteTarget.id)
+      setDeleteTarget(null)
+      toast({ title: "Branch deleted", description: `${deleteTarget.name} was removed.` })
+    } catch (err) {
+      toast({
+        title: "Could not delete branch",
+        description: getToastErrorMessage(err, "Failed to delete clinic"),
+        variant: "destructive",
+      })
+    }
+  }
+
+  const branchFormFields = (
+    <>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Branch name</Label>
+        <Input
+          value={form.name}
+          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          placeholder="e.g. Sri Ramachandra — Main Campus"
+          required
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Code</Label>
+        <Input
+          value={form.licenseNumber}
+          onChange={(e) => setForm((f) => ({ ...f, licenseNumber: e.target.value }))}
+          placeholder="e.g. BR-01"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Address line 1</Label>
+        <Input
+          value={form.addressLine1}
+          onChange={(e) => setForm((f) => ({ ...f, addressLine1: e.target.value }))}
+          placeholder="e.g. Bannerghatta Road"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">City</Label>
+          <Input value={form.city} onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))} placeholder="e.g. Bengaluru" />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">State</Label>
+          <Input value={form.state} onChange={(e) => setForm((f) => ({ ...f, state: e.target.value }))} placeholder="e.g. Karnataka" />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Postal code</Label>
+          <Input value={form.postalCode} onChange={(e) => setForm((f) => ({ ...f, postalCode: e.target.value }))} placeholder="e.g. 560076" />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Country</Label>
+          <Input value={form.country} onChange={(e) => setForm((f) => ({ ...f, country: e.target.value }))} placeholder="India" />
+        </div>
+      </div>
+      {editOpen && (
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Status</Label>
+          <Select value={form.subscriptionStatus} onValueChange={(v) => setForm((f) => ({ ...f, subscriptionStatus: v }))}>
+            <SelectTrigger><SelectValue placeholder="Select status" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Active">Active</SelectItem>
+              <SelectItem value="Inactive">Inactive</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+    </>
+  )
 
   const columns: MtColumn<(typeof clinics)[number]>[] = [
     {
@@ -136,6 +300,22 @@ export function AdminHospitalProfilePage() {
         </span>
       ),
     },
+    {
+      key: "action",
+      header: "Action",
+      alwaysVisible: true,
+      className: "text-right",
+      headerClassName: "text-right",
+      render: (r) => (
+        <RowActions
+          actions={[
+            { icon: Eye, label: "View", onClick: () => setViewId(r.id) },
+            { icon: Pencil, label: "Edit", onClick: () => openEdit(r) },
+            { icon: Trash2, label: "Delete", destructive: true, onClick: () => openDelete(r) },
+          ]}
+        />
+      ),
+    },
   ]
 
   return (
@@ -153,7 +333,7 @@ export function AdminHospitalProfilePage() {
         }
       >
         {isLoading ? (
-          <TableSkeleton rows={4} columns={4} />
+          <TableSkeleton rows={4} columns={5} />
         ) : isError ? (
           <p className="px-5 py-8 text-sm text-adminreg-red">{getToastErrorMessage(error, "Failed to load branches")}</p>
         ) : (
@@ -196,59 +376,75 @@ export function AdminHospitalProfilePage() {
         footer={
           <>
             <MtButton type="button" variant="ghost" onClick={() => setAddOpen(false)}>Cancel</MtButton>
-            <MtButton type="submit" disabled={createClinic.isPending}>
+            <MtButton type="submit" disabled={isSaving}>
               {createClinic.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Add branch
             </MtButton>
           </>
         }
       >
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Branch name</Label>
-          <Input
-            value={form.name}
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            placeholder="e.g. Sri Ramachandra — Main Campus"
-            required
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Code</Label>
-          <Input
-            value={form.licenseNumber}
-            onChange={(e) => setForm((f) => ({ ...f, licenseNumber: e.target.value }))}
-            placeholder="e.g. BR-01"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Address line 1</Label>
-          <Input
-            value={form.addressLine1}
-            onChange={(e) => setForm((f) => ({ ...f, addressLine1: e.target.value }))}
-            placeholder="e.g. Bannerghatta Road"
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">City</Label>
-            <Input value={form.city} onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))} placeholder="e.g. Bengaluru" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">State</Label>
-            <Input value={form.state} onChange={(e) => setForm((f) => ({ ...f, state: e.target.value }))} placeholder="e.g. Karnataka" />
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Postal code</Label>
-            <Input value={form.postalCode} onChange={(e) => setForm((f) => ({ ...f, postalCode: e.target.value }))} placeholder="e.g. 560076" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Country</Label>
-            <Input value={form.country} onChange={(e) => setForm((f) => ({ ...f, country: e.target.value }))} placeholder="India" />
-          </div>
-        </div>
+        {branchFormFields}
       </FormDialog>
+
+      <FormDialog
+        open={editOpen}
+        onOpenChange={(open) => {
+          setEditOpen(open)
+          if (!open) setEditing(null)
+        }}
+        title="Edit branch"
+        onSubmit={handleEdit}
+        footer={
+          <>
+            <MtButton type="button" variant="ghost" onClick={() => setEditOpen(false)}>Cancel</MtButton>
+            <MtButton type="submit" disabled={isSaving}>
+              {updateClinic.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Save changes
+            </MtButton>
+          </>
+        }
+      >
+        {branchFormFields}
+      </FormDialog>
+
+      <DetailDrawer
+        open={!!viewId}
+        onOpenChange={(open) => {
+          if (!open) setViewId(null)
+        }}
+        title={viewedClinic?.name || "Branch"}
+      >
+        {isLoadingView ? (
+          <p className="text-sm text-adminreg-muted">Loading branch…</p>
+        ) : viewedClinic ? (
+          <div className="divide-y divide-adminreg-border">
+            <InfoRow label="Branch name" value={viewedClinic.name} />
+            <InfoRow label="Code" value={viewedClinic.licenseNumber || "—"} />
+            <InfoRow label="Address" value={formatAddress(viewedClinic)} />
+            <InfoRow label="City" value={viewedClinic.city || "—"} />
+            <InfoRow label="State" value={viewedClinic.state || "—"} />
+            <InfoRow label="Postal code" value={viewedClinic.postalCode || "—"} />
+            <InfoRow label="Country" value={viewedClinic.country || "—"} />
+            <InfoRow label="Status" value={viewedClinic.subscriptionStatus || "Active"} />
+            {viewedClinic.phone ? <InfoRow label="Phone" value={viewedClinic.phone} /> : null}
+            {viewedClinic.email ? <InfoRow label="Email" value={viewedClinic.email} /> : null}
+          </div>
+        ) : (
+          <p className="text-sm text-adminreg-muted">Branch not found.</p>
+        )}
+      </DetailDrawer>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null)
+        }}
+        title="Delete branch"
+        description={`Delete "${deleteTarget?.name || "this branch"}"? This cannot be undone.`}
+        confirmLabel={isDeleting ? "Deleting…" : "Delete"}
+        destructive
+        onConfirm={handleDelete}
+      />
     </div>
   )
 }

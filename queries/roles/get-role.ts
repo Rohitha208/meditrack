@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 export type Role = {
     id: string;
@@ -13,24 +13,40 @@ export type Role = {
     priority: number;
 };
 
-const getRole = async (pageNumber = 1, pageSize = 10, search = '') => {
-    const response = await fetch(`/api/role?pageNumber=${pageNumber}&pageSize=${pageSize}&search=${search}`);
-    if (!response.ok) {
-        throw new Error('Failed to fetch role data');
-    }
-    const result = await response.json();
-    return result;
+export type RoleListResponse = {
+    data: Role[];
+    totalCount?: number;
+    pageNumber?: number;
+    pageSize?: number;
+    totalPages?: number;
 };
 
-export const useGetRole = (pageNumber = 1, pageSize = 10, search = '', enabled = true) => {
+const getRole = async (
+    pageNumber = 1,
+    pageSize = 10,
+    search = ""
+): Promise<RoleListResponse> => {
+    const response = await fetch(
+        `/api/role?pageNumber=${pageNumber}&pageSize=${pageSize}&search=${search}`
+    );
+    if (!response.ok) {
+        throw new Error("Failed to fetch role data");
+    }
+    return response.json();
+};
+
+export const useGetRole = (
+    pageNumber = 1,
+    pageSize = 10,
+    search = "",
+    enabled = true
+) => {
     return useQuery({
-        queryKey: ["role"],
-        queryFn: async () => {
-            return getRole(pageNumber, pageSize, search);
-        },
-         refetchOnWindowFocus: true,
+        queryKey: ["role", pageNumber, pageSize, search],
+        queryFn: () => getRole(pageNumber, pageSize, search),
+        refetchOnWindowFocus: true,
         refetchOnMount: true,
         staleTime: 0,
-        enabled
+        enabled,
     });
 };
