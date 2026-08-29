@@ -4,6 +4,7 @@ import type { Bed } from "./types";
 
 export interface CreateBedRequest {
   wardId: string;
+  categoryId?: string | null;
   bedNumber: string;
   status?: string;
   patientId?: string | null;

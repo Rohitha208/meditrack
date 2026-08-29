@@ -7,6 +7,8 @@ export interface Bed {
   companyId?: string | null;
   wardId: string;
   wardName?: string | null;
+  categoryId?: string | null;
+  categoryName?: string | null;
   bedNumber: string;
   status: string;
   patientId?: string | null;

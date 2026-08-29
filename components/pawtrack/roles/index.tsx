@@ -4,13 +4,12 @@ import { DataTable } from "../../ui/data-table";
 import { Button } from "../../ui/button";
 import { Badge } from "../../ui/badge";
 import { ColumnDef } from "@tanstack/react-table";
-import { Edit, Plus, Trash2, ArrowLeft } from "lucide-react";
-import { useGetRole } from "@/queries/roles/get-role";
+import { Edit, ArrowLeft } from "lucide-react";
+import { useGetRole, type Role } from "@/queries/roles/get-role";
 import { useRootContext } from "@/context/RootContext"; // Import useRootContext
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "../../ui/sheet";
 import NewRole from "./newRole";
 import RoleDetails from "./roleDetails";
-import { Role } from "@/queries/roles/get-role";
 import { useRouter } from "next/navigation";
 
 export default function Roles() {
@@ -134,10 +133,7 @@ export default function Roles() {
         <div className="bg-slate-50 dark:bg-slate-900 border-none p-6">
         <DataTable
           columns={columns}
-          data={roles.map((role: Role) => {
-            const { isPrivileged, ...roleWithoutPrivileged } = role;
-            return roleWithoutPrivileged;
-          })}
+          data={roles}
           searchColumn="name"
           searchPlaceholder="Search roles..."
           page={pageNumber}

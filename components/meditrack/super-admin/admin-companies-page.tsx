@@ -279,7 +279,6 @@ export function AdminCompaniesPage() {
           if (!open) setViewCompany(null)
         }}
         title={viewCompany?.name || "Company details"}
-        subtitle="Hospital tenant profile"
       >
         {viewCompany ? (
           <div className="space-y-4">
