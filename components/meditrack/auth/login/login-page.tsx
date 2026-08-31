@@ -12,10 +12,22 @@ import { MediTrackLoginForm } from "./meditrack-login-form";
  * (left-image-background.png, left-image-icon.png). */
 export function MediTrackLoginPage() {
   return (
-    <div className="relative flex min-h-screen w-full flex-col overflow-hidden bg-adminreg-bg font-archivo">
-      <div className="flex flex-1 flex-col md:flex-row">
-        {/* Left — brand & illustration panel, matches the sidebar */}
-        <div className="relative hidden w-full flex-col justify-center overflow-hidden bg-adminreg-sidebar px-10 py-12 md:flex md:w-1/2 lg:px-20">
+    <div className="relative flex h-screen w-full flex-col overflow-hidden bg-adminreg-bg font-archivo">
+      {/* min-h-0 lets this row actually shrink to its flex-1 share of the
+       * screen instead of growing to fit the taller of its two children (the
+       * hero illustration) — without it the whole page grows past 100vh and
+       * the form ends up rendered near the top of that taller page instead
+       * of centered in the visible viewport. */}
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        {/* Left — brand & illustration panel, matches the sidebar. Purely
+         * decorative, so on a short viewport it's allowed to crop evenly
+         * top/bottom (overflow-hidden) rather than scroll — combined with
+         * `justify-center`, overflow-y-auto here would center the content
+         * first and only let you scroll to the bottom half, permanently
+         * clipping the top half with no way to reach it. The illustration
+         * itself is sized per breakpoint so it never forces this panel
+         * taller than a typical viewport (see the image wrapper below). */}
+        <div className="relative hidden w-full flex-col justify-center overflow-hidden bg-adminreg-sidebar px-8 py-6 md:flex md:w-1/2 lg:px-16 lg:py-8">
           <Image
             src="/images/left-image-background.png"
             alt=""
@@ -35,23 +47,29 @@ export function MediTrackLoginPage() {
               </div>
             </div>
 
-            <h1 className="mt-8 text-3xl font-extrabold leading-tight tracking-[-0.01em] text-adminreg-sidebar-text lg:text-4xl">
+            <h1 className="mt-5 text-2xl font-extrabold leading-tight tracking-[-0.01em] text-adminreg-sidebar-text lg:text-3xl">
               Empowering Healthcare,
               <br />
               <span className="text-adminreg-olive">Elevating Lives</span>
             </h1>
-            <p className="mx-auto mt-4 max-w-sm text-sm text-adminreg-sidebar-text-secondary">
+            <p className="mx-auto mt-3 max-w-sm text-sm text-adminreg-sidebar-text-secondary">
               A complete hospital management solution to streamline operations and deliver better patient care.
             </p>
 
-            <div className="relative mx-auto mt-6 aspect-[2/3] w-full max-w-[340px]">
+            {/* Scales with the panel instead of a single fixed size — at its
+             * native 2:3 aspect ratio, a naive max-w-[340px] renders 510px
+             * tall, which alone is taller than the content area on a
+             * typical laptop screen and pushes the logo above the top edge.
+             * Kept compact at md (smallest window this panel ever renders
+             * in) and only grows on genuinely spacious screens. */}
+            <div className="relative mx-auto mt-4 aspect-[2/3] w-full max-w-[130px] md:max-w-[150px] lg:max-w-[200px] xl:max-w-[240px]">
               <Image src="/images/left-image-icon.png" alt="MediTrack — secure hospital care illustration" fill className="object-contain" priority />
             </div>
           </div>
         </div>
 
         {/* Right — login card */}
-        <div className="flex w-full flex-1 items-center justify-center px-4 py-12 md:w-1/2">
+        <div className="flex min-h-0 w-full flex-1 items-center justify-center overflow-y-auto px-4 py-8 sm:py-12 md:w-1/2">
           <div className="w-full max-w-[480px]">
             <div className="mb-6 flex flex-col items-center gap-2 text-center md:hidden">
               <div className="flex h-11 w-11 items-center justify-center rounded-none bg-adminreg-olive">
@@ -60,7 +78,7 @@ export function MediTrackLoginPage() {
               <p className="text-lg font-extrabold text-adminreg-text">MediTrack</p>
             </div>
 
-            <div className="border border-adminreg-border bg-adminreg-card p-8">
+            <div className="border border-adminreg-border bg-adminreg-card p-5 sm:p-8">
               <div className="mb-6 text-center">
                 <h2 className="text-2xl font-extrabold tracking-[-0.01em] text-adminreg-text">Welcome Back!</h2>
                 <p className="mt-1 text-sm text-adminreg-muted">
@@ -84,8 +102,6 @@ export function MediTrackLoginPage() {
           </div>
         </div>
       </div>
-
-      <p className="pb-6 text-center font-plexmono text-[11px] text-adminreg-muted2">© 2026 MediTrack. All rights reserved.</p>
     </div>
   );
 }

@@ -21,12 +21,23 @@ import {
  * theme untouched.
  */
 
+export interface AdminRegisterNavChild {
+  label: string
+  href: string
+}
+
 export interface AdminRegisterNavItem {
   code: string
   label: string
   href: string
   icon: LucideIcon
   group: string
+  /** Indented sub-links rendered under this item — used for a register that
+   * splits into a few distinct screens (e.g. Tariffs & Packages → Tariff
+   * Master / PMJAY Packages / TPA Rate Cards) without earning each one its
+   * own top-level sidebar entry. Always rendered (no collapse/expand
+   * state) since only one nav item currently has any. */
+  children?: AdminRegisterNavChild[]
 }
 
 export const ADMIN_NAV_GROUPS = ["Insights", "Clinical Configuration", "Operations", "People & Access", "System"] as const
@@ -49,7 +60,18 @@ export const ADMIN_REGISTER_NAV: AdminRegisterNavItem[] = [
   { code: "03", label: "Doctors", href: "/admin/providers", icon: UserRound, group: "Clinical Configuration" },
   { code: "04", label: "Master Data", href: "/admin/masters", icon: Database, group: "Clinical Configuration" },
   { code: "05", label: "Wards & Beds", href: "/admin/wards-beds", icon: BedDouble, group: "Operations" },
-  { code: "06", label: "Tariffs & Packages", href: "/admin/tariffs", icon: Receipt, group: "Operations" },
+  {
+    code: "06",
+    label: "Tariffs & Packages",
+    href: "/admin/tariffs",
+    icon: Receipt,
+    group: "Operations",
+    children: [
+      { label: "Tariff Master", href: "/admin/tariffs" },
+      { label: "PMJAY Packages", href: "/admin/tariffs/pmjay-packages" },
+      { label: "TPA Rate Cards", href: "/admin/tariffs/tpa-rate-cards" },
+    ],
+  },
   { code: "07", label: "Users & Roles", href: "/admin/users", icon: UsersRound, group: "People & Access" },
   { code: "08", label: "HR & Staff", href: "/admin/hr-staff", icon: IdCard, group: "People & Access" },
   { code: "09", label: "System Config", href: "/admin/settings", icon: Settings, group: "System" },

@@ -1,5 +1,5 @@
-import { AdminTariffsPage } from "@/components/meditrack/admin/register/admin-tariffs-page"
+import { AdminTariffMasterPage } from "@/components/meditrack/admin/register/admin-tariff-master-page"
 
 export default function Page() {
-  return <AdminTariffsPage />
+  return <AdminTariffMasterPage />
 }
