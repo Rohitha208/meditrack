@@ -7,7 +7,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { ModuleSwitcher } from "./ModuleSwitcher"
 import { RoleSwitcher } from "./RoleSwitcher"
 import { useStaffRole } from "./RoleProvider"
-import { canAccessAppointmentBooking, isStageEditable, isStageVisible } from "./rbac"
+import { canAccessAppointmentBooking, isStageEditable, isStageVisible, isIpdStageVisible } from "./rbac"
 import {
   ADMIN_NAV_GROUPS,
   ADMIN_REGISTER_NAV,
@@ -18,6 +18,7 @@ import {
 import { useRootContext } from "@/context/RootContext"
 import { STAGE_DEFS } from "@/components/meditrack/opd/thread/theme"
 import { APPOINTMENT_TABS } from "@/components/meditrack/opd/appointments/theme"
+import { IPD_BANDS, IPD_STAGE_DEFS } from "@/components/meditrack/ipd/thread/theme"
 
 const PATIENT = { name: "Meera Kulkarni", ageSex: "34 / Female", uhid: "UHID-0004821", visitId: "OPD-20260812-0091" }
 const HANDOFFS = ["A. Bhatt · 09:14", "A. Bhatt · 09:16", "A. Bhatt · 09:18", "K. Rao · 09:31", "Dr. Nair · 09:52", "M. Pillai · 10:20", "Dr. Nair · 10:24", "S. Verma · 10:41"]
@@ -161,9 +162,54 @@ function OpdNav() {
   )
 }
 
+function IpdNav() {
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const { role } = useStaffRole()
+
+  const currentStage = pathname.startsWith("/ipd/stay") ? Number(searchParams.get("stage") ?? 0) : -1
+  const currentDay = Number(searchParams.get("day") ?? 4)
+  const isAdminRole = role === "admin"
+
+  return (
+    <nav className="adminreg-scroll-dark flex-1 overflow-y-auto px-3 py-3">
+      <div className={cn("mb-3 border-b border-l-[3px] border-adminreg-sidebar-border border-l-adminreg-ipd bg-white/[0.03] px-3.5 py-3", isAdminRole && "border-l-adminreg-amber")}>
+        <div className="text-sm font-bold text-adminreg-sidebar-text">Ramesh Iyer</div>
+        <div className="mt-0.5 text-[11px] text-adminreg-sidebar-text-secondary">58 / Male · UHID-0003318</div>
+        <div className="mt-1.5 font-plexmono text-[10px] text-adminreg-sidebar-text-muted">IPD-20260808-0042 · GM-004</div>
+        <div className="mt-0.5 font-plexmono text-[10px] text-adminreg-sidebar-text-muted">Day {currentDay} of stay · admitted 5 Aug</div>
+        {isAdminRole && <p className="mt-1.5 font-plexmono text-[9px] uppercase tracking-wide text-adminreg-amber">Oversight view — read only</p>}
+      </div>
+
+      {IPD_BANDS.map((band) => {
+        const items = IPD_STAGE_DEFS.map((def, i) => ({ def, i })).filter(({ def }) => def.band === band)
+        const visibleItems = items.filter(({ i }) => isIpdStageVisible(role, i))
+        if (visibleItems.length === 0) return null
+        return (
+          <div key={band} className="mb-4">
+            <p className="mb-1.5 px-2.5 font-plexmono text-[9px] uppercase tracking-[0.1em] text-adminreg-sidebar-text-muted">{band}</p>
+            <div className="space-y-0.5">
+              {visibleItems.map(({ def, i }) => {
+                const active = currentStage === i
+                return (
+                  <Link key={def.name} href={`/ipd/stay?stage=${i}&day=${currentDay}`} className={cn("block px-2.5 py-2 transition-colors", active ? "bg-adminreg-ipd font-bold text-adminreg-card" : "text-adminreg-sidebar-text-secondary hover:bg-white/5 hover:text-adminreg-sidebar-text")}>
+                    <div className="font-plexmono text-[9px] tracking-[0.04em] opacity-70">{def.role}</div>
+                    <div className="mt-px text-[13px]">{def.name}</div>
+                  </Link>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
+    </nav>
+  )
+}
+
 function SidebarContent() {
   const pathname = usePathname()
   const isOpd = pathname.startsWith("/opd")
+  const isIpd = pathname.startsWith("/ipd")
   const { userType } = useRootContext()
   const isSuperAdmin = !!userType?.isSuperAdmin
 
@@ -175,7 +221,7 @@ function SidebarContent() {
       </div>
 
       <ModuleSwitcher isSuperAdmin={isSuperAdmin} />
-      {isOpd && !isSuperAdmin ? <OpdNav /> : <AdminNav isSuperAdmin={isSuperAdmin} />}
+      {isSuperAdmin ? <AdminNav isSuperAdmin /> : isOpd ? <OpdNav /> : isIpd ? <IpdNav /> : <AdminNav isSuperAdmin={false} />}
       {isSuperAdmin ? <SuperAdminRoleBadge /> : <RoleSwitcher />}
     </>
   )

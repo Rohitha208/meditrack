@@ -1,19 +1,20 @@
 /**
- * Demo-only RBAC for the unified Admin + OPD shell, per the Arogya HMS
+ * Demo-only RBAC for the unified Admin + OPD + IPD shell, per the Arogya HMS
  * unified-shell spec. Drives which module/screens a role can see and which
  * of those are editable vs. view-only. In production this comes from the
  * authenticated user's actual role/permission set, not a client-side
  * toggle — the role switcher here exists purely so this UI can demonstrate
- * all three states.
+ * all four states.
  */
 
-export type StaffRole = "frontdesk" | "doctor" | "admin"
+export type StaffRole = "frontdesk" | "doctor" | "nurse" | "admin"
 
-export const ROLES: StaffRole[] = ["frontdesk", "doctor", "admin"]
+export const ROLES: StaffRole[] = ["frontdesk", "doctor", "nurse", "admin"]
 
 export const ROLE_LABEL: Record<StaffRole, string> = {
   frontdesk: "Front Desk",
   doctor: "Doctor",
+  nurse: "Nurse",
   admin: "Hospital Admin",
 }
 
@@ -34,10 +35,21 @@ export function appointmentBookingEditable(role: StaffRole): boolean {
 
 /** Which of the 9 OPD visit-thread stage indices (0-8) a role can see at all,
  * and which of those it can additionally edit — everything visible-but-not-
- * editable renders in view-only mode (banner + no mutating controls). */
+ * editable renders in view-only mode (banner + no mutating controls).
+ * Stages: 0 Registration, 1 Fee Collection, 2 Token & Queue, 3 Vitals &
+ * Triage, 4 Consultation, 5 Diagnostics, 6 e-Prescription, 7 Pharmacy
+ * Dispensing, 8 Visit Closure.
+ *
+ * Same broad-visibility principle as IPD: Front Desk and Doctor see the
+ * whole 9-stage thread (a front-desk clerk closing out a visit needs to see
+ * it went through consultation/diagnostics/prescription/pharmacy even
+ * though they didn't touch those stages), they just can't edit stages
+ * outside their own. Nurse stays narrow — Vitals & Triage only — mirroring
+ * the same explicit MAR-only restriction the spec states for IPD. */
 export const OPD_STAGE_ACCESS: Record<StaffRole, { visible: number[]; editable: number[] }> = {
-  frontdesk: { visible: [0, 1, 2, 8], editable: [0, 1, 2, 8] },
-  doctor: { visible: [3, 4, 5, 6], editable: [4, 6] },
+  frontdesk: { visible: [0, 1, 2, 3, 4, 5, 6, 7, 8], editable: [0, 1, 2, 8] },
+  doctor: { visible: [0, 1, 2, 3, 4, 5, 6, 7, 8], editable: [4, 5, 6] },
+  nurse: { visible: [3], editable: [3] },
   admin: { visible: [0, 1, 2, 3, 4, 5, 6, 7, 8], editable: [] },
 }
 
@@ -53,4 +65,35 @@ export function isStageEditable(role: StaffRole, stage: number): boolean {
  * isn't in that role's visible list (e.g. switching role mid-thread). */
 export function firstVisibleStage(role: StaffRole): number {
   return OPD_STAGE_ACCESS[role].visible[0] ?? 0
+}
+
+/** Which of the 8 IPD stay stage indices (0-7) a role can see/edit.
+ * Stages: 0 Admission Decision, 1 Bed Allocation, 2 Deposit & Pre-Auth
+ * (ONCE — AT ADMISSION) · 3 Nursing & Rounds, 4 Diagnostics & OT, 5 Daily
+ * Billing Accrual (EVERY DAY OF STAY) · 6 Discharge Planning, 7 Final
+ * Billing & Settlement (ONCE — AT DISCHARGE).
+ *
+ * Unlike OPD's per-role-narrowed visibility, IPD visibility is broad by
+ * default — Front Desk and Doctor see the full 8-stage stay (continuity of
+ * care across a multi-day admission matters even for stages they don't own),
+ * they just can't edit stages outside their own. Nurse is the one deliberate
+ * exception, per the spec: "Nurse sees only the MAR (no billing, no
+ * admin)" — narrowed to stage 3 alone, not just non-editable elsewhere. */
+export const IPD_STAGE_ACCESS: Record<StaffRole, { visible: number[]; editable: number[] }> = {
+  frontdesk: { visible: [0, 1, 2, 3, 4, 5, 6, 7], editable: [0, 1, 2, 5, 7] },
+  doctor: { visible: [0, 1, 2, 3, 4, 5, 6, 7], editable: [4, 6] },
+  nurse: { visible: [3], editable: [3] },
+  admin: { visible: [0, 1, 2, 3, 4, 5, 6, 7], editable: [] },
+}
+
+export function isIpdStageVisible(role: StaffRole, stage: number): boolean {
+  return IPD_STAGE_ACCESS[role].visible.includes(stage)
+}
+
+export function isIpdStageEditable(role: StaffRole, stage: number): boolean {
+  return IPD_STAGE_ACCESS[role].editable.includes(stage)
+}
+
+export function firstVisibleIpdStage(role: StaffRole): number {
+  return IPD_STAGE_ACCESS[role].visible[0] ?? 0
 }

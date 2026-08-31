@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils"
  */
 
 export function SectionLabel({ children }: { children: ReactNode }) {
-  return <div className="mb-2.5 font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted2">{children}</div>
+  return <div className="mb-2.5 font-plexmono text-[14px] font-bold uppercase tracking-[0.04em] text-adminreg-muted2">{children}</div>
 }
 
 export function FieldLabel({ children }: { children: ReactNode }) {

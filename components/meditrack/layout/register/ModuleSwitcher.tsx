@@ -19,16 +19,15 @@ interface ModuleDef {
 const MODULES: ModuleDef[] = [
   { key: "admin", label: "Admin", sublabel: "Configuration & registers", href: "/admin/dashboard", dotClass: "bg-adminreg-olive", accentClass: "border-l-adminreg-olive", match: (p) => p.startsWith("/admin") },
   { key: "opd", label: "OPD", sublabel: "Outpatient visit thread", href: "/opd/visit-thread", dotClass: "bg-adminreg-indigo", accentClass: "border-l-adminreg-indigo", match: (p) => p.startsWith("/opd") },
-  { key: "ipd", label: "IPD", sublabel: "Coming soon", href: null, dotClass: "bg-adminreg-ipd", accentClass: "border-l-adminreg-ipd", match: () => false },
+  { key: "ipd", label: "IPD", sublabel: "Inpatient stay record", href: "/ipd/stay", dotClass: "bg-adminreg-ipd", accentClass: "border-l-adminreg-ipd", match: (p) => p.startsWith("/ipd") },
 ]
 
 /**
  * The module switcher — pinned at the top of the unified sidebar, per the
- * unified-shell spec. A 3-slot system (Admin / OPD / IPD) built now even
- * though only 2 are live: IPD is visible but dimmed with "Coming soon"
- * rather than removed, so adding it later is a flag flip, not a redesign.
- * Admin is dimmed (not removed from the DOM) for roles that can't access
- * it, per the spec's stated tradeoff.
+ * unified-shell spec. All three modules (Admin / OPD / IPD) are live. Admin
+ * is dimmed (not removed from the DOM) for roles that can't access it, per
+ * the spec's stated tradeoff; the same treatment applies to OPD/IPD for a
+ * super admin, who only operates the company-management Admin surface.
  */
 export function ModuleSwitcher({ isSuperAdmin = false }: { isSuperAdmin?: boolean }) {
   const pathname = usePathname()
