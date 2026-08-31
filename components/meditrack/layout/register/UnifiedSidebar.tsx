@@ -63,19 +63,47 @@ function AdminNav({ isSuperAdmin }: { isSuperAdmin: boolean }) {
             <p className="mb-1.5 px-2.5 font-plexmono text-[9px] uppercase tracking-[0.1em] text-adminreg-sidebar-text-muted">{group}</p>
             <div className="space-y-0.5">
               {items.map((item) => {
+                // Items with children are a parent for a few sibling screens
+                // (e.g. Tariff Master / PMJAY Packages / TPA Rate Cards). The
+                // parent should stay highlighted for the whole subtree — a
+                // prefix match — so it reads as "active section" no matter
+                // which of its children is open; the specific child gets its
+                // own distinct accent below to show exactly which one.
                 const active = isAdminRegisterPathActive(pathname, item.href)
                 return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={cn(
-                      "flex items-center gap-3 px-2.5 py-2 text-[13px] font-medium transition-colors",
-                      active ? "bg-adminreg-olive font-bold text-adminreg-card" : "text-adminreg-sidebar-text-secondary hover:bg-white/5 hover:text-adminreg-sidebar-text"
+                  <div key={item.href}>
+                    <Link
+                      href={item.href}
+                      className={cn(
+                        "flex items-center gap-3 px-2.5 py-2 text-[13px] font-medium transition-colors",
+                        active ? "bg-adminreg-olive font-bold text-adminreg-card" : "text-adminreg-sidebar-text-secondary hover:bg-white/5 hover:text-adminreg-sidebar-text"
+                      )}
+                    >
+                      <item.icon className={cn("h-4 w-4 flex-shrink-0", active ? "text-adminreg-card" : "text-adminreg-sidebar-text-muted")} />
+                      <span className="truncate">{item.label}</span>
+                    </Link>
+                    {item.children && (
+                      <div className="ml-[15px] mt-0.5 space-y-0.5 border-l border-adminreg-sidebar-border pl-3.5">
+                        {item.children.map((child) => {
+                          const childActive = pathname === child.href
+                          return (
+                            <Link
+                              key={child.href}
+                              href={child.href}
+                              className={cn(
+                                "block border-l-2 py-1.5 pl-2.5 pr-2.5 text-[12.5px] transition-colors",
+                                childActive
+                                  ? "border-adminreg-olive bg-white/[0.06] font-bold text-adminreg-olive-soft"
+                                  : "border-transparent text-adminreg-sidebar-text-secondary hover:bg-white/5 hover:text-adminreg-sidebar-text"
+                              )}
+                            >
+                              {child.label}
+                            </Link>
+                          )
+                        })}
+                      </div>
                     )}
-                  >
-                    <item.icon className={cn("h-4 w-4 flex-shrink-0", active ? "text-adminreg-card" : "text-adminreg-sidebar-text-muted")} />
-                    <span className="truncate">{item.label}</span>
-                  </Link>
+                  </div>
                 )
               })}
             </div>

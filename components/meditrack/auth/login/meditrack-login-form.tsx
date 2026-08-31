@@ -35,8 +35,6 @@ const FIELD_CLASS = "h-11 rounded-none border-adminreg-border bg-adminreg-bg fon
  * PawTrack's shared LoginForm (queries/auth/login-user.ts has no concept of
  * "user type" or SSO), restyled to the Administration Register's palette
  * (square corners, Archivo + IBM Plex Mono, olive accent, no drop shadow).
- * Google/Biometric aren't wired to a real provider — clicking them is
- * honest about that via a toast rather than silently doing nothing.
  */
 export function MediTrackLoginForm() {
   const { fetchUser, setProductType } = useRootContext()
@@ -86,10 +84,6 @@ export function MediTrackLoginForm() {
 
   function onSubmit(values: LoginFormValues) {
     loginMutation.mutate(values as any)
-  }
-
-  function handleComingSoon(provider: string) {
-    toast({ title: "Coming soon", description: `Sign in with ${provider} isn't available yet.` })
   }
 
   return (
@@ -150,30 +144,6 @@ export function MediTrackLoginForm() {
           {loginMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign In"}
         </AdminButton>
 
-        <div className="flex items-center gap-3 pt-1">
-          <span className="h-px flex-1 bg-adminreg-border" />
-          <span className="font-plexmono text-[10px] uppercase tracking-wide text-adminreg-muted">or continue with</span>
-          <span className="h-px flex-1 bg-adminreg-border" />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={() => handleComingSoon("Google")}
-            className="flex h-11 items-center justify-center gap-2 rounded-none border border-adminreg-border bg-adminreg-card text-sm font-medium text-adminreg-muted transition-colors hover:bg-adminreg-header"
-          >
-            <GoogleIcon className="h-4 w-4" />
-            Google
-          </button>
-          <button
-            type="button"
-            onClick={() => handleComingSoon("biometrics")}
-            className="flex h-11 items-center justify-center gap-2 rounded-none border border-adminreg-border bg-adminreg-card text-sm font-medium text-adminreg-muted transition-colors hover:bg-adminreg-header"
-          >
-            Biometric
-          </button>
-        </div>
-
         <p className="pt-1 text-center text-sm text-adminreg-muted">
           Don&apos;t have an account?{" "}
           <Link href="/register" className="font-medium text-adminreg-olive hover:text-adminreg-olive-dark">
@@ -182,16 +152,5 @@ export function MediTrackLoginForm() {
         </p>
       </form>
     </Form>
-  )
-}
-
-function GoogleIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
-      <path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.42 3.58v3h3.91c2.29-2.11 3.53-5.22 3.53-8.82Z" />
-      <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.91-3c-1.08.72-2.47 1.16-4.02 1.16-3.09 0-5.71-2.09-6.65-4.9H1.32v3.09C3.29 21.3 7.31 24 12 24Z" />
-      <path fill="#FBBC05" d="M5.35 14.35c-.24-.72-.38-1.49-.38-2.28s.14-1.56.38-2.28V6.7H1.32C.48 8.36 0 10.13 0 12s.48 3.64 1.32 5.3l4.03-3.15Z" />
-      <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.44-3.44C17.94 1.19 15.24 0 12 0 7.31 0 3.29 2.7 1.32 6.7l4.03 3.09c.94-2.81 3.56-4.9 6.65-4.9Z" />
-    </svg>
   )
 }

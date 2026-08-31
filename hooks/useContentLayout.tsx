@@ -375,7 +375,6 @@ export const useContentLayout = () => {
         router.push("/login");
 
         setRoles(null)
-        setUser(null);
         localStorage.removeItem('user');
         localStorage.removeItem('role');
         localStorage.removeItem('lastVisitedUrls');
@@ -390,8 +389,17 @@ export const useContentLayout = () => {
         removeClinicId();
         removeClinicName();
         removeProductType();
-        setProductTypeState(null);
+        // `productType` (and the `user` it's read alongside) drive
+        // ProductLayoutSwitch's PawTrack-vs-MediTrack choice — clearing them
+        // synchronously here flips isHumanMode to false while the outgoing
+        // page is still mounted (the /login navigation above hasn't
+        // committed yet), so it briefly renders PawTrack's shell before the
+        // redirect finishes. Clearing them in the same delayed batch as
+        // `authorized`/`queryClient.clear()` below — by which point the
+        // route has long since left this tree — avoids that flash.
         setTimeout(() => {
+            setUser(null);
+            setProductTypeState(null);
             queryClient.clear();
             setAuthorized(false);
             //window.location.reload();
