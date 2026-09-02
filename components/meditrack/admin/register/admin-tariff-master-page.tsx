@@ -193,7 +193,7 @@ export function AdminTariffMasterPage() {
   return (
     <div className="space-y-5">
       <AdminPageHeader
-        title="Tariff Master"
+        title="Services"
         subtitle="Service tariffs — departments scoped by branch."
         actions={
           <div className="flex items-center gap-2">
