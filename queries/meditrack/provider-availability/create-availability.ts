@@ -4,7 +4,7 @@ import type { CreateProviderAvailabilityRequest, ProviderAvailability } from "./
 
 const createProviderAvailability = async (
   data: CreateProviderAvailabilityRequest
-): Promise<ProviderAvailability> => {
+): Promise<ProviderAvailability[]> => {
   const response = await fetch(`/api/meditrack/providers/${data.providerId}/availability`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -14,7 +14,7 @@ const createProviderAvailability = async (
   if (!response.ok) {
     throw new Error(getMessageFromErrorBody(result, "Failed to create availability session"));
   }
-  return result as ProviderAvailability;
+  return Array.isArray(result) ? result : result ? [result as ProviderAvailability] : [];
 };
 
 export const useCreateProviderAvailability = () => {

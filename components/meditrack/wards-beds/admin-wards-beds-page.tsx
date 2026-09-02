@@ -782,11 +782,11 @@ export function AdminWardsBedsPage() {
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <p className="font-semibold text-adminreg-text">{bed.bedNumber}</p>
+                            <p className="font-semibold text-adminreg-text">
+                              {bed.bedNumber}
+                              {bed.categoryName ? ` (${bed.categoryName})` : ""}
+                            </p>
                             <p className={cn("mt-0.5 text-xs font-medium", cls.text)}>{uiStatus}</p>
-                            {bed.categoryName ? (
-                              <p className="mt-1 text-[11px] text-adminreg-muted">{bed.categoryName}</p>
-                            ) : null}
                             {bed.patientName && <p className="mt-1 font-mono text-[10px] text-adminreg-muted">{bed.patientName}</p>}
                           </div>
                           <RowActions

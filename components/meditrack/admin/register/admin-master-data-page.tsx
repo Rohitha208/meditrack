@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState, type FormEvent } from "react"
-import { Eye, Loader2, Pencil, Plus, Trash2, Upload } from "lucide-react"
+import { Loader2, Pencil, Plus, Trash2, Upload } from "lucide-react"
 
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -70,7 +70,7 @@ const TONE_CLASS: Record<"valid" | "warning" | "critical", string> = {
   critical: "text-adminreg-red-text",
 }
 
-const SCHEDULE_OPTIONS = ["None", "H", "H1", "X"]
+const SCHEDULE_OPTIONS = ["None", "G", "H", "H1", "X", "M", "P"]
 const UNIT_OPTIONS = ["Tablet", "Capsule", "Vial", "Syrup", "Injection"]
 const ICD_VERSIONS = ["ICD-10", "ICD-11"]
 const PAYER_TYPES = ["TPA", "Government scheme"]
@@ -158,8 +158,18 @@ function TableShell({ headers, children }: { headers: string[]; children: React.
   )
 }
 
-function Row({ children }: { children: React.ReactNode }) {
-  return <tr className="border-b border-adminreg-divider last:border-0">{children}</tr>
+function Row({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
+  return (
+    <tr
+      className={cn(
+        "border-b border-adminreg-divider last:border-0",
+        onClick && "cursor-pointer hover:bg-adminreg-header/40"
+      )}
+      onClick={onClick}
+    >
+      {children}
+    </tr>
+  )
 }
 
 function EmptyRow({ colSpan, message }: { colSpan: number; message: string }) {
@@ -845,7 +855,13 @@ export function AdminMasterDataPage() {
                     const schedule = formatSchedule(d.schedule)
                     const branch = resolveBranchName(d)
                     return (
-                      <Row key={d.id}>
+                      <Row
+                        key={d.id}
+                        onClick={() => {
+                          setViewDrug(d)
+                          setViewOpen(true)
+                        }}
+                      >
                         <td className="px-5 py-3 font-medium text-adminreg-text">{d.name}</td>
                         <td className="px-5 py-3">
                           {!schedule ? (
@@ -862,14 +878,6 @@ export function AdminMasterDataPage() {
                         <td className="px-5 py-3 text-right">
                           <RowActions
                             actions={[
-                              {
-                                icon: Eye,
-                                label: "View",
-                                onClick: () => {
-                                  setViewDrug(d)
-                                  setViewOpen(true)
-                                },
-                              },
                               { icon: Pencil, label: "Edit", onClick: () => openEditDrug(d) },
                               {
                                 icon: Trash2,
@@ -901,7 +909,13 @@ export function AdminMasterDataPage() {
                   tests.map((t) => {
                     const branch = resolveBranchName(t)
                     return (
-                      <Row key={t.id}>
+                      <Row
+                        key={t.id}
+                        onClick={() => {
+                          setViewTest(t)
+                          setViewOpen(true)
+                        }}
+                      >
                         <td className="px-5 py-3 font-medium text-adminreg-text">{t.name}</td>
                         <td className="px-5 py-3 font-mono text-xs">{t.code || "—"}</td>
                         <td className="px-5 py-3 text-adminreg-muted">{t.sampleType || "—"}</td>
@@ -913,14 +927,6 @@ export function AdminMasterDataPage() {
                         <td className="px-5 py-3 text-right">
                           <RowActions
                             actions={[
-                              {
-                                icon: Eye,
-                                label: "View",
-                                onClick: () => {
-                                  setViewTest(t)
-                                  setViewOpen(true)
-                                },
-                              },
                               { icon: Pencil, label: "Edit", onClick: () => openEditTest(t) },
                               {
                                 icon: Trash2,
@@ -955,7 +961,13 @@ export function AdminMasterDataPage() {
                   diagnosisCodes.map((d) => {
                     const branch = resolveBranchName(d)
                     return (
-                      <Row key={d.id}>
+                      <Row
+                        key={d.id}
+                        onClick={() => {
+                          setViewDiagnosis(d)
+                          setViewOpen(true)
+                        }}
+                      >
                         <td className="px-5 py-3 font-mono text-xs">{d.code}</td>
                         <td className="px-5 py-3 font-medium text-adminreg-text">{d.description || "—"}</td>
                         <td className="px-5 py-3 text-adminreg-muted">{d.icdVersion}</td>
@@ -966,14 +978,6 @@ export function AdminMasterDataPage() {
                         <td className="px-5 py-3 text-right">
                           <RowActions
                             actions={[
-                              {
-                                icon: Eye,
-                                label: "View",
-                                onClick: () => {
-                                  setViewDiagnosis(d)
-                                  setViewOpen(true)
-                                },
-                              },
                               { icon: Pencil, label: "Edit", onClick: () => openEditDiagnosis(d) },
                               {
                                 icon: Trash2,
@@ -1006,7 +1010,13 @@ export function AdminMasterDataPage() {
                     const branch = resolveBranchName(p)
                     const tone = empanelmentTone(p.empanelmentStatus)
                     return (
-                      <Row key={p.id}>
+                      <Row
+                        key={p.id}
+                        onClick={() => {
+                          setViewPayer(p)
+                          setViewOpen(true)
+                        }}
+                      >
                         <td className="px-5 py-3 font-medium text-adminreg-text">{p.tpaName}</td>
                         <td className="px-5 py-3 text-adminreg-muted">{p.payerType || "—"}</td>
                         <td className="px-5 py-3">
@@ -1021,14 +1031,6 @@ export function AdminMasterDataPage() {
                         <td className="px-5 py-3 text-right">
                           <RowActions
                             actions={[
-                              {
-                                icon: Eye,
-                                label: "View",
-                                onClick: () => {
-                                  setViewPayer(p)
-                                  setViewOpen(true)
-                                },
-                              },
                               { icon: Pencil, label: "Edit", onClick: () => openEditPayer(p) },
                               {
                                 icon: Trash2,
@@ -1064,7 +1066,13 @@ export function AdminMasterDataPage() {
                     const branch = resolveBranchName(s)
                     const tone = stockTone(s.status)
                     return (
-                      <Row key={s.id}>
+                      <Row
+                        key={s.id}
+                        onClick={() => {
+                          setViewStock(s)
+                          setViewOpen(true)
+                        }}
+                      >
                         <td className="px-5 py-3 font-medium text-adminreg-text">{s.drugName || "—"}</td>
                         <td className="px-5 py-3 font-mono text-xs">{s.batch || "—"}</td>
                         <td className="px-5 py-3 font-mono text-xs">{formatExpiry(s.expiry)}</td>
@@ -1078,14 +1086,6 @@ export function AdminMasterDataPage() {
                         <td className="px-5 py-3 text-right">
                           <RowActions
                             actions={[
-                              {
-                                icon: Eye,
-                                label: "View",
-                                onClick: () => {
-                                  setViewStock(s)
-                                  setViewOpen(true)
-                                },
-                              },
                               { icon: Pencil, label: "Edit", onClick: () => openEditStock(s) },
                               {
                                 icon: Trash2,
