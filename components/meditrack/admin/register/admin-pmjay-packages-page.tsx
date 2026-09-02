@@ -132,7 +132,7 @@ export function AdminPmjayPackagesPage() {
   return (
     <div className="space-y-5">
       <AdminPageHeader
-        title="PMJAY Packages"
+        title="Packages"
         subtitle="Fixed-rate PMJAY packages and the services each one covers."
         actions={
           <MtButton className="gap-2" onClick={openAddPackage}>

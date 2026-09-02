@@ -67,8 +67,8 @@ export const ADMIN_REGISTER_NAV: AdminRegisterNavItem[] = [
     icon: Receipt,
     group: "Operations",
     children: [
-      { label: "Tariff Master", href: "/admin/tariffs" },
-      { label: "PMJAY Packages", href: "/admin/tariffs/pmjay-packages" },
+      { label: "Services", href: "/admin/tariffs" },
+      { label: "Packages", href: "/admin/tariffs/pmjay-packages" },
       { label: "TPA Rate Cards", href: "/admin/tariffs/tpa-rate-cards" },
     ],
   },

@@ -1,7 +1,8 @@
 "use client"
 
-import { Fragment, useState, type FormEvent } from "react"
+import { Fragment, useEffect, useState, type FormEvent } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
+import { FileText, Upload, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   AdminButton,
@@ -230,6 +231,25 @@ export function OpdVisitThreadPage() {
   const [newPatientForm, setNewPatientForm] = useState<NewPatientForm>(EMPTY_NEW_PATIENT)
   const [newPatientTouched, setNewPatientTouched] = useState(false)
   const [visitOpenedFromCapture, setVisitOpenedFromCapture] = useState(false)
+
+  // ABHA (Ayushman Bharat Health Account) — number + card upload, shown in
+  // the "Visit opened" panel of Stage 0. Image uploads get a thumbnail
+  // preview via an object URL (revoked on change/unmount to avoid leaks).
+  const [abhaNumber, setAbhaNumber] = useState("")
+  const [abhaFile, setAbhaFile] = useState<File | null>(null)
+  const [abhaPreviewUrl, setAbhaPreviewUrl] = useState<string | null>(null)
+  const [abhaPreviewOpen, setAbhaPreviewOpen] = useState(false)
+  const isAbhaImage = abhaFile?.type.startsWith("image/") ?? false
+
+  useEffect(() => {
+    if (!abhaFile) {
+      setAbhaPreviewUrl(null)
+      return
+    }
+    const url = URL.createObjectURL(abhaFile)
+    setAbhaPreviewUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [abhaFile])
 
   // Admission referral (Stage 5 → IPD) — §3 of the handoff: "one record, two
   // desks". See ipd-stay-page.tsx's worklist for the other side of this
@@ -807,10 +827,62 @@ export function OpdVisitThreadPage() {
                 )}
                 <div className="mt-3 border-t border-adminreg-divider pt-3">
                   <FieldLabel>ABHA (Ayushman Bharat Health Account)</FieldLabel>
-                  <div className="mt-1 flex items-center justify-between gap-3 border border-adminreg-red bg-adminreg-red-soft px-3 py-2.5">
-                    <span className="text-xs text-adminreg-red-text">Linking failed — OTP verification timed out</span>
-                    {editable && <AdminButton type="button" variant="secondary">Retry</AdminButton>}
+                  <div className="mt-1.5 grid grid-cols-2 gap-2.5">
+                    <input
+                      value={abhaNumber}
+                      onChange={(e) => setAbhaNumber(e.target.value)}
+                      placeholder="Ayushman health account no."
+                      disabled={!editable}
+                      className="w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-60"
+                    />
+                    <label
+                      className={cn(
+                        "flex cursor-pointer items-center justify-center gap-2 border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-center text-sm text-adminreg-muted hover:text-adminreg-text",
+                        !editable && "pointer-events-none opacity-60"
+                      )}
+                    >
+                      <Upload className="h-4 w-4 flex-shrink-0" />
+                      <span className="truncate">Upload Ayushman card</span>
+                      <input
+                        type="file"
+                        accept="image/*,.pdf"
+                        disabled={!editable}
+                        className="hidden"
+                        onChange={(e) => setAbhaFile(e.target.files?.[0] ?? null)}
+                      />
+                    </label>
                   </div>
+                  {abhaFile && (
+                    <div className="mt-2 flex items-center gap-3">
+                      <button type="button" onClick={() => setAbhaPreviewOpen(true)} className="flex-shrink-0">
+                        {isAbhaImage ? (
+                          <img src={abhaPreviewUrl ?? undefined} alt="ABHA card preview" className="h-16 w-16 border border-adminreg-border object-cover" />
+                        ) : (
+                          <div className="flex h-16 w-16 items-center justify-center border border-adminreg-border bg-adminreg-header">
+                            <FileText className="h-7 w-7 text-adminreg-red-text" />
+                          </div>
+                        )}
+                      </button>
+                      <p className="text-xs text-adminreg-olive-dark">Uploaded — {abhaFile.name}</p>
+                    </div>
+                  )}
+                  {abhaPreviewOpen && abhaFile && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" onClick={() => setAbhaPreviewOpen(false)}>
+                      <div className="relative max-h-[90vh] max-w-[90vw] border border-adminreg-border bg-adminreg-card p-3" onClick={(e) => e.stopPropagation()}>
+                        <div className="mb-2 flex items-center justify-between gap-6">
+                          <p className="text-sm font-bold text-adminreg-text">{abhaFile.name}</p>
+                          <button type="button" onClick={() => setAbhaPreviewOpen(false)} className="text-adminreg-muted hover:text-adminreg-text">
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                        {isAbhaImage ? (
+                          <img src={abhaPreviewUrl ?? undefined} alt="ABHA card preview" className="max-h-[75vh] max-w-[85vw] object-contain" />
+                        ) : (
+                          <iframe src={abhaPreviewUrl ?? undefined} title="ABHA card PDF preview" className="h-[75vh] w-[85vw]" />
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {editable && <AdminButton type="button" accent="indigo" className="mt-4" onClick={goNext}>Open visit → Fee collection</AdminButton>}
               </Panel>
