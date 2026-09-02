@@ -10,7 +10,6 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
-import { cn } from "@/lib/utils"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
 import {
   MtDataTable,
@@ -20,6 +19,9 @@ import {
   MtButton,
   StatusBadge,
   TableSkeleton,
+  TimeInputField,
+  MultiDatePicker,
+  InfoRow,
   getInitials,
   type MtColumn,
 } from "@/components/meditrack/shared"
@@ -36,12 +38,14 @@ import {
 import { useGetMediTrackRoles } from "@/queries/meditrack/roles"
 import { useGetDepartments } from "@/queries/departments"
 import {
-  DAY_FULL_TO_SHORT,
-  DAY_SHORT_TO_FULL,
+  datesToApi,
+  formatSessionDate,
   formatTimeForUi,
+  normalizeTimeInput,
   sessionTypeToApi,
   sessionTypeToUi,
   timeToApi,
+  timeToMinutes,
   useCreateProviderAvailability,
   useDeleteProviderAvailability,
   useGetProviderAvailability,
@@ -55,10 +59,16 @@ import {
   type DoctorLeave,
 } from "@/queries/meditrack/doctor-leave"
 
-const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const
-type Day = (typeof DAYS)[number]
-type SessionType = "OPD" | "Ward Round"
 const NO_DEPARTMENT = "none"
+type SessionType = "OPD" | "Ward Round"
+
+const EMPTY_SESSION_FORM = {
+  dates: [] as Date[],
+  start: "",
+  end: "",
+  type: "OPD" as SessionType,
+  location: "",
+}
 
 function displayName(firstName?: string, lastName?: string, email?: string) {
   const name = `${firstName || ""} ${lastName || ""}`.trim()
@@ -70,6 +80,19 @@ function splitFullName(fullName: string) {
   if (parts.length === 0) return { firstName: "", lastName: "" }
   if (parts.length === 1) return { firstName: parts[0], lastName: "" }
   return { firstName: parts[0], lastName: parts.slice(1).join(" ") }
+}
+
+function formatLastLogin(value: string | null) {
+  if (!value) return "—"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "—"
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
 }
 
 const EMPTY_FORM = {
@@ -131,6 +154,12 @@ export function AdminProvidersPage() {
     return map
   }, [departments])
 
+  const branchNameById = useMemo(() => {
+    const map = new Map<string, string>()
+    branches.forEach((b) => map.set(b.id, b.name))
+    return map
+  }, [branches])
+
   const createUser = useCreateMediTrackUser()
   const updateUser = useUpdateMediTrackUser()
   const createAvailability = useCreateProviderAvailability()
@@ -140,7 +169,7 @@ export function AdminProvidersPage() {
   const doctors = usersData?.items ?? []
 
   const [selected, setSelected] = useState<MediTrackUser | null>(null)
-  const [form, setForm] = useState({ day: "Mon" as Day, start: "", end: "", type: "OPD" as SessionType, location: "" })
+  const [form, setForm] = useState(EMPTY_SESSION_FORM)
 
   const {
     data: availabilitySessions = [],
@@ -310,7 +339,7 @@ export function AdminProvidersPage() {
     () =>
       availabilitySessions.map((s) => ({
         id: s.id,
-        day: (DAY_FULL_TO_SHORT[s.dayOfWeek] || s.dayOfWeek.slice(0, 3)) as Day | string,
+        date: formatSessionDate(s.specificDate, s.dayOfWeek),
         start: formatTimeForUi(s.startTime),
         end: formatTimeForUi(s.endTime),
         type: sessionTypeToUi(s.sessionType),
@@ -321,7 +350,7 @@ export function AdminProvidersPage() {
 
   function openAvailability(doctor: MediTrackUser) {
     setSelected(doctor)
-    setForm({ day: "Mon", start: "", end: "", type: "OPD", location: "" })
+    setForm(EMPTY_SESSION_FORM)
   }
 
   async function removeSession(id: string) {
@@ -341,10 +370,34 @@ export function AdminProvidersPage() {
   async function handleAddSession(e: FormEvent) {
     e.preventDefault()
     if (!selected) return
-    if (!form.start || !form.end) {
-      toast({ title: "Time required", description: "Select start and end time.", variant: "destructive" })
+
+    const start = normalizeTimeInput(form.start)
+    const end = normalizeTimeInput(form.end)
+    if (!start || !end) {
+      toast({
+        title: "Invalid time",
+        description: "Enter start and end as HH:MM (e.g. 09:00) or use the clock picker.",
+        variant: "destructive",
+      })
       return
     }
+
+    const startMinutes = timeToMinutes(start)
+    const endMinutes = timeToMinutes(end)
+    if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
+      toast({
+        title: "End time must be after start",
+        description: "Check that the session end is later than the start time.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (!form.dates.length) {
+      toast({ title: "Dates required", description: "Select at least one date for this session.", variant: "destructive" })
+      return
+    }
+
     if (!form.location.trim()) {
       toast({ title: "Location required", description: "Enter a location for this session.", variant: "destructive" })
       return
@@ -354,17 +407,18 @@ export function AdminProvidersPage() {
       await createAvailability.mutateAsync({
         providerId: selected.id,
         clinicId: clinicId || null,
-        dayOfWeek: DAY_SHORT_TO_FULL[form.day] || form.day,
-        startTime: timeToApi(form.start),
-        endTime: timeToApi(form.end),
+        dates: datesToApi(form.dates),
+        startTime: timeToApi(start),
+        endTime: timeToApi(end),
         sessionType: sessionTypeToApi(form.type),
         location: form.location.trim(),
         slotDurationMinutes: 15,
       })
-      setForm({ day: "Mon", start: "", end: "", type: "OPD", location: "" })
+      const dateCount = form.dates.length
+      setForm(EMPTY_SESSION_FORM)
       toast({
         title: "Session added",
-        description: `${form.day} ${form.start}–${form.end} saved for ${displayName(selected.firstName, selected.lastName, selected.email)}.`,
+        description: `${dateCount} session${dateCount > 1 ? "s" : ""} (${start}–${end}) saved for ${displayName(selected.firstName, selected.lastName, selected.email)}.`,
       })
     } catch (err) {
       toast({
@@ -374,6 +428,21 @@ export function AdminProvidersPage() {
       })
     }
   }
+
+  const sessionDurationLabel = useMemo(() => {
+    const start = normalizeTimeInput(form.start)
+    const end = normalizeTimeInput(form.end)
+    if (!start || !end) return null
+    const startMinutes = timeToMinutes(start)
+    const endMinutes = timeToMinutes(end)
+    if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return null
+    const total = endMinutes - startMinutes
+    const hours = Math.floor(total / 60)
+    const mins = total % 60
+    if (hours && mins) return `${hours}h ${mins}m session`
+    if (hours) return `${hours}h session`
+    return `${mins}m session`
+  }, [form.start, form.end])
 
   const directoryColumns: MtColumn<MediTrackUser>[] = [
     {
@@ -456,8 +525,22 @@ export function AdminProvidersPage() {
             Back to directory
           </button>
 
-          <h2 className="text-xl font-bold text-adminreg-text">{selectedName} — weekly availability</h2>
-          <p className="mt-1 text-sm text-adminreg-muted">Recurring OPD and ward-round sessions. Overlaps are blocked at save.</p>
+          <AdminCard title="Doctor profile" className="mb-5">
+            <div className="divide-y divide-adminreg-border">
+              <InfoRow label="Name" value={selectedName} />
+              <InfoRow label="Email" value={selected.email || "—"} />
+              <InfoRow label="Department" value={deptLabel(selected)} />
+              <InfoRow label="Role" value={selected.roleName || selected.role || "Doctor"} />
+              <InfoRow label="Branch" value={branchNameById.get(branchId) || "—"} />
+              <InfoRow label="Status" value={selected.isActive ? "Active" : "Inactive"} />
+              <InfoRow label="Sessions / week" value={isLoadingAvailability ? "Loading…" : String(sessions.length)} />
+              <InfoRow label="Leave records" value={isLoadingLeaves ? "Loading…" : String(doctorLeaves.length)} />
+              <InfoRow label="Last login" value={formatLastLogin(selected.lastLogin)} />
+            </div>
+          </AdminCard>
+
+          <h2 className="text-xl font-bold text-adminreg-text">Availability</h2>
+          <p className="mt-1 text-sm text-adminreg-muted">OPD and ward-round sessions by date. Overlaps are blocked at save.</p>
 
           <AdminCard noPadding className="mt-5">
             {isLoadingAvailability ? (
@@ -470,7 +553,7 @@ export function AdminProvidersPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-adminreg-border bg-adminreg-border/30 text-left text-[11px] font-semibold uppercase tracking-wide text-adminreg-muted">
-                    <th className="px-5 py-3">Day</th>
+                    <th className="px-5 py-3">Date</th>
                     <th className="px-5 py-3">Start</th>
                     <th className="px-5 py-3">End</th>
                     <th className="px-5 py-3">Type</th>
@@ -482,13 +565,13 @@ export function AdminProvidersPage() {
                   {sessions.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-5 py-8 text-sm text-adminreg-muted">
-                        No weekly sessions yet. Add a session below.
+                        No sessions yet. Add a session below.
                       </td>
                     </tr>
                   ) : (
                     sessions.map((s) => (
                       <tr key={s.id} className="border-b border-adminreg-border/70 last:border-0">
-                        <td className="px-5 py-3 font-semibold text-adminreg-text">{s.day}</td>
+                        <td className="px-5 py-3 font-semibold text-adminreg-text">{s.date}</td>
                         <td className="px-5 py-3">{s.start}</td>
                         <td className="px-5 py-3">{s.end}</td>
                         <td className="px-5 py-3">{s.type}</td>
@@ -511,57 +594,77 @@ export function AdminProvidersPage() {
             )}
           </AdminCard>
 
-          <AdminCard title="Add Session" className="mt-5">
-            <form onSubmit={handleAddSession} className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Day</Label>
-                  <Select value={form.day} onValueChange={(v) => setForm((f) => ({ ...f, day: v as Day }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+          <AdminCard
+            title="Add Session"
+            className="mt-5"
+            action={
+              <MtButton
+                type="submit"
+                form="add-session-form"
+                className="gap-2"
+                disabled={createAvailability.isPending}
+              >
+                {createAvailability.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Add session
+              </MtButton>
+            }
+          >
+            <form id="add-session-form" onSubmit={handleAddSession} className="space-y-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+                <div className="min-w-0 space-y-1">
+                  <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Dates</Label>
+                  <MultiDatePicker
+                    compact
+                    value={form.dates}
+                    onChange={(dates) => setForm((f) => ({ ...f, dates }))}
+                  />
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Start</Label>
+                  <TimeInputField
+                    value={form.start}
+                    onChange={(start) => setForm((f) => ({ ...f, start }))}
+                    placeholder="09:00"
+                    aria-label="Session start time"
+                    required
+                    className="[&_input]:h-9 [&_input]:text-sm"
+                  />
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">End</Label>
+                  <TimeInputField
+                    value={form.end}
+                    onChange={(end) => setForm((f) => ({ ...f, end }))}
+                    placeholder="11:00"
+                    aria-label="Session end time"
+                    required
+                    className="[&_input]:h-9 [&_input]:text-sm"
+                  />
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Type</Label>
+                  <Select value={form.type} onValueChange={(v) => setForm((f) => ({ ...f, type: v as SessionType }))}>
+                    <SelectTrigger className="h-9 w-full text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {DAYS.map((d) => (
-                        <SelectItem key={d} value={d}>{d}</SelectItem>
-                      ))}
+                      <SelectItem value="OPD">OPD</SelectItem>
+                      <SelectItem value="Ward Round">Ward Round</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Start Time</Label>
-                  <Input type="time" value={form.start} onChange={(e) => setForm((f) => ({ ...f, start: e.target.value }))} required />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">End Time</Label>
-                  <Input type="time" value={form.end} onChange={(e) => setForm((f) => ({ ...f, end: e.target.value }))} required />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Session Type</Label>
-                  <div className="flex gap-2">
-                    {(["OPD", "Ward Round"] as SessionType[]).map((t) => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setForm((f) => ({ ...f, type: t }))}
-                        className={cn(
-                          "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors",
-                          form.type === t ? "border-adminreg-olive bg-adminreg-olive text-white" : "border-adminreg-border bg-adminreg-card text-adminreg-muted hover:text-adminreg-text"
-                        )}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Location</Label>
-                  <Input value={form.location} onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))} placeholder="e.g. OPD Room 4" required />
+                <div className="min-w-0 space-y-1">
+                  <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Location</Label>
+                  <Input
+                    value={form.location}
+                    onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
+                    placeholder="e.g. OPD Room 4"
+                    className="h-9 w-full text-sm"
+                    required
+                  />
                 </div>
               </div>
-              <MtButton type="submit" disabled={createAvailability.isPending}>
-                {createAvailability.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Add session
-              </MtButton>
+              {sessionDurationLabel ? (
+                <p className="text-[11px] text-adminreg-muted">{sessionDurationLabel}</p>
+              ) : null}
             </form>
           </AdminCard>
 
@@ -644,6 +747,7 @@ export function AdminProvidersPage() {
                 columns={directoryColumns}
                 rows={doctors}
                 keyExtractor={(r) => r.id}
+                onRowClick={openAvailability}
                 emptyTitle="No doctors yet"
                 emptyDescription="Add a doctor to create a user with the Doctor role for this branch."
               />
