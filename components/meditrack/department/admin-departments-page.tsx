@@ -3,11 +3,13 @@
 import { useMemo, useState, type FormEvent } from "react"
 import { Eye, Loader2, Pencil, Plus, Trash2 } from "lucide-react"
 
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
+import { useGetMediTrackRoles } from "@/queries/meditrack/roles"
 import { useGetMediTrackUsers } from "@/queries/meditrack/users"
 import {
   useCreateDepartment,
@@ -32,11 +34,24 @@ import { AdminPageHeader } from "@/components/meditrack/admin/register/AdminPage
 import { AdminCard } from "@/components/meditrack/admin/register/AdminCard"
 import { BranchFormField, BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
 
-const EMPTY_FORM = { name: "", headUserId: "unassigned" }
+const EMPTY_FORM = { name: "", headUserId: "unassigned", doctorIds: [] as string[] }
 
 function displayHead(dept: Department) {
   const name = dept.headUserName?.trim()
   return name ? name : "Unassigned"
+}
+
+function doctorCount(dept: Department) {
+  return dept.doctorCount ?? dept.providerCount ?? dept.doctors?.length ?? dept.providers?.length ?? 0
+}
+
+function assignedDoctors(dept: Department) {
+  return dept.doctors ?? dept.providers ?? []
+}
+
+function displayUserName(firstName?: string, lastName?: string, email?: string) {
+  const name = `${firstName || ""} ${lastName || ""}`.trim()
+  return name || email || "Unknown"
 }
 
 export function AdminDepartmentsPage() {
@@ -60,6 +75,15 @@ export function AdminDepartmentsPage() {
   const createDepartment = useCreateDepartment()
   const updateDepartment = useUpdateDepartment()
   const deleteDepartment = useDeleteDepartment()
+
+  const { data: roles = [] } = useGetMediTrackRoles(!!companyId)
+  const doctorRole = useMemo(
+    () =>
+      roles.find((r) => r.value?.toLowerCase() === "doctor") ||
+      roles.find((r) => r.name?.toLowerCase() === "doctor"),
+    [roles]
+  )
+  const doctorRoleId = doctorRole?.id || ""
 
   const [addOpen, setAddOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
@@ -86,9 +110,31 @@ export function AdminDepartmentsPage() {
     [headUsersData]
   )
 
+  const { data: doctorsData, isLoading: isLoadingDoctors } = useGetMediTrackUsers(
+    {
+      pageNumber: 1,
+      pageSize: 100,
+      companyId: companyId || undefined,
+      clinicIds: headBranchId ? [headBranchId] : undefined,
+      roleIds: doctorRoleId ? [doctorRoleId] : [],
+    },
+    !!companyId && !!headBranchId && !!doctorRoleId && deptFormOpen
+  )
+  const doctorOptions = useMemo(
+    () => (doctorsData?.items ?? []).filter((u) => u.isActive !== false),
+    [doctorsData]
+  )
+
   function handleFormBranchChange(nextBranchId: string) {
     setFormBranchId(nextBranchId)
-    setForm((f) => ({ ...f, headUserId: "unassigned" }))
+    setForm((f) => ({ ...f, headUserId: "unassigned", doctorIds: [] }))
+  }
+
+  function toggleDoctor(doctorId: string, checked: boolean) {
+    setForm((f) => ({
+      ...f,
+      doctorIds: checked ? [...f.doctorIds, doctorId] : f.doctorIds.filter((id) => id !== doctorId),
+    }))
   }
 
   const { data: viewedDepartment, isLoading: isLoadingView } = useGetDepartmentById(viewId || "", !!viewId)
@@ -106,6 +152,7 @@ export function AdminDepartmentsPage() {
     setForm({
       name: dept.name || "",
       headUserId: dept.headUserId || "unassigned",
+      doctorIds: assignedDoctors(dept).map((d) => d.id),
     })
     setFormBranchId(dept.clinicId || branchId)
     setEditOpen(true)
@@ -129,6 +176,8 @@ export function AdminDepartmentsPage() {
         companyId,
         clinicId: formBranchId,
         headUserId: form.headUserId === "unassigned" ? null : form.headUserId,
+        roleId: doctorRoleId || null,
+        doctorIds: form.doctorIds,
       })
       setAddOpen(false)
       setForm(EMPTY_FORM)
@@ -155,6 +204,8 @@ export function AdminDepartmentsPage() {
         clinicId: formBranchId,
         headUserId: form.headUserId === "unassigned" ? null : form.headUserId,
         tariffGroupId: editing.tariffGroupId || null,
+        roleId: doctorRoleId || null,
+        doctorIds: form.doctorIds,
       })
       setEditOpen(false)
       setEditing(null)
@@ -190,7 +241,7 @@ export function AdminDepartmentsPage() {
         displayHead(r) === "Unassigned" ? (
           <div>
             <span className="text-adminreg-muted">Unassigned</span>
-            {(!r.providerCount || r.providerCount === 0) && (
+            {doctorCount(r) === 0 && (
               <p className="text-xs text-adminreg-red">No doctors assigned yet</p>
             )}
           </div>
@@ -200,7 +251,7 @@ export function AdminDepartmentsPage() {
       sortValue: (r) => displayHead(r),
     },
     { key: "tariffGroup", header: "Tariff Group", render: () => "—" },
-    { key: "providers", header: "Doctors", render: (r) => r.providerCount ?? 0, sortValue: (r) => r.providerCount ?? 0 },
+    { key: "providers", header: "Doctors", render: (r) => doctorCount(r), sortValue: (r) => doctorCount(r) },
     {
       key: "action",
       header: "Action",
@@ -249,11 +300,38 @@ export function AdminDepartmentsPage() {
             <SelectItem value="unassigned">Unassigned</SelectItem>
             {headOptions.map((u) => (
               <SelectItem key={u.id} value={u.id}>
-                {`${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email}
+                {displayUserName(u.firstName, u.lastName, u.email)}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Assigned doctors</Label>
+        {!doctorRoleId ? (
+          <p className="text-sm text-adminreg-muted">Doctor role not found. Configure roles first.</p>
+        ) : isLoadingDoctors ? (
+          <p className="text-sm text-adminreg-muted">Loading doctors…</p>
+        ) : doctorOptions.length === 0 ? (
+          <p className="text-sm text-adminreg-muted">No doctors found for this branch. Add doctors first.</p>
+        ) : (
+          <div className="max-h-40 space-y-2 overflow-y-auto rounded-md border border-adminreg-border bg-background p-3">
+            {doctorOptions.map((doctor) => {
+              const checked = form.doctorIds.includes(doctor.id)
+              return (
+                <label key={doctor.id} className="flex cursor-pointer items-start gap-2 text-sm">
+                  <Checkbox
+                    checked={checked}
+                    onCheckedChange={(value) => toggleDoctor(doctor.id, value === true)}
+                  />
+                  <span className="font-medium text-adminreg-text">
+                    {displayUserName(doctor.firstName, doctor.lastName, doctor.email)}
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+        )}
       </div>
     </>
   )
@@ -349,12 +427,12 @@ export function AdminDepartmentsPage() {
           <div className="divide-y divide-adminreg-border">
             <InfoRow label="Department" value={viewedDepartment.name} />
             <InfoRow label="Head" value={displayHead(viewedDepartment)} />
-            <InfoRow label="Doctors" value={viewedDepartment.providerCount ?? 0} />
-            {viewedDepartment.providers && viewedDepartment.providers.length > 0 && (
+            <InfoRow label="Doctors" value={doctorCount(viewedDepartment)} />
+            {assignedDoctors(viewedDepartment).length > 0 && (
               <div className="pt-3">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Assigned doctors</p>
                 <ul className="space-y-1.5">
-                  {viewedDepartment.providers.map((p) => (
+                  {assignedDoctors(viewedDepartment).map((p) => (
                     <li key={p.id} className="text-sm text-adminreg-text">
                       {p.name}{p.role ? <span className="text-adminreg-muted"> · {p.role}</span> : null}
                     </li>

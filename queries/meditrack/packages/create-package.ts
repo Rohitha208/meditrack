@@ -6,7 +6,7 @@ export interface CreatePackageRequest {
   code: string;
   name: string;
   fixedRate?: string | null;
-  includedServices?: string | null;
+  includedServiceIds?: string[];
   effectiveDate?: string | null;
 }
 

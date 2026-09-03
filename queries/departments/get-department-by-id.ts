@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getMessageFromErrorBody } from "@/utils/apiErrorHandler";
-import { Department } from "./get-departments";
+import { Department, normalizeDepartment } from "./get-departments";
 
 const getDepartmentById = async (id: string): Promise<Department> => {
   const response = await fetch(`/api/meditrack/department/${id}`);
@@ -8,7 +8,7 @@ const getDepartmentById = async (id: string): Promise<Department> => {
   if (!response.ok) {
     throw new Error(getMessageFromErrorBody(result, "Failed to fetch department"));
   }
-  return result as Department;
+  return normalizeDepartment(result as Record<string, unknown>);
 };
 
 export const useGetDepartmentById = (id: string, enabled = true) => {

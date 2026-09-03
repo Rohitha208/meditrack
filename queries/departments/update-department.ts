@@ -11,6 +11,8 @@ export interface UpdateDepartmentRequest {
   clinicId?: string | null;
   headUserId?: string | null;
   tariffGroupId?: string | null;
+  roleId?: string | null;
+  doctorIds?: string[];
   bedIds?: string[] | null;
 }
 
