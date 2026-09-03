@@ -7,7 +7,7 @@ export interface UpdatePackageRequest {
   code: string;
   name: string;
   fixedRate?: string | null;
-  includedServices?: string | null;
+  includedServiceIds?: string[];
   effectiveDate?: string | null;
   isActive?: boolean;
 }

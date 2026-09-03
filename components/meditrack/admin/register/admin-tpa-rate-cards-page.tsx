@@ -13,6 +13,7 @@ import { MtDataTable, RowActions, FormDialog, MtButton, TableSkeleton, type MtCo
 import { AdminPageHeader } from "./AdminPageHeader"
 import { AdminCard } from "./AdminCard"
 import { AdminModal } from "./AdminModal"
+import { BranchSelect, useBranchScope } from "./use-branch-scope"
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10)
@@ -33,7 +34,8 @@ const TPA_EMPTY_FORM = { tpaName: "", discountPercent: "", overrideRates: "", ef
  * card grid, matching the register's other list screens. */
 export function AdminTpaRateCardsPage() {
   const { toast } = useToast()
-  const { data: tpasData, isLoading: isLoadingTpas, isError: isTpasError, error: tpasError } = useGetTpas({ pageSize: 100 })
+  const { branchId, setBranchId, hasBranch, branches, isLoadingBranches, noBranchMessage } = useBranchScope()
+  const { data: tpasData, isLoading: isLoadingTpas, isError: isTpasError, error: tpasError } = useGetTpas({ pageSize: 100 }, hasBranch)
   const createTpa = useCreateTpa()
   const updateTpa = useUpdateTpa()
   const deleteTpa = useDeleteTpa()
@@ -156,15 +158,20 @@ export function AdminTpaRateCardsPage() {
         title="TPA Rate Cards"
         subtitle="Insurer-specific negotiated discounts and override rates."
         actions={
-          <MtButton className="gap-2" onClick={openAddTpa}>
-            <Plus className="h-4 w-4" />
-            Add TPA
-          </MtButton>
+          <div className="flex flex-wrap items-center gap-2">
+            <BranchSelect value={branchId} onValueChange={setBranchId} branches={branches} isLoading={isLoadingBranches} />
+            <MtButton className="gap-2" onClick={openAddTpa} disabled={!hasBranch}>
+              <Plus className="h-4 w-4" />
+              Add TPA
+            </MtButton>
+          </div>
         }
       />
 
       <AdminCard title="TPA Rate Cards" noPadding>
-        {isLoadingTpas ? (
+        {!hasBranch ? (
+          <p className="px-5 py-8 text-sm text-adminreg-red">{noBranchMessage}</p>
+        ) : isLoadingTpas ? (
           <TableSkeleton rows={4} columns={5} />
         ) : isTpasError ? (
           <p className="px-5 py-8 text-sm text-adminreg-red">{getToastErrorMessage(tpasError, "Failed to load TPA rate cards")}</p>

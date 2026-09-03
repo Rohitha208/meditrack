@@ -29,7 +29,7 @@ export interface MediTrackPackage {
   code: string;
   name: string;
   fixedRate?: string | null;
-  includedServices?: string | null;
+  includedServices?: MediTrackTariff[] | null;
   effectiveDate?: string | null;
   isActive: boolean;
   createdAt: string;

@@ -17,17 +17,42 @@ export interface Department {
   headUserId?: string | null;
   headUserName?: string | null;
   tariffGroupId?: string | null;
-  providerCount: number;
-  bedIds?: string[];
+  doctorCount?: number;
+  doctors?: DepartmentProvider[] | null;
+  /** @deprecated use doctorCount */
+  providerCount?: number;
+  /** @deprecated use doctors */
   providers?: DepartmentProvider[] | null;
+  bedIds?: string[];
+}
+
+function normalizeDepartment(raw: Record<string, unknown>): Department {
+  const doctors = (Array.isArray(raw.doctors) ? raw.doctors : Array.isArray(raw.providers) ? raw.providers : []) as DepartmentProvider[];
+  const doctorCount = Number(raw.doctorCount ?? raw.providerCount ?? doctors.length);
+  return {
+    departmentId: String(raw.departmentId ?? raw.id ?? ""),
+    name: String(raw.name ?? ""),
+    description: (raw.description as string | null | undefined) ?? null,
+    isActive: raw.isActive !== false,
+    companyId: (raw.companyId as string | null | undefined) ?? null,
+    clinicId: (raw.clinicId as string | null | undefined) ?? null,
+    headUserId: (raw.headUserId as string | null | undefined) ?? null,
+    headUserName: (raw.headUserName as string | null | undefined) ?? null,
+    tariffGroupId: (raw.tariffGroupId as string | null | undefined) ?? null,
+    doctorCount,
+    doctors,
+    providerCount: doctorCount,
+    providers: doctors,
+    bedIds: Array.isArray(raw.bedIds) ? (raw.bedIds as string[]) : undefined,
+  };
 }
 
 export function normalizeDepartments(payload: unknown): Department[] {
-  if (Array.isArray(payload)) return payload as Department[];
+  if (Array.isArray(payload)) return payload.map((item) => normalizeDepartment(item as Record<string, unknown>));
   if (payload && typeof payload === "object") {
     const obj = payload as Record<string, unknown>;
-    if (Array.isArray(obj.data)) return obj.data as Department[];
-    if (Array.isArray(obj.items)) return obj.items as Department[];
+    if (Array.isArray(obj.data)) return obj.data.map((item) => normalizeDepartment(item as Record<string, unknown>));
+    if (Array.isArray(obj.items)) return obj.items.map((item) => normalizeDepartment(item as Record<string, unknown>));
   }
   return [];
 }
