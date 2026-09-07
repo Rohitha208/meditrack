@@ -14,7 +14,6 @@ import { MtDataTable, RowActions, FormDialog, MtButton, TableSkeleton, formatCur
 import { AdminPageHeader } from "./AdminPageHeader"
 import { AdminCard } from "./AdminCard"
 import { AdminModal } from "./AdminModal"
-import { BranchSelect, useBranchScope } from "./use-branch-scope"
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10)
@@ -38,13 +37,11 @@ const PMJAY_EMPTY_FORM = { includedServiceIds: [] as string[], code: "", name: "
  * Cards), at /admin/tariffs/pmjay-packages. */
 export function AdminPmjayPackagesPage() {
   const { toast } = useToast()
-  const { branchId, setBranchId, hasBranch, branches, isLoadingBranches, noBranchMessage } = useBranchScope()
 
-  const { data: packagesData, isLoading: isLoadingPackages, isError: isPackagesError, error: packagesError } = useGetPackages(
-    { pageSize: 100 },
-    hasBranch
-  )
-  const { data: tariffsData, isLoading: isLoadingTariffs } = useGetTariffs({ pageSize: 100 }, hasBranch)
+  const { data: packagesData, isLoading: isLoadingPackages, isError: isPackagesError, error: packagesError } = useGetPackages({
+    pageSize: 100,
+  })
+  const { data: tariffsData, isLoading: isLoadingTariffs } = useGetTariffs({ pageSize: 100 })
   const createPackage = useCreatePackage()
   const updatePackage = useUpdatePackage()
   const deletePackage = useDeletePackage()
@@ -164,20 +161,15 @@ export function AdminPmjayPackagesPage() {
         title="Packages"
         subtitle="Fixed-rate PMJAY packages and the services each one covers."
         actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <BranchSelect value={branchId} onValueChange={setBranchId} branches={branches} isLoading={isLoadingBranches} />
-            <MtButton className="gap-2" onClick={openAddPackage} disabled={!hasBranch}>
-              <Plus className="h-4 w-4" />
-              Add package
-            </MtButton>
-          </div>
+          <MtButton className="gap-2" onClick={openAddPackage}>
+            <Plus className="h-4 w-4" />
+            Add package
+          </MtButton>
         }
       />
 
       <AdminCard title="PMJAY Packages" noPadding>
-        {!hasBranch ? (
-          <p className="px-5 py-8 text-sm text-adminreg-red">{noBranchMessage}</p>
-        ) : isLoadingPackages ? (
+        {isLoadingPackages ? (
           <TableSkeleton rows={4} columns={4} />
         ) : isPackagesError ? (
           <p className="px-5 py-8 text-sm text-adminreg-red">{getToastErrorMessage(packagesError, "Failed to load packages")}</p>
