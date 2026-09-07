@@ -9,7 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
 import { useGetDepartments } from "@/queries/departments"
-import { BranchSelect, useBranchScope } from "./use-branch-scope"
+import { getCompanyId } from "@/utils/clientCookie"
+import { useRootContext } from "@/context/RootContext"
 import {
   useCreateTariff,
   useDeleteTariff,
@@ -58,9 +59,10 @@ const TARIFF_EMPTY_FORM = {
  * This one owns the parent's own href (/admin/tariffs). */
 export function AdminTariffMasterPage() {
   const { toast } = useToast()
-  const { companyId, branchId, setBranchId, clinicId, hasBranch, branches, isLoadingBranches } = useBranchScope()
+  const { user, clinic } = useRootContext()
+  const companyId = clinic?.companyId || user?.companyId || getCompanyId() || ""
 
-  const { data: departments = [] } = useGetDepartments(companyId || undefined, clinicId, !!companyId && hasBranch)
+  const { data: departments = [] } = useGetDepartments(companyId || undefined, undefined, !!companyId)
   const { data: tariffsData, isLoading: isLoadingTariffs, isError: isTariffsError, error: tariffsError } = useGetTariffs({ pageSize: 100 })
   const createTariff = useCreateTariff()
   const updateTariff = useUpdateTariff()
@@ -194,15 +196,12 @@ export function AdminTariffMasterPage() {
     <div className="space-y-5">
       <AdminPageHeader
         title="Services"
-        subtitle="Service tariffs — departments scoped by branch."
+        subtitle="Service tariffs and department rates."
         actions={
-          <div className="flex items-center gap-2">
-            <BranchSelect value={branchId} onValueChange={setBranchId} branches={branches} isLoading={isLoadingBranches} />
-            <MtButton className="gap-2" onClick={openAddTariff}>
-              <Plus className="h-4 w-4" />
-              Add rate
-            </MtButton>
-          </div>
+          <MtButton className="gap-2" onClick={openAddTariff}>
+            <Plus className="h-4 w-4" />
+            Add rate
+          </MtButton>
         }
       />
 
