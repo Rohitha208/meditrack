@@ -127,7 +127,7 @@ export function buildCalendarDays(count = 10, from = new Date()): Date[] {
 
 /**
  * Expand OPD availability sessions into discrete bookable slots matching
- * backend GuardSlotAsync (duration + alignment from session start).
+ * backend GuardSlotAsync. Duration must come from backend (no frontend default).
  */
 export function expandSessionsToDiscreteSlots(
   sessions: Array<{
@@ -147,9 +147,8 @@ export function expandSessionsToDiscreteSlots(
     const end = timeToMinutes(session.endTime);
     if (start === null || end === null || end <= start) continue;
 
-    const duration = session.slotDurationMinutes && session.slotDurationMinutes > 0
-      ? session.slotDurationMinutes
-      : 15;
+    const duration = session.slotDurationMinutes;
+    if (!duration || duration <= 0) continue;
 
     // If API already returned a discrete slot (end - start == duration), keep it.
     if (end - start === duration) {

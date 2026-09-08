@@ -27,6 +27,7 @@ import {
   expandSessionsToDiscreteSlots,
   formatAppointmentDate,
   formatSlotLabel,
+  timeToMinutes,
   toApiDateOnly,
   useBookOpdAppointment,
   useCancelOpdAppointment,
@@ -161,20 +162,7 @@ export function OpdAppointmentsBookingPage() {
   )
 
   const discreteSlots = useMemo(() => {
-    // Prefer expanding API bookable sessions; fall back to weekly availability for the day.
-    if (rawSlots.length > 0) {
-      return expandSessionsToDiscreteSlots(
-        rawSlots.map((s) => ({
-          startTime: s.startTime,
-          endTime: s.endTime,
-          sessionType: s.sessionType,
-          location: s.location,
-          status: s.status,
-          slotDurationMinutes: 15,
-        }))
-      )
-    }
-
+    // Slice using backend availability slotDurationMinutes only (no frontend default).
     const dayName = FULL_WEEKDAYS[new Date(`${selectedDate}T00:00:00`).getDay()]
     const daySessions = availability.filter((s) => {
       if (!s.isActive) return false
@@ -183,16 +171,31 @@ export function OpdAppointmentsBookingPage() {
       return s.dayOfWeek === dayName
     })
 
-    return expandSessionsToDiscreteSlots(
+    const slots = expandSessionsToDiscreteSlots(
       daySessions.map((s) => ({
         startTime: s.startTime,
         endTime: s.endTime,
         sessionType: s.sessionType,
         location: s.location,
-        slotDurationMinutes: s.slotDurationMinutes || 15,
+        slotDurationMinutes: s.slotDurationMinutes > 0 ? s.slotDurationMinutes : undefined,
         status: "Available",
       }))
     )
+
+    if (!rawSlots.length) return slots
+
+    return slots.map((slot) => {
+      const start = timeToMinutes(slot.startTime)
+      const end = timeToMinutes(slot.endTime)
+      const booked = rawSlots.some((rs) => {
+        if (!/^booked$/i.test(rs.status)) return false
+        const rsStart = timeToMinutes(rs.startTime)
+        const rsEnd = timeToMinutes(rs.endTime)
+        if (start === null || end === null || rsStart === null || rsEnd === null) return false
+        return start < rsEnd && rsStart < end
+      })
+      return booked ? { ...slot, status: "Booked" } : slot
+    })
   }, [rawSlots, availability, selectedDate])
 
   const dayMeta = useMemo(() => {
@@ -231,6 +234,11 @@ export function OpdAppointmentsBookingPage() {
   const rescheduleMutation = useRescheduleOpdAppointment()
   const cancelMutation = useCancelOpdAppointment()
 
+  const { data: rescheduleAvailability = [] } = useGetProviderAvailability(
+    selectedFound?.providerId || undefined,
+    tab === 2 && !!selectedFound?.providerId
+  )
+
   const rescheduleSlots = useGetBookableSlots(
     selectedFound?.providerId || undefined,
     rescheduleSlot?.date || selectedFound?.date?.slice(0, 10) || selectedDate,
@@ -240,18 +248,47 @@ export function OpdAppointmentsBookingPage() {
 
   const rescheduleDiscrete = useMemo(() => {
     const date = rescheduleSlot?.date || selectedFound?.date?.slice(0, 10) || selectedDate
-    if (!rescheduleSlots.data?.length) return []
-    return expandSessionsToDiscreteSlots(
-      rescheduleSlots.data.map((s) => ({
+    const dayName = FULL_WEEKDAYS[new Date(`${date}T00:00:00`).getDay()]
+    const daySessions = rescheduleAvailability.filter((s) => {
+      if (!s.isActive) return false
+      if (!/^OPD$/i.test(s.sessionType || "")) return false
+      if (s.specificDate) return s.specificDate.slice(0, 10) === date
+      return s.dayOfWeek === dayName
+    })
+
+    const slots = expandSessionsToDiscreteSlots(
+      daySessions.map((s) => ({
         startTime: s.startTime,
         endTime: s.endTime,
         sessionType: s.sessionType,
         location: s.location,
-        status: s.status,
-        slotDurationMinutes: 15,
+        slotDurationMinutes: s.slotDurationMinutes > 0 ? s.slotDurationMinutes : undefined,
+        status: "Available",
       }))
     ).map((s) => ({ ...s, date }))
-  }, [rescheduleSlots.data, rescheduleSlot?.date, selectedFound?.date, selectedDate])
+
+    const raw = rescheduleSlots.data ?? []
+    if (!raw.length) return slots
+
+    return slots.map((slot) => {
+      const start = timeToMinutes(slot.startTime)
+      const end = timeToMinutes(slot.endTime)
+      const booked = raw.some((rs) => {
+        if (!/^booked$/i.test(rs.status)) return false
+        const rsStart = timeToMinutes(rs.startTime)
+        const rsEnd = timeToMinutes(rs.endTime)
+        if (start === null || end === null || rsStart === null || rsEnd === null) return false
+        return start < rsEnd && rsStart < end
+      })
+      return booked ? { ...slot, status: "Booked" } : slot
+    })
+  }, [
+    rescheduleSlots.data,
+    rescheduleAvailability,
+    rescheduleSlot?.date,
+    selectedFound?.date,
+    selectedDate,
+  ])
 
   useEffect(() => {
     // Only reset when the branch actually changes (not on first empty→set).
@@ -332,6 +369,16 @@ export function OpdAppointmentsBookingPage() {
         bookedPatientPhone: selectedPatient ? null : walkInPhone.trim() || null,
       })
       setBookedAppointment(created)
+      // Carry the reference into lookup + check-in so those tabs re-read this
+      // appointment from the booking API instead of needing a manual search.
+      const carryQuery =
+        created.appointmentReference || created.patientPhone || walkInPhone.trim() || ""
+      if (carryQuery) {
+        setLookupQuery(carryQuery)
+        setLookupSubmitted(carryQuery)
+        setCheckinQuery(carryQuery)
+        setCheckinSubmitted(carryQuery)
+      }
       toast({
         title: "Appointment booked",
         description: created.appointmentReference
@@ -999,8 +1046,9 @@ export function OpdAppointmentsBookingPage() {
                   )}
                 </div>
                 <p className="text-[11px] text-adminreg-muted">
-                  Check-in action itself is not in the booking API yet — lookup works; continue opens
-                  registration.
+                  {bookedAppointment
+                    ? "Prefilled from the appointment you just booked — re-read from the booking API."
+                    : "Check-in action itself is not in the booking API yet — lookup works; continue opens registration."}
                 </p>
               </Panel>
 
@@ -1040,11 +1088,18 @@ export function OpdAppointmentsBookingPage() {
                       type="button"
                       accent="indigo"
                       className="mt-4"
-                      onClick={() =>
-                        router.push(
-                          `/opd/visit-thread?stage=0&appointmentId=${checkinFound.id}`
-                        )
-                      }
+                      onClick={() => {
+                        const params = new URLSearchParams({
+                          stage: "0",
+                          appointmentId: checkinFound.id,
+                        })
+                        if (checkinFound.appointmentReference) {
+                          params.set("ref", checkinFound.appointmentReference)
+                        }
+                        if (checkinFound.patientPhone) params.set("phone", checkinFound.patientPhone)
+                        if (checkinFound.patientName) params.set("name", checkinFound.patientName)
+                        router.push(`/opd/visit-thread?${params}`)
+                      }}
                     >
                       Check in → Registration
                     </AdminButton>
