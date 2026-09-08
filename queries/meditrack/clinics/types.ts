@@ -19,6 +19,16 @@ export interface MediTrackClinic {
   subscriptionExpiresAt?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+  licenses?: Array<{
+    id: string;
+    licenseNumber?: string | null;
+    licenseName?: string | null;
+    documentUrl?: string | null;
+    fileName?: string | null;
+    expiryDate?: string | null;
+    issueDate?: string | null;
+    isActive?: boolean;
+  }> | null;
 }
 
 export interface MediTrackClinicList {

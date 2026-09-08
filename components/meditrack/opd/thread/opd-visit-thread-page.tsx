@@ -1,9 +1,11 @@
 "use client"
 
-import { Fragment, useEffect, useState, type FormEvent } from "react"
+import { Fragment, useEffect, useRef, useState, type FormEvent } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { FileText, Upload, X } from "lucide-react"
+import { FileText, Loader2, Upload, X } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useToast } from "@/hooks/use-toast"
+import { getToastErrorMessage } from "@/utils/apiErrorHandler"
 import {
   AdminButton,
   AdminDrawer,
@@ -16,6 +18,14 @@ import {
 } from "@/components/meditrack/admin/register"
 import { useStaffRole } from "@/components/meditrack/layout/register/RoleProvider"
 import { ROLE_LABEL, isStageEditable } from "@/components/meditrack/layout/register/rbac"
+import {
+  RegistrationConflictError,
+  useCreatePatientRegistration,
+  useRegistrationSearch,
+  useUpdatePatientRegistration,
+  useUploadRegistrationCards,
+  type RegistrationSearchResult,
+} from "@/queries/meditrack/patient-registration"
 import {
   SectionLabel,
   FieldLabel,
@@ -64,50 +74,20 @@ const REFERRAL_STATE_BADGE: Partial<Record<DemoReferralState, string>> = {
 const PATIENT = { name: "Meera Kulkarni", ageSex: "34 / Female", uhid: "UHID-0004821", visitId: "OPD-20260812-0091" }
 
 // ---------------------------------------------------------------------------
-// Registration search — four distinct outcome states (§1 of the handoff),
-// switched via a demo "SEARCH OUTCOME" chip row rather than real search
-// logic, same convention as Day-of Check-in's found/not-found toggle.
+// Registration search — driven by api/patients/registration-search.
 // ---------------------------------------------------------------------------
 type RegOutcome = "idle" | "no-match" | "single" | "multiple"
 
-const REG_OUTCOME_CHIPS: { key: RegOutcome; label: string }[] = [
-  { key: "idle", label: "Pre-search" },
-  { key: "no-match", label: "No match" },
-  { key: "single", label: "1 match" },
-  { key: "multiple", label: "3 matches" },
-]
-
-interface RegCandidate {
+interface ActiveRegPatient {
+  id: string
   name: string
   ageSex: string
   uhid: string
   phone: string
   abha: string
-  lastVisit: string
-  department: string
-  doctor: string
-  visitCount: number
-  relation: string
+  gender?: string
+  dateOfBirth?: string
 }
-
-const REG_SINGLE_MATCH: RegCandidate = {
-  name: "Meera Kulkarni",
-  ageSex: "34 / Female",
-  uhid: "UHID-0004821",
-  phone: "+91 98457 20142",
-  abha: "42-7719-3308-1145",
-  lastVisit: "04 Jun 2026",
-  department: "Cardiology",
-  doctor: "Dr. Anjali Nair",
-  visitCount: 7,
-  relation: "Self",
-}
-
-const REG_MULTI_CANDIDATES: RegCandidate[] = [
-  { ...REG_SINGLE_MATCH, relation: "Self" },
-  { name: "Meera S. Kulkarni", ageSex: "61 / Female", uhid: "UHID-0011932", phone: "+91 98457 20142", abha: "Not linked", lastVisit: "19 Feb 2025", department: "Orthopaedics", doctor: "Dr. S. Raghavan", visitCount: 2, relation: "Mother — shares the same contact number" },
-  { name: "Rohit Kulkarni", ageSex: "8 / Male", uhid: "UHID-0009044", phone: "+91 98457 20142", abha: "Not linked", lastVisit: "28 Jan 2026", department: "Pediatrics", doctor: "Dr. Priya Iyer", visitCount: 3, relation: "Son — shares the same contact number" },
-]
 
 interface NewPatientForm {
   fullName: string
@@ -118,10 +98,65 @@ interface NewPatientForm {
 
 const EMPTY_NEW_PATIENT: NewPatientForm = { fullName: "", dob: "", gender: "", mobile: "" }
 
+function formatAgeSex(age?: number | null, gender?: string | null) {
+  return `${age != null ? age : "—"} / ${gender || "—"}`
+}
+
+function formatLastVisit(value?: string | null) {
+  if (!value) return "No prior visit on file"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "No prior visit on file"
+  return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+}
+
+function ageFromDob(value?: string | null) {
+  if (!value) return null
+  const dob = new Date(value)
+  if (Number.isNaN(dob.getTime())) return null
+  const today = new Date()
+  let age = today.getFullYear() - dob.getFullYear()
+  const m = today.getMonth() - dob.getMonth()
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age -= 1
+  return age
+}
+
+function toIsoDob(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const d = new Date(`${trimmed}T00:00:00`)
+    return Number.isNaN(d.getTime()) ? null : d.toISOString()
+  }
+  const slash = trimmed.match(/^(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{4})$/)
+  if (slash) {
+    const dd = slash[1].padStart(2, "0")
+    const mm = slash[2].padStart(2, "0")
+    const yyyy = slash[3]
+    const d = new Date(`${yyyy}-${mm}-${dd}T00:00:00`)
+    return Number.isNaN(d.getTime()) ? null : d.toISOString()
+  }
+  const d = new Date(trimmed)
+  return Number.isNaN(d.getTime()) ? null : d.toISOString()
+}
+
+function mapSearchResult(r: RegistrationSearchResult): ActiveRegPatient {
+  return {
+    id: r.id,
+    name: r.name,
+    ageSex: formatAgeSex(r.age, r.gender),
+    uhid: r.uhid || "—",
+    phone: r.phone || "—",
+    abha: r.abha || "Not linked",
+    gender: r.gender || undefined,
+    dateOfBirth: undefined,
+  }
+}
+
 function newPatientErrors(form: NewPatientForm): Partial<Record<keyof NewPatientForm, string>> {
   const errs: Partial<Record<keyof NewPatientForm, string>> = {}
   if (!form.fullName.trim()) errs.fullName = "Full name is required"
   if (!form.dob.trim()) errs.dob = "Date of birth is required"
+  else if (!toIsoDob(form.dob)) errs.dob = "Use YYYY-MM-DD or DD/MM/YYYY"
   if (!form.gender.trim()) errs.gender = "Gender is required"
   if (!form.mobile.trim()) errs.mobile = "Mobile number is required"
   return errs
@@ -188,7 +223,7 @@ interface DrawerCfg {
   consequenceNote?: string
   merge?: boolean
   saveLabel: string
-  onSave: () => void
+  onSave: () => void | Promise<void>
   fields: AdminFieldDescriptor[]
 }
 
@@ -209,10 +244,16 @@ export function OpdVisitThreadPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { role } = useStaffRole()
+  const { toast } = useToast()
 
   const s = Number(searchParams.get("stage") ?? 0)
   const from = searchParams.get("from")
   const editable = isStageEditable(role, s)
+
+  const registrationSearch = useRegistrationSearch()
+  const createPatient = useCreatePatientRegistration()
+  const updatePatient = useUpdatePatientRegistration()
+  const uploadCards = useUploadRegistrationCards()
 
   const [dismissedDeepLink, setDismissedDeepLink] = useState(false)
   const [state, setState] = useState<ThreadState>(INITIAL_STATE)
@@ -222,15 +263,17 @@ export function OpdVisitThreadPage() {
   const [modalReason, setModalReason] = useState("")
   const [modalAck, setModalAck] = useState(false)
 
-  // Registration search (Stage 0) — see REG_OUTCOME_CHIPS above.
+  // Registration (Stage 0) — backend-backed search / register / update.
   const [regOutcome, setRegOutcome] = useState<RegOutcome>("idle")
   const [regQuery, setRegQuery] = useState("")
+  const [regResults, setRegResults] = useState<RegistrationSearchResult[]>([])
   const [selectedCandidate, setSelectedCandidate] = useState<number | null>(null)
   const [showNewPatientForm, setShowNewPatientForm] = useState(false)
   const [newPatientOrigin, setNewPatientOrigin] = useState<"search" | "direct">("direct")
   const [newPatientForm, setNewPatientForm] = useState<NewPatientForm>(EMPTY_NEW_PATIENT)
   const [newPatientTouched, setNewPatientTouched] = useState(false)
-  const [visitOpenedFromCapture, setVisitOpenedFromCapture] = useState(false)
+  const [activePatient, setActivePatient] = useState<ActiveRegPatient | null>(null)
+  const [pendingDuplicateConfirm, setPendingDuplicateConfirm] = useState(false)
 
   // ABHA (Ayushman Bharat Health Account) — number + card upload, shown in
   // the "Visit opened" panel of Stage 0. Image uploads get a thumbnail
@@ -251,6 +294,24 @@ export function OpdVisitThreadPage() {
     return () => URL.revokeObjectURL(url)
   }, [abhaFile])
 
+  // Day-of check-in hands the appointment's patient over on the URL. Look the
+  // patient up through registration-search so Stage 0 shows live record data
+  // rather than whatever the booking row happened to carry.
+  const checkinPhone = searchParams.get("phone") || ""
+  const checkinName = searchParams.get("name") || ""
+  const checkinRef = searchParams.get("ref") || ""
+  const checkinPrefillDone = useRef(false)
+
+  useEffect(() => {
+    if (s !== 0 || checkinPrefillDone.current) return
+    const seed = checkinPhone.trim() || checkinName.trim()
+    if (seed.length < 3) return
+    checkinPrefillDone.current = true
+    setRegQuery(seed)
+    void runRegistrationSearch({ query: seed, autoSelect: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s, checkinPhone, checkinName])
+
   // Admission referral (Stage 5 → IPD) — §3 of the handoff: "one record, two
   // desks". See ipd-stay-page.tsx's worklist for the other side of this
   // same story (independent demo state, not a live shared store).
@@ -267,23 +328,158 @@ export function OpdVisitThreadPage() {
     setDemoReferralState("pending")
   }
 
-  function selectRegOutcome(o: RegOutcome) {
-    setRegOutcome(o)
+  function resetRegSearchUi() {
     setSelectedCandidate(null)
     setShowNewPatientForm(false)
+    setPendingDuplicateConfirm(false)
   }
+
+  function clearRegistrationSearch() {
+    setRegQuery("")
+    setRegResults([])
+    setRegOutcome("idle")
+    setNewPatientForm(EMPTY_NEW_PATIENT)
+    setNewPatientTouched(false)
+    resetRegSearchUi()
+  }
+
   function openNewPatientForm(origin: "search" | "direct") {
     setNewPatientOrigin(origin)
     setNewPatientForm({ ...EMPTY_NEW_PATIENT, mobile: origin === "search" ? regQuery : "" })
     setNewPatientTouched(false)
+    setPendingDuplicateConfirm(false)
     setShowNewPatientForm(true)
   }
-  function submitNewPatient(openVisit: boolean) {
+
+  async function runRegistrationSearch(override?: { query: string; autoSelect?: boolean }) {
+    const q = (override?.query ?? regQuery).trim()
+    if (q.length < 3) {
+      if (!override) {
+        toast({ title: "Enter at least 3 characters", description: "Search by UHID, phone, or ABHA.", variant: "destructive" })
+      }
+      return
+    }
+    try {
+      const data = await registrationSearch.mutateAsync(q)
+      setRegResults(data.results)
+      setSelectedCandidate(null)
+      setShowNewPatientForm(false)
+      if (data.matchType === "none" || data.results.length === 0) setRegOutcome("no-match")
+      else if (data.results.length === 1) setRegOutcome("single")
+      else setRegOutcome("multiple")
+
+      if (override?.autoSelect && data.results.length === 1) {
+        const patient = mapSearchResult(data.results[0])
+        activatePatient(patient, `Checked in — visit opened for ${patient.name}.`)
+        return
+      }
+
+      if (override?.autoSelect && data.results.length === 0) {
+        // Booked as a walk-in with no patient record yet — carry the booking's
+        // name/phone into new-patient capture.
+        setNewPatientOrigin("search")
+        setNewPatientForm({ ...EMPTY_NEW_PATIENT, fullName: checkinName.trim(), mobile: checkinPhone.trim() })
+        setNewPatientTouched(false)
+        setShowNewPatientForm(true)
+      }
+    } catch (err) {
+      toast({
+        title: "Search failed",
+        description: getToastErrorMessage(err, "Could not search patients"),
+        variant: "destructive",
+      })
+    }
+  }
+
+  function activatePatient(patient: ActiveRegPatient, banner: string) {
+    setActivePatient(patient)
+    setAbhaNumber(patient.abha && patient.abha !== "Not linked" ? patient.abha : "")
+    setAbhaFile(null)
+    patch({ bannerText: banner })
+  }
+
+  async function submitNewPatient(openVisit: boolean, confirmDuplicate = false) {
     setNewPatientTouched(true)
     if (Object.keys(newPatientErrors(newPatientForm)).length > 0) return
-    setShowNewPatientForm(false)
-    if (openVisit) setVisitOpenedFromCapture(true)
-    patch({ bannerText: openVisit ? `${newPatientForm.fullName} registered — visit opened.` : `${newPatientForm.fullName} registered. No visit opened yet.` })
+    const dob = toIsoDob(newPatientForm.dob)
+    if (!dob) return
+
+    try {
+      const created = await createPatient.mutateAsync({
+        name: newPatientForm.fullName.trim(),
+        dateOfBirth: dob,
+        gender: newPatientForm.gender.trim(),
+        phone: newPatientForm.mobile.trim(),
+        confirmDuplicate: confirmDuplicate || pendingDuplicateConfirm,
+      })
+      const patient: ActiveRegPatient = {
+        id: created.id,
+        name: created.name,
+        ageSex: formatAgeSex(ageFromDob(created.dateOfBirth), created.gender),
+        uhid: created.registrationNumber || "Pending UHID",
+        phone: created.phone || newPatientForm.mobile.trim(),
+        abha: created.abhaNumber || created.nationalId || "Not linked",
+        gender: created.gender || undefined,
+        dateOfBirth: created.dateOfBirth || dob,
+      }
+      setShowNewPatientForm(false)
+      setPendingDuplicateConfirm(false)
+      setRegOutcome("idle")
+      setRegResults([])
+      activatePatient(patient, openVisit ? `${patient.name} registered — visit opened.` : `${patient.name} registered. No visit opened yet.`)
+    } catch (err) {
+      if (err instanceof RegistrationConflictError) {
+        setPendingDuplicateConfirm(true)
+        toast({
+          title: "Possible duplicate",
+          description: `${err.candidates.length || "Some"} similar patient(s) found. Click again to register anyway, or select an existing match.`,
+          variant: "destructive",
+        })
+        return
+      }
+      toast({
+        title: "Could not register patient",
+        description: getToastErrorMessage(err, "Registration failed"),
+        variant: "destructive",
+      })
+    }
+  }
+
+  async function saveAbhaDetails() {
+    if (!activePatient) {
+      toast({ title: "No patient selected", description: "Search or register a patient first.", variant: "destructive" })
+      return
+    }
+    try {
+      const updated = await updatePatient.mutateAsync({
+        id: activePatient.id,
+        abhaNumber: abhaNumber.trim() || null,
+      })
+      if (abhaFile) {
+        await uploadCards.mutateAsync({
+          patientId: activePatient.id,
+          cardLabel: "ABHA Card",
+          cardNumber: abhaNumber.trim() || undefined,
+          file: abhaFile,
+        })
+      }
+      setActivePatient((prev) =>
+        prev
+          ? {
+              ...prev,
+              abha: updated.abhaNumber || updated.nationalId || abhaNumber.trim() || "Not linked",
+            }
+          : prev
+      )
+      patch({ bannerText: "ABHA details saved." })
+      toast({ title: "ABHA saved", description: abhaFile ? "Number and card uploaded." : "ABHA number updated." })
+    } catch (err) {
+      toast({
+        title: "Could not save ABHA",
+        description: getToastErrorMessage(err, "Update failed"),
+        variant: "destructive",
+      })
+    }
   }
 
   const patch = (p: Partial<ThreadState>) => setState((prev) => ({ ...prev, ...p }))
@@ -339,7 +535,7 @@ export function OpdVisitThreadPage() {
 
   function handleDrawerSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    drawer?.onSave()
+    void drawer?.onSave()
   }
 
   // ----- derived data -----
@@ -396,11 +592,52 @@ export function OpdVisitThreadPage() {
   ]
 
   // ----- drawer/modal openers -----
-  const openRegEdit = () =>
+  const openRegEdit = () => {
+    if (!activePatient) {
+      toast({ title: "No patient selected", description: "Search or register a patient first.", variant: "destructive" })
+      return
+    }
     openDrawer(
-      { badge: badge("LIVE EDIT"), title: "Edit demographics", saveLabel: "Save", onSave: doSave("Demographics updated."), fields: [field("name", "Full name", "text"), field("phone", "Phone", "text")] },
-      { name: PATIENT.name, phone: "+91 98457 20142" }
+      {
+        badge: badge("LIVE EDIT"),
+        title: "Edit demographics",
+        saveLabel: updatePatient.isPending ? "Saving…" : "Save",
+        onSave: async () => {
+          try {
+            const updated = await updatePatient.mutateAsync({
+              id: activePatient.id,
+              name: tmp.name?.trim() || activePatient.name,
+              phone: tmp.phone?.trim() || activePatient.phone,
+            })
+            setActivePatient((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    name: updated.name || tmp.name || prev.name,
+                    phone: updated.phone || tmp.phone || prev.phone,
+                    uhid: updated.registrationNumber || prev.uhid,
+                    abha: updated.abhaNumber || updated.nationalId || prev.abha,
+                    gender: updated.gender || prev.gender,
+                    dateOfBirth: updated.dateOfBirth || prev.dateOfBirth,
+                    ageSex: formatAgeSex(ageFromDob(updated.dateOfBirth || prev.dateOfBirth), updated.gender || prev.gender),
+                  }
+                : prev
+            )
+            patch({ bannerText: "Demographics updated." })
+            closeDrawer()
+          } catch (err) {
+            toast({
+              title: "Could not update patient",
+              description: getToastErrorMessage(err, "Update failed"),
+              variant: "destructive",
+            })
+          }
+        },
+        fields: [field("name", "Full name", "text"), field("phone", "Phone", "text")],
+      },
+      { name: activePatient.name, phone: activePatient.phone === "—" ? "" : activePatient.phone }
     )
+  }
   const openRegAmend = () =>
     openDrawer({
       badge: badge("AMENDMENT"),
@@ -605,33 +842,38 @@ export function OpdVisitThreadPage() {
               <Panel>
                 <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
                   <SectionLabel>Search existing patient</SectionLabel>
-                  <div className="flex flex-wrap gap-1">
-                    <span className="mr-1 self-center font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-muted2">Search outcome</span>
-                    {REG_OUTCOME_CHIPS.map((c) => (
-                      <button
-                        key={c.key}
-                        type="button"
-                        onClick={() => selectRegOutcome(c.key)}
-                        className={cn(
-                          "border px-2 py-1 font-plexmono text-[9.5px] font-bold uppercase tracking-[0.03em] transition-colors",
-                          regOutcome === c.key ? "border-adminreg-indigo bg-adminreg-indigo-soft text-adminreg-indigo-dark" : "border-adminreg-border bg-adminreg-bg text-adminreg-muted hover:text-adminreg-text"
-                        )}
-                      >
-                        {c.label}
-                      </button>
-                    ))}
-                  </div>
+                  <span className="font-plexmono text-[9.5px] uppercase tracking-[0.03em] text-adminreg-muted">
+                    {regOutcome === "idle" && "Pre-search"}
+                    {regOutcome === "no-match" && "No match"}
+                    {regOutcome === "single" && "1 match"}
+                    {regOutcome === "multiple" && `${regResults.length} matches`}
+                  </span>
                 </div>
 
                 <div className="flex gap-2">
                   <input
                     value={regQuery}
                     onChange={(e) => setRegQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && editable) {
+                        e.preventDefault()
+                        void runRegistrationSearch()
+                      }
+                    }}
                     placeholder="UHID, phone number, or ABHA number"
                     disabled={!editable}
                     className="w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-60"
                   />
-                  {editable && <AdminButton type="button" onClick={() => selectRegOutcome("no-match")} className="flex-shrink-0">Search</AdminButton>}
+                  {editable && (
+                    <AdminButton type="button" onClick={() => void runRegistrationSearch()} className="flex-shrink-0" disabled={registrationSearch.isPending}>
+                      {registrationSearch.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Search"}
+                    </AdminButton>
+                  )}
+                  {editable && (regQuery || regOutcome !== "idle" || showNewPatientForm) && (
+                    <AdminButton type="button" variant="secondary" onClick={clearRegistrationSearch} className="flex-shrink-0">
+                      Clear
+                    </AdminButton>
+                  )}
                 </div>
 
                 {showNewPatientForm ? (
@@ -646,6 +888,11 @@ export function OpdVisitThreadPage() {
                     {newPatientTouched && Object.keys(newPatientErrors(newPatientForm)).length > 0 && (
                       <div className="mb-3 border border-adminreg-red bg-adminreg-red-soft px-3 py-2 text-xs font-semibold text-adminreg-red-text">
                         {Object.keys(newPatientErrors(newPatientForm)).length} of 4 mandatory fields still need attention
+                      </div>
+                    )}
+                    {pendingDuplicateConfirm && (
+                      <div className="mb-3 border border-adminreg-amber bg-adminreg-amber-soft px-3 py-2 text-xs text-adminreg-amber-text">
+                        Similar patient(s) found. Click register again to confirm create anyway.
                       </div>
                     )}
 
@@ -672,11 +919,11 @@ export function OpdVisitThreadPage() {
                           <span className="font-plexmono text-[9px] uppercase text-adminreg-amber-text">Required</span>
                         </div>
                         <input
+                          type="date"
                           value={newPatientForm.dob}
                           onChange={(e) => setNewPatientForm((f) => ({ ...f, dob: e.target.value }))}
-                          placeholder="DD / MM / YYYY"
                           className={cn(
-                            "w-full border bg-adminreg-card px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo",
+                            "w-full border bg-adminreg-card px-2.5 py-2 text-sm text-adminreg-text focus:outline-none focus:ring-1 focus:ring-adminreg-indigo",
                             newPatientTouched && newPatientErrors(newPatientForm).dob ? "border-adminreg-red" : "border-adminreg-border"
                           )}
                         />
@@ -687,15 +934,20 @@ export function OpdVisitThreadPage() {
                           <FieldLabel>Gender</FieldLabel>
                           <span className="font-plexmono text-[9px] uppercase text-adminreg-amber-text">Required</span>
                         </div>
-                        <input
+                        <select
                           value={newPatientForm.gender}
                           onChange={(e) => setNewPatientForm((f) => ({ ...f, gender: e.target.value }))}
-                          placeholder="Female / Male / Other"
                           className={cn(
-                            "w-full border bg-adminreg-card px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo",
-                            newPatientTouched && newPatientErrors(newPatientForm).gender ? "border-adminreg-red" : "border-adminreg-border"
+                            "w-full border bg-adminreg-card px-2.5 py-2 text-sm text-adminreg-text focus:outline-none focus:ring-1 focus:ring-adminreg-indigo",
+                            newPatientTouched && newPatientErrors(newPatientForm).gender ? "border-adminreg-red" : "border-adminreg-border",
+                            !newPatientForm.gender && "text-adminreg-muted2"
                           )}
-                        />
+                        >
+                          <option value="">Select gender</option>
+                          <option value="Female">Female</option>
+                          <option value="Male">Male</option>
+                          <option value="Other">Other</option>
+                        </select>
                         {newPatientTouched && newPatientErrors(newPatientForm).gender && <p className="mt-1 text-[11px] text-adminreg-red-text">{newPatientErrors(newPatientForm).gender}</p>}
                       </div>
                       <div className="col-span-2">
@@ -722,8 +974,21 @@ export function OpdVisitThreadPage() {
                     </div>
 
                     <div className="mt-3.5 flex flex-wrap gap-2">
-                      <AdminButton type="button" accent="indigo" onClick={() => submitNewPatient(true)}>Register and open visit</AdminButton>
-                      <AdminButton type="button" variant="secondary" onClick={() => submitNewPatient(false)}>Save without opening a visit</AdminButton>
+                      <AdminButton type="button" accent="indigo" onClick={() => void submitNewPatient(true)} disabled={createPatient.isPending}>
+                        {createPatient.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        {pendingDuplicateConfirm ? "Confirm duplicate & open visit" : "Register and open visit"}
+                      </AdminButton>
+                      <AdminButton type="button" variant="secondary" onClick={() => void submitNewPatient(false)} disabled={createPatient.isPending}>
+                        Save without opening a visit
+                      </AdminButton>
+                      <button
+                        type="button"
+                        onClick={clearRegistrationSearch}
+                        disabled={createPatient.isPending}
+                        className="self-center text-[11px] text-adminreg-muted underline disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
                     </div>
                     <p className="mt-2.5 text-[11px] text-adminreg-muted">Name, date of birth, gender and mobile number are required before either action will save.</p>
                   </div>
@@ -742,39 +1007,54 @@ export function OpdVisitThreadPage() {
                   <div className="mt-3.5 border border-adminreg-indigo bg-adminreg-indigo-soft p-3.5">
                     <div className="mb-1.5 text-xs font-bold text-adminreg-indigo-dark">Search completed · 0 records found</div>
                     <div className="font-plexmono text-[10px] text-adminreg-indigo-dark">
-                      Query &quot;{regQuery || "+91 98457 20142"}&quot; · {new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
-                      <br />
-                      UHID index ✕ &nbsp; Phone index ✕ &nbsp; ABHA registry ✕
+                      Query &quot;{regQuery}&quot; · {new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
                     </div>
                     <p className="mt-2 text-xs text-adminreg-indigo-dark">No existing record, so nothing can be attached to the wrong UHID here. Continue into new-patient capture below.</p>
                     {editable && <AdminButton type="button" accent="indigo" className="mt-2.5" onClick={() => openNewPatientForm("search")}>Continue to new-patient capture</AdminButton>}
                   </div>
                 ) : regOutcome === "single" || (regOutcome === "multiple" && selectedCandidate !== null) ? (
                   (() => {
-                    const candidate = regOutcome === "single" ? REG_SINGLE_MATCH : REG_MULTI_CANDIDATES[selectedCandidate!]
+                    const candidate = regOutcome === "single" ? regResults[0] : regResults[selectedCandidate!]
+                    if (!candidate) return null
+                    const matched = (candidate.matchedOn || []).join(", ") || "query"
                     return (
                       <div className="mt-3.5 border-t-[3px] border-adminreg-olive bg-adminreg-olive-soft p-3.5">
                         {regOutcome === "multiple" && (
                           <div className="mb-2.5 flex items-center justify-between">
-                            <span className="font-plexmono text-[9.5px] uppercase tracking-[0.03em] text-adminreg-olive-dark">Selected from 3 candidates</span>
+                            <span className="font-plexmono text-[9.5px] uppercase tracking-[0.03em] text-adminreg-olive-dark">Selected from {regResults.length} candidates</span>
                             <span onClick={() => setSelectedCandidate(null)} className="cursor-pointer text-[11px] text-adminreg-olive-dark underline">← Back to the list</span>
                           </div>
                         )}
                         <div className="mb-1.5 text-sm font-bold text-adminreg-olive-dark">{candidate.name}</div>
                         <div className="grid grid-cols-2 gap-2.5 text-xs text-adminreg-text">
-                          <div><FieldLabel>Age / Sex</FieldLabel><FieldValue>{candidate.ageSex}</FieldValue></div>
-                          <div><FieldLabel>UHID</FieldLabel><FieldValue>{candidate.uhid}</FieldValue></div>
-                          <div><FieldLabel>Phone</FieldLabel><FieldValue>{candidate.phone}</FieldValue></div>
-                          <div><FieldLabel>ABHA</FieldLabel><FieldValue>{candidate.abha}</FieldValue></div>
+                          <div><FieldLabel>Age / Sex</FieldLabel><FieldValue>{formatAgeSex(candidate.age, candidate.gender)}</FieldValue></div>
+                          <div><FieldLabel>UHID</FieldLabel><FieldValue>{candidate.uhid || "—"}</FieldValue></div>
+                          <div><FieldLabel>Phone</FieldLabel><FieldValue>{candidate.phone || "—"}</FieldValue></div>
+                          <div><FieldLabel>ABHA</FieldLabel><FieldValue>{candidate.abha || "Not linked"}</FieldValue></div>
                         </div>
                         <div className="mt-2.5 border-t border-adminreg-olive/30 pt-2.5 text-xs text-adminreg-olive-dark">
-                          Last seen {candidate.lastVisit} · {candidate.department}, {candidate.doctor} · {candidate.visitCount} visits on record
+                          Last seen {formatLastVisit(candidate.lastVisitDate)} · matched on {matched}
                         </div>
                         <p className="mt-2.5 text-[11px] text-adminreg-muted">Confirm identity with the patient — name and age spoken back, not just read out — before a visit is created against this UHID.</p>
                         {editable && (
                           <div className="mt-2.5 flex items-center gap-3">
-                            <AdminButton type="button" accent="indigo" onClick={() => patch({ bannerText: `Visit opened for ${candidate.name}.` })}>Confirm &amp; open visit</AdminButton>
-                            <span onClick={() => selectRegOutcome("idle")} className="cursor-pointer text-[11px] text-adminreg-indigo underline">Not this person? Refine search</span>
+                            <AdminButton
+                              type="button"
+                              accent="indigo"
+                              onClick={() => activatePatient(mapSearchResult(candidate), `Visit opened for ${candidate.name}.`)}
+                            >
+                              Confirm &amp; open visit
+                            </AdminButton>
+                            <span
+                              onClick={() => {
+                                setRegOutcome("idle")
+                                resetRegSearchUi()
+                                setRegResults([])
+                              }}
+                              className="cursor-pointer text-[11px] text-adminreg-indigo underline"
+                            >
+                              Not this person? Refine search
+                            </span>
                           </div>
                         )}
                       </div>
@@ -782,15 +1062,15 @@ export function OpdVisitThreadPage() {
                   })()
                 ) : (
                   <div className="mt-3.5 border border-adminreg-amber bg-adminreg-amber-soft p-3.5">
-                    <div className="mb-2 text-xs font-bold text-adminreg-amber-text">3 records match — select the right person</div>
-                    <p className="mb-2.5 text-[11px] text-adminreg-amber-text">One phone number, three registered people. Check age and last visit against the person standing at the desk before selecting.</p>
+                    <div className="mb-2 text-xs font-bold text-adminreg-amber-text">{regResults.length} records match — select the right person</div>
+                    <p className="mb-2.5 text-[11px] text-adminreg-amber-text">Check age and last visit against the person standing at the desk before selecting.</p>
                     <div className="space-y-2">
-                      {REG_MULTI_CANDIDATES.map((c, i) => (
-                        <div key={c.uhid} className="flex items-center justify-between gap-3 border border-adminreg-border bg-adminreg-card px-3 py-2.5">
+                      {regResults.map((c, i) => (
+                        <div key={c.id} className="flex items-center justify-between gap-3 border border-adminreg-border bg-adminreg-card px-3 py-2.5">
                           <div className="min-w-0">
-                            <div className="text-sm font-semibold text-adminreg-text">{c.name} <span className="font-plexmono text-[10px] font-normal text-adminreg-muted">— {c.uhid}</span></div>
-                            <div className="text-[11px] text-adminreg-muted">{c.ageSex} · last visit {c.lastVisit} · {c.department}</div>
-                            <div className="text-[11px] italic text-adminreg-muted">{c.relation}</div>
+                            <div className="text-sm font-semibold text-adminreg-text">{c.name} <span className="font-plexmono text-[10px] font-normal text-adminreg-muted">— {c.uhid || "no UHID"}</span></div>
+                            <div className="text-[11px] text-adminreg-muted">{formatAgeSex(c.age, c.gender)} · last visit {formatLastVisit(c.lastVisitDate)}</div>
+                            <div className="text-[11px] italic text-adminreg-muted">Matched on {(c.matchedOn || []).join(", ") || "query"}</div>
                           </div>
                           {editable && <AdminButton type="button" variant="secondary" className="flex-shrink-0" onClick={() => setSelectedCandidate(i)}>Select</AdminButton>}
                         </div>
@@ -806,7 +1086,7 @@ export function OpdVisitThreadPage() {
               <Panel>
                 <div className="flex items-start justify-between">
                   <SectionLabel>Visit opened</SectionLabel>
-                  {editable && (
+                  {editable && activePatient && (
                     <div className="flex gap-3">
                       <LinkAction tone="edit" onClick={openRegEdit}>Edit</LinkAction>
                       <LinkAction tone="amend" onClick={openRegAmend}>Amend (post-registration)</LinkAction>
@@ -814,77 +1094,108 @@ export function OpdVisitThreadPage() {
                     </div>
                   )}
                 </div>
-                <div className="my-2.5 grid grid-cols-2 gap-2.5">
-                  <div><FieldLabel>Full name</FieldLabel><FieldValue>{PATIENT.name}</FieldValue></div>
-                  <div><FieldLabel>Age / Sex</FieldLabel><FieldValue>{PATIENT.ageSex}</FieldValue></div>
-                  <div><FieldLabel>Phone</FieldLabel><FieldValue>+91 98457 20142</FieldValue></div>
-                  <div><FieldLabel>UHID</FieldLabel><FieldValue>{PATIENT.uhid}</FieldValue></div>
-                </div>
-                {state.regAmended && (
-                  <AddendumNote header="AMENDMENT · A. Bhatt · 12 Aug 2026, 10:12 · Reason: DOB corrected — original entry had a transposed digit">
-                    DOB corrected to 14 Mar 1992. This update also applied to 3 linked past visit records under this UHID.
-                  </AddendumNote>
-                )}
-                <div className="mt-3 border-t border-adminreg-divider pt-3">
-                  <FieldLabel>ABHA (Ayushman Bharat Health Account)</FieldLabel>
-                  <div className="mt-1.5 grid grid-cols-2 gap-2.5">
-                    <input
-                      value={abhaNumber}
-                      onChange={(e) => setAbhaNumber(e.target.value)}
-                      placeholder="Ayushman health account no."
-                      disabled={!editable}
-                      className="w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-60"
-                    />
-                    <label
-                      className={cn(
-                        "flex cursor-pointer items-center justify-center gap-2 border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-center text-sm text-adminreg-muted hover:text-adminreg-text",
-                        !editable && "pointer-events-none opacity-60"
-                      )}
-                    >
-                      <Upload className="h-4 w-4 flex-shrink-0" />
-                      <span className="truncate">Upload Ayushman card</span>
-                      <input
-                        type="file"
-                        accept="image/*,.pdf"
-                        disabled={!editable}
-                        className="hidden"
-                        onChange={(e) => setAbhaFile(e.target.files?.[0] ?? null)}
-                      />
-                    </label>
-                  </div>
-                  {abhaFile && (
-                    <div className="mt-2 flex items-center gap-3">
-                      <button type="button" onClick={() => setAbhaPreviewOpen(true)} className="flex-shrink-0">
-                        {isAbhaImage ? (
-                          <img src={abhaPreviewUrl ?? undefined} alt="ABHA card preview" className="h-16 w-16 border border-adminreg-border object-cover" />
-                        ) : (
-                          <div className="flex h-16 w-16 items-center justify-center border border-adminreg-border bg-adminreg-header">
-                            <FileText className="h-7 w-7 text-adminreg-red-text" />
-                          </div>
-                        )}
-                      </button>
-                      <p className="text-xs text-adminreg-olive-dark">Uploaded — {abhaFile.name}</p>
-                    </div>
-                  )}
-                  {abhaPreviewOpen && abhaFile && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" onClick={() => setAbhaPreviewOpen(false)}>
-                      <div className="relative max-h-[90vh] max-w-[90vw] border border-adminreg-border bg-adminreg-card p-3" onClick={(e) => e.stopPropagation()}>
-                        <div className="mb-2 flex items-center justify-between gap-6">
-                          <p className="text-sm font-bold text-adminreg-text">{abhaFile.name}</p>
-                          <button type="button" onClick={() => setAbhaPreviewOpen(false)} className="text-adminreg-muted hover:text-adminreg-text">
-                            <X className="h-4 w-4" />
-                          </button>
+                {activePatient ? (
+                  <>
+                    <div className="my-2.5 grid grid-cols-2 gap-2.5">
+                      <div><FieldLabel>Full name</FieldLabel><FieldValue>{activePatient.name}</FieldValue></div>
+                      <div><FieldLabel>Age / Sex</FieldLabel><FieldValue>{activePatient.ageSex}</FieldValue></div>
+                      <div><FieldLabel>Phone</FieldLabel><FieldValue>{activePatient.phone}</FieldValue></div>
+                      <div><FieldLabel>UHID</FieldLabel><FieldValue>{activePatient.uhid}</FieldValue></div>
+                      {checkinRef && (
+                        <div className="col-span-2">
+                          <FieldLabel>Checked in from appointment</FieldLabel>
+                          <FieldValue>{checkinRef}</FieldValue>
                         </div>
-                        {isAbhaImage ? (
-                          <img src={abhaPreviewUrl ?? undefined} alt="ABHA card preview" className="max-h-[75vh] max-w-[85vw] object-contain" />
-                        ) : (
-                          <iframe src={abhaPreviewUrl ?? undefined} title="ABHA card PDF preview" className="h-[75vh] w-[85vw]" />
-                        )}
-                      </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                {editable && <AdminButton type="button" accent="indigo" className="mt-4" onClick={goNext}>Open visit → Fee collection</AdminButton>}
+                    {state.regAmended && (
+                      <AddendumNote header="AMENDMENT · A. Bhatt · 12 Aug 2026, 10:12 · Reason: DOB corrected — original entry had a transposed digit">
+                        DOB corrected to 14 Mar 1992. This update also applied to 3 linked past visit records under this UHID.
+                      </AddendumNote>
+                    )}
+                    <div className="mt-3 border-t border-adminreg-divider pt-3">
+                      <FieldLabel>ABHA (Ayushman Bharat Health Account)</FieldLabel>
+                      <div className="mt-1.5 grid grid-cols-2 gap-2.5">
+                        <input
+                          value={abhaNumber}
+                          onChange={(e) => setAbhaNumber(e.target.value)}
+                          placeholder="Ayushman health account no."
+                          disabled={!editable}
+                          className="w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-60"
+                        />
+                        <label
+                          className={cn(
+                            "flex cursor-pointer items-center justify-center gap-2 border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-center text-sm text-adminreg-muted hover:text-adminreg-text",
+                            !editable && "pointer-events-none opacity-60"
+                          )}
+                        >
+                          <Upload className="h-4 w-4 flex-shrink-0" />
+                          <span className="truncate">Upload Ayushman card</span>
+                          <input
+                            type="file"
+                            accept="image/*,.pdf"
+                            disabled={!editable}
+                            className="hidden"
+                            onChange={(e) => setAbhaFile(e.target.files?.[0] ?? null)}
+                          />
+                        </label>
+                      </div>
+                      {abhaFile && (
+                        <div className="mt-2 flex items-center gap-3">
+                          <button type="button" onClick={() => setAbhaPreviewOpen(true)} className="flex-shrink-0">
+                            {isAbhaImage ? (
+                              <img src={abhaPreviewUrl ?? undefined} alt="ABHA card preview" className="h-16 w-16 border border-adminreg-border object-cover" />
+                            ) : (
+                              <div className="flex h-16 w-16 items-center justify-center border border-adminreg-border bg-adminreg-header">
+                                <FileText className="h-7 w-7 text-adminreg-red-text" />
+                              </div>
+                            )}
+                          </button>
+                          <p className="text-xs text-adminreg-olive-dark">Uploaded — {abhaFile.name}</p>
+                        </div>
+                      )}
+                      {abhaPreviewOpen && abhaFile && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" onClick={() => setAbhaPreviewOpen(false)}>
+                          <div className="relative max-h-[90vh] max-w-[90vw] border border-adminreg-border bg-adminreg-card p-3" onClick={(e) => e.stopPropagation()}>
+                            <div className="mb-2 flex items-center justify-between gap-6">
+                              <p className="text-sm font-bold text-adminreg-text">{abhaFile.name}</p>
+                              <button type="button" onClick={() => setAbhaPreviewOpen(false)} className="text-adminreg-muted hover:text-adminreg-text">
+                                <X className="h-4 w-4" />
+                              </button>
+                            </div>
+                            {isAbhaImage ? (
+                              <img src={abhaPreviewUrl ?? undefined} alt="ABHA card preview" className="max-h-[75vh] max-w-[85vw] object-contain" />
+                            ) : (
+                              <iframe src={abhaPreviewUrl ?? undefined} title="ABHA card PDF preview" className="h-[75vh] w-[85vw]" />
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {editable && (
+                        <AdminButton
+                          type="button"
+                          variant="secondary"
+                          className="mt-2.5"
+                          onClick={() => void saveAbhaDetails()}
+                          disabled={updatePatient.isPending || uploadCards.isPending}
+                        >
+                          {(updatePatient.isPending || uploadCards.isPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                          Save ABHA
+                        </AdminButton>
+                      )}
+                    </div>
+                    {editable && (
+                      <AdminButton type="button" accent="indigo" className="mt-4" onClick={goNext}>
+                        Open visit → Fee collection
+                      </AdminButton>
+                    )}
+                  </>
+                ) : (
+                  <div className="mt-3.5 border border-dashed border-adminreg-border bg-adminreg-bg p-5 text-center">
+                    <p className="font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted">No patient selected</p>
+                    <p className="mt-1.5 text-xs text-adminreg-muted">Search and confirm an existing patient, or register a new one to open the visit panel.</p>
+                  </div>
+                )}
               </Panel>
             </div>
           )}

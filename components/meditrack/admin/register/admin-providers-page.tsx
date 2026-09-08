@@ -169,14 +169,20 @@ export function AdminProvidersPage() {
   const doctors = usersData?.items ?? []
 
   const [selected, setSelected] = useState<MediTrackUser | null>(null)
+  /** Row click → all; Availability action → availability only; Leave action → leave only */
+  const [detailView, setDetailView] = useState<"all" | "availability" | "leave">("all")
   const [form, setForm] = useState(EMPTY_SESSION_FORM)
+
+  const showProfile = detailView === "all"
+  const showAvailability = detailView === "all" || detailView === "availability"
+  const showLeave = detailView === "all" || detailView === "leave"
 
   const {
     data: availabilitySessions = [],
     isLoading: isLoadingAvailability,
     isError: isAvailabilityError,
     error: availabilityError,
-  } = useGetProviderAvailability(selected?.id, !!selected)
+  } = useGetProviderAvailability(selected?.id, !!selected && showAvailability)
 
   const {
     data: doctorLeaves = [],
@@ -185,7 +191,7 @@ export function AdminProvidersPage() {
     error: leavesError,
   } = useGetDoctorLeaves(
     { userId: selected?.id, clinicId: clinicId || undefined },
-    !!selected
+    !!selected && showLeave
   )
 
   const [addOpen, setAddOpen] = useState(false)
@@ -348,8 +354,26 @@ export function AdminProvidersPage() {
     [availabilitySessions]
   )
 
+  function openDoctorDetails(doctor: MediTrackUser) {
+    setSelected(doctor)
+    setDetailView("all")
+    setForm(EMPTY_SESSION_FORM)
+  }
+
   function openAvailability(doctor: MediTrackUser) {
     setSelected(doctor)
+    setDetailView("availability")
+    setForm(EMPTY_SESSION_FORM)
+  }
+
+  function openLeave(doctor: MediTrackUser) {
+    setSelected(doctor)
+    setDetailView("leave")
+  }
+
+  function closeDoctorDetail() {
+    setSelected(null)
+    setDetailView("all")
     setForm(EMPTY_SESSION_FORM)
   }
 
@@ -412,7 +436,6 @@ export function AdminProvidersPage() {
         endTime: timeToApi(end),
         sessionType: sessionTypeToApi(form.type),
         location: form.location.trim(),
-        slotDurationMinutes: 15,
       })
       const dateCount = form.dates.length
       setForm(EMPTY_SESSION_FORM)
@@ -494,7 +517,7 @@ export function AdminProvidersPage() {
         <RowActions
           actions={[
             { icon: CalendarClock, label: "Availability", tooltip: "Availability", onClick: () => openAvailability(r) },
-            { icon: CalendarOff, label: "Add leave", tooltip: "Add leave", onClick: () => setLeaveTarget(r) },
+            { icon: CalendarOff, label: "Leave", tooltip: "Leave", onClick: () => openLeave(r) },
             ...(role === "admin"
               ? [{ icon: ArrowUpRight, label: "Live queue", tooltip: "Live queue →", onClick: () => router.push(`/opd/visit-thread?stage=2&from=providers`) }]
               : []),
@@ -518,200 +541,217 @@ export function AdminProvidersPage() {
     <div>
       {selected ? (
         <>
-          <AdminPageHeader title="Doctors" subtitle="Doctor registry, weekly availability and leave exceptions." />
+          <AdminPageHeader
+            title="Doctors"
+            subtitle={
+              detailView === "availability"
+                ? `Availability for ${selectedName}`
+                : detailView === "leave"
+                  ? `Leave for ${selectedName}`
+                  : "Doctor registry, weekly availability and leave exceptions."
+            }
+          />
 
-          <button type="button" onClick={() => setSelected(null)} className="mb-4 inline-flex items-center gap-1.5 text-sm text-adminreg-muted hover:text-adminreg-text">
+          <button type="button" onClick={closeDoctorDetail} className="mb-4 inline-flex items-center gap-1.5 text-sm text-adminreg-muted hover:text-adminreg-text">
             <ChevronLeft className="h-4 w-4" />
             Back to directory
           </button>
 
-          <AdminCard title="Doctor profile" className="mb-5">
-            <div className="divide-y divide-adminreg-border">
-              <InfoRow label="Name" value={selectedName} />
-              <InfoRow label="Email" value={selected.email || "—"} />
-              <InfoRow label="Department" value={deptLabel(selected)} />
-              <InfoRow label="Role" value={selected.roleName || selected.role || "Doctor"} />
-              <InfoRow label="Branch" value={branchNameById.get(branchId) || "—"} />
-              <InfoRow label="Status" value={selected.isActive ? "Active" : "Inactive"} />
-              <InfoRow label="Sessions / week" value={isLoadingAvailability ? "Loading…" : String(sessions.length)} />
-              <InfoRow label="Leave records" value={isLoadingLeaves ? "Loading…" : String(doctorLeaves.length)} />
-              <InfoRow label="Last login" value={formatLastLogin(selected.lastLogin)} />
-            </div>
-          </AdminCard>
-
-          <h2 className="text-xl font-bold text-adminreg-text">Availability</h2>
-          <p className="mt-1 text-sm text-adminreg-muted">OPD and ward-round sessions by date. Overlaps are blocked at save.</p>
-
-          <AdminCard noPadding className="mt-5">
-            {isLoadingAvailability ? (
-              <TableSkeleton rows={4} columns={5} />
-            ) : isAvailabilityError ? (
-              <p className="px-5 py-8 text-sm text-adminreg-red">
-                {getToastErrorMessage(availabilityError, "Failed to load availability")}
-              </p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-adminreg-border bg-adminreg-border/30 text-left text-[11px] font-semibold uppercase tracking-wide text-adminreg-muted">
-                    <th className="px-5 py-3">Date</th>
-                    <th className="px-5 py-3">Start</th>
-                    <th className="px-5 py-3">End</th>
-                    <th className="px-5 py-3">Type</th>
-                    <th className="px-5 py-3">Location</th>
-                    <th className="px-5 py-3 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sessions.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-5 py-8 text-sm text-adminreg-muted">
-                        No sessions yet. Add a session below.
-                      </td>
-                    </tr>
-                  ) : (
-                    sessions.map((s) => (
-                      <tr key={s.id} className="border-b border-adminreg-border/70 last:border-0">
-                        <td className="px-5 py-3 font-semibold text-adminreg-text">{s.date}</td>
-                        <td className="px-5 py-3">{s.start}</td>
-                        <td className="px-5 py-3">{s.end}</td>
-                        <td className="px-5 py-3">{s.type}</td>
-                        <td className="px-5 py-3">{s.location}</td>
-                        <td className="px-5 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => removeSession(s.id)}
-                            disabled={deleteAvailability.isPending}
-                            className="text-sm font-medium text-adminreg-red hover:underline disabled:opacity-50"
-                          >
-                            {deleteAvailability.isPending ? "Removing…" : "Remove"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            )}
-          </AdminCard>
-
-          <AdminCard
-            title="Add Session"
-            className="mt-5"
-            action={
-              <MtButton
-                type="submit"
-                form="add-session-form"
-                className="gap-2"
-                disabled={createAvailability.isPending}
-              >
-                {createAvailability.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                Add session
-              </MtButton>
-            }
-          >
-            <form id="add-session-form" onSubmit={handleAddSession} className="space-y-2">
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-                <div className="min-w-0 space-y-1">
-                  <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Dates</Label>
-                  <MultiDatePicker
-                    compact
-                    value={form.dates}
-                    onChange={(dates) => setForm((f) => ({ ...f, dates }))}
-                  />
-                </div>
-                <div className="min-w-0 space-y-1">
-                  <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Start</Label>
-                  <TimeInputField
-                    value={form.start}
-                    onChange={(start) => setForm((f) => ({ ...f, start }))}
-                    placeholder="09:00"
-                    aria-label="Session start time"
-                    required
-                    className="[&_input]:h-9 [&_input]:text-sm"
-                  />
-                </div>
-                <div className="min-w-0 space-y-1">
-                  <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">End</Label>
-                  <TimeInputField
-                    value={form.end}
-                    onChange={(end) => setForm((f) => ({ ...f, end }))}
-                    placeholder="11:00"
-                    aria-label="Session end time"
-                    required
-                    className="[&_input]:h-9 [&_input]:text-sm"
-                  />
-                </div>
-                <div className="min-w-0 space-y-1">
-                  <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Type</Label>
-                  <Select value={form.type} onValueChange={(v) => setForm((f) => ({ ...f, type: v as SessionType }))}>
-                    <SelectTrigger className="h-9 w-full text-sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="OPD">OPD</SelectItem>
-                      <SelectItem value="Ward Round">Ward Round</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="min-w-0 space-y-1">
-                  <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Location</Label>
-                  <Input
-                    value={form.location}
-                    onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
-                    placeholder="e.g. OPD Room 4"
-                    className="h-9 w-full text-sm"
-                    required
-                  />
-                </div>
+          {showProfile ? (
+            <AdminCard title="Doctor profile" className="mb-5">
+              <div className="divide-y divide-adminreg-border">
+                <InfoRow label="Name" value={selectedName} />
+                <InfoRow label="Email" value={selected.email || "—"} />
+                <InfoRow label="Department" value={deptLabel(selected)} />
+                <InfoRow label="Role" value={selected.roleName || selected.role || "Doctor"} />
+                <InfoRow label="Branch" value={branchNameById.get(branchId) || "—"} />
+                <InfoRow label="Status" value={selected.isActive ? "Active" : "Inactive"} />
+                <InfoRow label="Sessions / week" value={isLoadingAvailability ? "Loading…" : String(sessions.length)} />
+                <InfoRow label="Leave records" value={isLoadingLeaves ? "Loading…" : String(doctorLeaves.length)} />
+                <InfoRow label="Last login" value={formatLastLogin(selected.lastLogin)} />
               </div>
-              {sessionDurationLabel ? (
-                <p className="text-[11px] text-adminreg-muted">{sessionDurationLabel}</p>
-              ) : null}
-            </form>
-          </AdminCard>
+            </AdminCard>
+          ) : null}
 
-          <AdminCard
-            title="Leave Exceptions"
-            className="mt-5"
-            action={<MtButton className="gap-2" onClick={() => setLeaveTarget(selected)}><Plus className="h-4 w-4" />Add leave</MtButton>}
-          >
-            {isLoadingLeaves ? (
-              <TableSkeleton rows={3} columns={2} />
-            ) : isLeavesError ? (
-              <p className="text-sm text-adminreg-red">{getToastErrorMessage(leavesError, "Failed to load leave")}</p>
-            ) : doctorLeaves.length === 0 ? (
-              <p className="text-sm text-adminreg-muted">No leave recorded for {selectedName}.</p>
-            ) : (
-              <ul className="space-y-2">
-                {doctorLeaves.map((l) => {
-                  const from = formatLeaveDate(l.fromDate)
-                  const to = formatLeaveDate(l.toDate)
-                  return (
-                    <li
-                      key={l.id}
-                      className="flex flex-col gap-2 border border-adminreg-border bg-adminreg-header/40 px-3.5 py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="min-w-0">
-                        <span className="font-medium text-adminreg-text">
-                          {from}
-                          {to !== from ? ` – ${to}` : ""}
-                        </span>
-                        <span className="mt-0.5 block text-adminreg-muted sm:mt-0 sm:ml-3 sm:inline">
-                          {l.reason || "Not specified"}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteLeaveTarget(l)}
-                        disabled={deleteLeave.isPending}
-                        className="shrink-0 text-sm font-medium text-adminreg-red hover:underline disabled:opacity-50"
+          {showAvailability ? (
+            <>
+              <h2 className="text-xl font-bold text-adminreg-text">Availability</h2>
+              <p className="mt-1 text-sm text-adminreg-muted">OPD and ward-round sessions by date. Overlaps are blocked at save.</p>
+
+              <AdminCard noPadding className="mt-5">
+                {isLoadingAvailability ? (
+                  <TableSkeleton rows={4} columns={5} />
+                ) : isAvailabilityError ? (
+                  <p className="px-5 py-8 text-sm text-adminreg-red">
+                    {getToastErrorMessage(availabilityError, "Failed to load availability")}
+                  </p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-adminreg-border bg-adminreg-border/30 text-left text-[11px] font-semibold uppercase tracking-wide text-adminreg-muted">
+                        <th className="px-5 py-3">Date</th>
+                        <th className="px-5 py-3">Start</th>
+                        <th className="px-5 py-3">End</th>
+                        <th className="px-5 py-3">Type</th>
+                        <th className="px-5 py-3">Location</th>
+                        <th className="px-5 py-3 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sessions.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-5 py-8 text-sm text-adminreg-muted">
+                            No sessions yet. Add a session below.
+                          </td>
+                        </tr>
+                      ) : (
+                        sessions.map((s) => (
+                          <tr key={s.id} className="border-b border-adminreg-border/70 last:border-0">
+                            <td className="px-5 py-3 font-semibold text-adminreg-text">{s.date}</td>
+                            <td className="px-5 py-3">{s.start}</td>
+                            <td className="px-5 py-3">{s.end}</td>
+                            <td className="px-5 py-3">{s.type}</td>
+                            <td className="px-5 py-3">{s.location}</td>
+                            <td className="px-5 py-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => removeSession(s.id)}
+                                disabled={deleteAvailability.isPending}
+                                className="text-sm font-medium text-adminreg-red hover:underline disabled:opacity-50"
+                              >
+                                {deleteAvailability.isPending ? "Removing…" : "Remove"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                )}
+              </AdminCard>
+
+              <AdminCard
+                title="Add Session"
+                className="mt-5"
+                action={
+                  <MtButton
+                    type="submit"
+                    form="add-session-form"
+                    className="gap-2"
+                    disabled={createAvailability.isPending}
+                  >
+                    {createAvailability.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                    Add session
+                  </MtButton>
+                }
+              >
+                <form id="add-session-form" onSubmit={handleAddSession} className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+                    <div className="min-w-0 space-y-1">
+                      <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Dates</Label>
+                      <MultiDatePicker
+                        compact
+                        value={form.dates}
+                        onChange={(dates) => setForm((f) => ({ ...f, dates }))}
+                      />
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Start</Label>
+                      <TimeInputField
+                        value={form.start}
+                        onChange={(start) => setForm((f) => ({ ...f, start }))}
+                        placeholder="09:00"
+                        aria-label="Session start time"
+                        required
+                        className="[&_input]:h-9 [&_input]:text-sm"
+                      />
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">End</Label>
+                      <TimeInputField
+                        value={form.end}
+                        onChange={(end) => setForm((f) => ({ ...f, end }))}
+                        placeholder="11:00"
+                        aria-label="Session end time"
+                        required
+                        className="[&_input]:h-9 [&_input]:text-sm"
+                      />
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Type</Label>
+                      <Select value={form.type} onValueChange={(v) => setForm((f) => ({ ...f, type: v as SessionType }))}>
+                        <SelectTrigger className="h-9 w-full text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="OPD">OPD</SelectItem>
+                          <SelectItem value="Ward Round">Ward Round</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Location</Label>
+                      <Input
+                        value={form.location}
+                        onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
+                        placeholder="e.g. OPD Room 4"
+                        className="h-9 w-full text-sm"
+                        required
+                      />
+                    </div>
+                  </div>
+                  {sessionDurationLabel ? (
+                    <p className="text-[11px] text-adminreg-muted">{sessionDurationLabel}</p>
+                  ) : null}
+                </form>
+              </AdminCard>
+            </>
+          ) : null}
+
+          {showLeave ? (
+            <AdminCard
+              title="Leave Exceptions"
+              className={showAvailability || showProfile ? "mt-5" : undefined}
+              action={<MtButton className="gap-2" onClick={() => setLeaveTarget(selected)}><Plus className="h-4 w-4" />Add leave</MtButton>}
+            >
+              {isLoadingLeaves ? (
+                <TableSkeleton rows={3} columns={2} />
+              ) : isLeavesError ? (
+                <p className="text-sm text-adminreg-red">{getToastErrorMessage(leavesError, "Failed to load leave")}</p>
+              ) : doctorLeaves.length === 0 ? (
+                <p className="text-sm text-adminreg-muted">No leave recorded for {selectedName}.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {doctorLeaves.map((l) => {
+                    const from = formatLeaveDate(l.fromDate)
+                    const to = formatLeaveDate(l.toDate)
+                    return (
+                      <li
+                        key={l.id}
+                        className="flex flex-col gap-2 border border-adminreg-border bg-adminreg-header/40 px-3.5 py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between"
                       >
-                        Remove
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </AdminCard>
+                        <div className="min-w-0">
+                          <span className="font-medium text-adminreg-text">
+                            {from}
+                            {to !== from ? ` – ${to}` : ""}
+                          </span>
+                          <span className="mt-0.5 block text-adminreg-muted sm:mt-0 sm:ml-3 sm:inline">
+                            {l.reason || "Not specified"}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteLeaveTarget(l)}
+                          disabled={deleteLeave.isPending}
+                          className="shrink-0 text-sm font-medium text-adminreg-red hover:underline disabled:opacity-50"
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </AdminCard>
+          ) : null}
         </>
       ) : (
         <>
@@ -747,7 +787,7 @@ export function AdminProvidersPage() {
                 columns={directoryColumns}
                 rows={doctors}
                 keyExtractor={(r) => r.id}
-                onRowClick={openAvailability}
+                onRowClick={openDoctorDetails}
                 emptyTitle="No doctors yet"
                 emptyDescription="Add a doctor to create a user with the Doctor role for this branch."
               />
