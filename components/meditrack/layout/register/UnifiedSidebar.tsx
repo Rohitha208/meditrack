@@ -7,7 +7,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { ModuleSwitcher } from "./ModuleSwitcher"
 import { RoleSwitcher } from "./RoleSwitcher"
 import { useStaffRole } from "./RoleProvider"
-import { canAccessAppointmentBooking, isStageEditable, isStageVisible, isIpdStageVisible } from "./rbac"
+import { canAccessAppointmentBooking, canAccessDxWorklist, dxWorklistEditable, isStageEditable, isStageVisible, isIpdStageVisible } from "./rbac"
 import {
   ADMIN_NAV_GROUPS,
   ADMIN_REGISTER_NAV,
@@ -18,6 +18,7 @@ import {
 import { useRootContext } from "@/context/RootContext"
 import { STAGE_DEFS } from "@/components/meditrack/opd/thread/theme"
 import { APPOINTMENT_TABS } from "@/components/meditrack/opd/appointments/theme"
+import { DX_WORKLIST_DEFS } from "@/components/meditrack/opd/diagnostics/theme"
 import { IPD_BANDS, IPD_STAGE_DEFS } from "@/components/meditrack/ipd/thread/theme"
 
 const PATIENT = { name: "Meera Kulkarni", ageSex: "34 / Female", uhid: "UHID-0004821", visitId: "OPD-20260812-0091" }
@@ -130,7 +131,10 @@ function OpdNav() {
 
   const currentStage = pathname.startsWith("/opd/visit-thread") ? Number(searchParams.get("stage") ?? 0) : -1
   const currentTab = pathname.startsWith("/opd/appointments") ? Number(searchParams.get("tab") ?? 0) : -1
+  const currentWorklist = pathname.startsWith("/opd/diagnostics") ? (searchParams.get("screen") ?? "sample-collection") : null
   const showBooking = canAccessAppointmentBooking(role)
+  const showWorklists = canAccessDxWorklist(role)
+  const worklistsEditable = dxWorklistEditable(role)
   const isAdminRole = role === "admin"
 
   return (
@@ -167,6 +171,34 @@ function OpdNav() {
         <div className="mt-0.5 font-plexmono text-[10px] text-adminreg-sidebar-text-muted">Visit {PATIENT.visitId}</div>
         {isAdminRole && <p className="mt-1.5 font-plexmono text-[9px] uppercase tracking-wide text-adminreg-amber">Oversight view — read only</p>}
       </div>
+
+      {showWorklists && (
+        <div className="mb-4 border-b border-adminreg-sidebar-border pb-3">
+          <p className="mb-0.5 px-2.5 font-plexmono text-[9px] uppercase tracking-[0.1em] text-adminreg-sidebar-text-muted">Diagnostics worklists</p>
+          <p className="mb-1.5 px-2.5 text-[10px] italic text-adminreg-sidebar-text-muted">
+            {worklistsEditable ? "Order collected · scan performed · result entered" : "Oversight — read only"}
+          </p>
+          {DX_WORKLIST_DEFS.map((def) => {
+            const active = currentWorklist === def.key
+            return (
+              <Link
+                key={def.key}
+                href={def.href}
+                className="flex gap-2.5 px-2 py-2"
+              >
+                <div className="flex w-4 flex-shrink-0 flex-col items-center">
+                  <span className={cn("mt-[3px] h-2.5 w-2.5 rounded-full border-[1.5px]", active ? "border-adminreg-indigo bg-adminreg-indigo shadow-[0_0_0_3px_rgba(51,69,110,0.25)]" : "border-adminreg-sidebar-text-muted bg-transparent")} />
+                </div>
+                <div className="min-w-0 flex-1 pb-1">
+                  <div className="font-plexmono text-[9px] tracking-[0.04em] text-adminreg-sidebar-text-muted">{def.role}</div>
+                  <div className={cn("mt-px text-[13px]", active ? "font-extrabold text-adminreg-sidebar-text" : "font-semibold text-adminreg-sidebar-text-secondary")}>{def.name}</div>
+                  {!worklistsEditable && <div className="mt-0.5 text-[10px] italic text-adminreg-amber">View only</div>}
+                </div>
+              </Link>
+            )
+          })}
+        </div>
+      )}
 
       {STAGE_DEFS.map((def, i) => {
         if (!isStageVisible(role, i)) return null
