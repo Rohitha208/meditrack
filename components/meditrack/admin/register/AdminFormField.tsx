@@ -10,7 +10,9 @@ export interface AdminFieldOption {
 }
 
 export interface AdminFieldDescriptor {
-  key: string
+  /** Descriptor identity. Pass `id` too when spreading, since React consumes `key`. */
+  key?: string
+  id?: string
   label: string
   type: AdminFieldType
   value: string
@@ -34,17 +36,18 @@ const FIELD_BASE =
  */
 export function AdminFormField(field: AdminFieldDescriptor) {
   const borderClass = field.error ? "border-adminreg-red" : "border-adminreg-border"
+  const fieldId = field.id ?? field.key
 
   return (
     <div className="space-y-1.5">
-      <label htmlFor={field.key} className="block font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted2">
+      <label htmlFor={fieldId} className="block font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted2">
         {field.label}
         {field.required && " *"}
       </label>
 
       {field.type === "select" ? (
         <select
-          id={field.key}
+          id={fieldId}
           value={field.value}
           onChange={(e) => field.onChange(e.target.value)}
           className={cn(FIELD_BASE, borderClass)}
@@ -55,7 +58,7 @@ export function AdminFormField(field: AdminFieldDescriptor) {
         </select>
       ) : field.type === "textarea" ? (
         <textarea
-          id={field.key}
+          id={fieldId}
           value={field.value}
           onChange={(e) => field.onChange(e.target.value)}
           placeholder={field.placeholder}
@@ -83,7 +86,7 @@ export function AdminFormField(field: AdminFieldDescriptor) {
         </div>
       ) : (
         <input
-          id={field.key}
+          id={fieldId}
           type={field.type}
           value={field.value}
           onChange={(e) => field.onChange(e.target.value)}

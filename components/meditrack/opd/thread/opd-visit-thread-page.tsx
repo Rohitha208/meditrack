@@ -2,7 +2,8 @@
 
 import { Fragment, useEffect, useRef, useState, type FormEvent } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { FileText, Loader2, Upload, X } from "lucide-react"
+import { useQueryClient } from "@tanstack/react-query"
+import { Loader2, Plus, Upload, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
@@ -18,9 +19,26 @@ import {
 } from "@/components/meditrack/admin/register"
 import { useStaffRole } from "@/components/meditrack/layout/register/RoleProvider"
 import { ROLE_LABEL, isStageEditable } from "@/components/meditrack/layout/register/rbac"
+import { BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
+import { useGetDepartmentDoctors } from "@/queries/meditrack/opd-booking"
+import {
+  useCollectFee,
+  useFeeCollectionByAppointment,
+  useFeeEstimate,
+  useLiveQueue,
+  useReassignToken,
+  useUpdateFeePaymentMethod,
+  useUpdateTokenStatus,
+  useVoidFeeItem,
+  useWaiveFee,
+  type FeeItem,
+  type OpdFeeCollection,
+  type OpdToken as OpdQueueToken,
+} from "@/queries/meditrack/opd-fee-token"
 import {
   RegistrationConflictError,
   useCreatePatientRegistration,
+  usePatientDetail,
   useRegistrationSearch,
   useUpdatePatientRegistration,
   useUploadRegistrationCards,
@@ -96,7 +114,21 @@ interface NewPatientForm {
   mobile: string
 }
 
+interface PendingCard {
+  key: string
+  name: string
+  file: File | null
+}
+
 const EMPTY_NEW_PATIENT: NewPatientForm = { fullName: "", dob: "", gender: "", mobile: "" }
+
+const GENDER_OPTIONS = ["Female", "Male", "Other"]
+
+function normalizeGender(value?: string | null) {
+  if (!value) return ""
+  const trimmed = value.trim()
+  return GENDER_OPTIONS.find((g) => g.toLowerCase() === trimmed.toLowerCase()) ?? trimmed
+}
 
 function formatAgeSex(age?: number | null, gender?: string | null) {
   return `${age != null ? age : "—"} / ${gender || "—"}`
@@ -171,13 +203,7 @@ interface Addendum {
 
 interface ThreadState {
   diagnosticsSkipped: boolean
-  tpaSelected: boolean
   bannerText: string | null
-  regAmended: boolean
-  feeVoided: boolean
-  waiverApplied: boolean
-  tokenCancelled: boolean
-  reassigned: boolean
   vitalsAmended: boolean
   retriaged: boolean
   addendums: Addendum[]
@@ -194,13 +220,7 @@ interface ThreadState {
 
 const INITIAL_STATE: ThreadState = {
   diagnosticsSkipped: false,
-  tpaSelected: false,
   bannerText: null,
-  regAmended: false,
-  feeVoided: false,
-  waiverApplied: false,
-  tokenCancelled: false,
-  reassigned: false,
   vitalsAmended: false,
   retriaged: false,
   addendums: [],
@@ -215,6 +235,19 @@ const INITIAL_STATE: ThreadState = {
   mergePick: { name: "A", phone: "A", address: "A", history: "B" },
 }
 
+// Field *specs* only — the live value/onChange pair is bound at render time
+// from `tmp`, otherwise a drawer config stored in state would freeze the
+// value it was built with and never reflect typing or prefill.
+interface FieldSpec {
+  key: string
+  label: string
+  type: AdminFieldType
+  defaultValue?: string
+  placeholder?: string
+  helper?: string
+  options?: { value: string; label: string }[]
+}
+
 interface DrawerCfg {
   badge?: { label: string; tone: DrawerBadgeTone }
   title: string
@@ -224,7 +257,7 @@ interface DrawerCfg {
   merge?: boolean
   saveLabel: string
   onSave: () => void | Promise<void>
-  fields: AdminFieldDescriptor[]
+  fields: FieldSpec[]
 }
 
 interface ModalCfg {
@@ -245,19 +278,44 @@ export function OpdVisitThreadPage() {
   const searchParams = useSearchParams()
   const { role } = useStaffRole()
   const { toast } = useToast()
+  const queryClient = useQueryClient()
 
   const s = Number(searchParams.get("stage") ?? 0)
   const from = searchParams.get("from")
+  const appointmentId = searchParams.get("appointmentId") || ""
   const editable = isStageEditable(role, s)
+  const {
+    companyId,
+    branchId,
+    setBranchId,
+    clinicId,
+    hasBranch,
+    branches,
+    isLoadingBranches,
+    noBranchMessage,
+  } = useBranchScope()
+  const selectedBranch = branches.find((b) => b.id === branchId)
 
   const registrationSearch = useRegistrationSearch()
   const createPatient = useCreatePatientRegistration()
   const updatePatient = useUpdatePatientRegistration()
   const uploadCards = useUploadRegistrationCards()
+  const collectFee = useCollectFee()
+  const waiveFee = useWaiveFee()
+  const voidFeeItem = useVoidFeeItem()
+  const updateFeePaymentMethod = useUpdateFeePaymentMethod()
+  const updateTokenStatus = useUpdateTokenStatus()
+  const reassignToken = useReassignToken()
 
   const [dismissedDeepLink, setDismissedDeepLink] = useState(false)
   const [state, setState] = useState<ThreadState>(INITIAL_STATE)
   const [tmp, setTmp] = useState<Record<string, string>>({})
+  // A drawer's onSave is stored in state, so it would close over the `tmp`
+  // snapshot taken when the drawer was opened — read through the ref instead.
+  const tmpRef = useRef<Record<string, string>>({})
+  useEffect(() => {
+    tmpRef.current = tmp
+  }, [tmp])
   const [drawer, setDrawer] = useState<DrawerCfg | null>(null)
   const [modal, setModal] = useState<ModalCfg | null>(null)
   const [modalReason, setModalReason] = useState("")
@@ -274,25 +332,113 @@ export function OpdVisitThreadPage() {
   const [newPatientTouched, setNewPatientTouched] = useState(false)
   const [activePatient, setActivePatient] = useState<ActiveRegPatient | null>(null)
   const [pendingDuplicateConfirm, setPendingDuplicateConfirm] = useState(false)
+  const editConfirmDuplicate = useRef(false)
 
-  // ABHA (Ayushman Bharat Health Account) — number + card upload, shown in
-  // the "Visit opened" panel of Stage 0. Image uploads get a thumbnail
-  // preview via an object URL (revoked on change/unmount to avoid leaks).
+  // ABHA number plus patient cards, shown in the "Visit opened" panel of
+  // Stage 0. Cards follow the clinic-license pattern: add a row, name it,
+  // attach a file.
   const [abhaNumber, setAbhaNumber] = useState("")
-  const [abhaFile, setAbhaFile] = useState<File | null>(null)
-  const [abhaPreviewUrl, setAbhaPreviewUrl] = useState<string | null>(null)
-  const [abhaPreviewOpen, setAbhaPreviewOpen] = useState(false)
-  const isAbhaImage = abhaFile?.type.startsWith("image/") ?? false
+  const [pendingCards, setPendingCards] = useState<PendingCard[]>([])
+
+  // Fee collection (Stage 1) and token / queue (Stage 2) — backend-backed.
+  const [paymentMethod, setPaymentMethod] = useState("Cash")
+  const [collection, setCollection] = useState<OpdFeeCollection | null>(null)
+  const [pendingWaiverReason, setPendingWaiverReason] = useState<string | null>(null)
+  const [locallyVoided, setLocallyVoided] = useState<number[]>([])
+  const [activeToken, setActiveToken] = useState<OpdQueueToken | null>(null)
+  const [reassignNote, setReassignNote] = useState<{ header: string; body: string } | null>(null)
+
+  // Registration search only returns age/gender, so pull the full record for
+  // the selected patient — Edit needs date of birth and the linked ABHA.
+  const patientDetail = usePatientDetail(activePatient?.id)
 
   useEffect(() => {
-    if (!abhaFile) {
-      setAbhaPreviewUrl(null)
-      return
-    }
-    const url = URL.createObjectURL(abhaFile)
-    setAbhaPreviewUrl(url)
-    return () => URL.revokeObjectURL(url)
-  }, [abhaFile])
+    const detail = patientDetail.data
+    if (!detail) return
+    setActivePatient((prev) => {
+      if (!prev || prev.id !== detail.id) return prev
+      const gender = normalizeGender(detail.gender) || prev.gender
+      const dateOfBirth = detail.dateOfBirth || prev.dateOfBirth
+      const phone = detail.phone || prev.phone
+      const uhid = detail.registrationNumber || prev.uhid
+      const abha = detail.abhaNumber || detail.nationalId || prev.abha
+      const ageSex = formatAgeSex(ageFromDob(dateOfBirth), gender)
+      if (
+        prev.gender === gender &&
+        prev.dateOfBirth === dateOfBirth &&
+        prev.phone === phone &&
+        prev.uhid === uhid &&
+        prev.abha === abha &&
+        prev.ageSex === ageSex
+      ) {
+        return prev
+      }
+      return { ...prev, gender, dateOfBirth, phone, uhid, abha, ageSex }
+    })
+    const linkedAbha = detail.abhaNumber || detail.nationalId
+    if (linkedAbha) setAbhaNumber((prev) => prev || linkedAbha)
+  }, [patientDetail.data])
+
+  // A fee already collected for this appointment survives a page reload.
+  const { data: existingCollection } = useFeeCollectionByAppointment(appointmentId || undefined)
+
+  useEffect(() => {
+    if (!existingCollection) return
+    setCollection(existingCollection)
+    setPaymentMethod(existingCollection.paymentMethod || "Cash")
+    if (existingCollection.token) setActiveToken(existingCollection.token)
+  }, [existingCollection])
+
+  const { data: feeEstimate } = useFeeEstimate(
+    { appointmentId: appointmentId || undefined, patientId: activePatient?.id, clinicId },
+    (s === 1 || s === 2) && !collection
+  )
+
+  const feeCharges: FeeItem[] = collection?.charges ?? feeEstimate?.charges ?? []
+  const payableCharges = feeCharges.filter((c, i) => !c.isVoid && !locallyVoided.includes(i))
+  const anyChargeVoided = feeCharges.some((c) => c.isVoid) || locallyVoided.length > 0
+  const feeWaived = collection?.isWaived || !!pendingWaiverReason
+  const waiverReason = collection?.waiverReason || pendingWaiverReason
+  const totalPayable = feeWaived ? 0 : payableCharges.reduce((sum, c) => sum + (c.amount || 0), 0)
+  const feeDoctorId = collection?.userId || feeEstimate?.userId || ""
+  const feeDepartmentId = collection?.departmentId || feeEstimate?.departmentId || ""
+  const feeDepartmentName = collection?.departmentName || feeEstimate?.departmentName || "—"
+  const feeDoctorName = collection?.userName || feeEstimate?.userName || "—"
+
+  const tokenCancelled = activeToken?.status === "Cancelled"
+  const queueDate = activeToken?.tokenDate
+    ? activeToken.tokenDate.slice(0, 10)
+    : new Date().toLocaleDateString("en-CA")
+  const { data: liveQueue, isLoading: liveQueueLoading } = useLiveQueue(
+    {
+      clinicId,
+      companyId: companyId || undefined,
+      date: queueDate,
+    },
+    s === 2 && !!clinicId
+  )
+  const missedTokens = liveQueue?.missedTokens ?? []
+
+  const { data: reassignDoctors = [] } = useGetDepartmentDoctors(
+    activeToken?.departmentId || undefined,
+    clinicId,
+    s === 2 && !!activeToken?.departmentId
+  )
+
+  const invalidateQueue = () =>
+    void queryClient.invalidateQueries({ queryKey: ["meditrack", "opd-live-queue"] })
+
+  function addPendingCard() {
+    setPendingCards((list) => [...list, { key: `card-${Date.now()}-${list.length}`, name: "", file: null }])
+  }
+
+  function updatePendingCard(key: string, patch: Partial<PendingCard>) {
+    setPendingCards((list) => list.map((item) => (item.key === key ? { ...item, ...patch } : item)))
+  }
+
+  function removePendingCard(key: string) {
+    setPendingCards((list) => list.filter((item) => item.key !== key))
+  }
 
   // Day-of check-in hands the appointment's patient over on the URL. Look the
   // patient up through registration-search so Stage 0 shows live record data
@@ -394,7 +540,7 @@ export function OpdVisitThreadPage() {
   function activatePatient(patient: ActiveRegPatient, banner: string) {
     setActivePatient(patient)
     setAbhaNumber(patient.abha && patient.abha !== "Not linked" ? patient.abha : "")
-    setAbhaFile(null)
+    setPendingCards([])
     patch({ bannerText: banner })
   }
 
@@ -450,18 +596,33 @@ export function OpdVisitThreadPage() {
       toast({ title: "No patient selected", description: "Search or register a patient first.", variant: "destructive" })
       return
     }
+
+    const readyCards = pendingCards.filter((c) => c.name.trim() && c.file)
+    const incomplete = pendingCards.find((c) => (c.name.trim() && !c.file) || (!c.name.trim() && c.file))
+    if (incomplete) {
+      toast({
+        title: "Card incomplete",
+        description: "Each card needs both a name and a file before saving.",
+        variant: "destructive",
+      })
+      return
+    }
+
     try {
       const updated = await updatePatient.mutateAsync({
         id: activePatient.id,
         abhaNumber: abhaNumber.trim() || null,
       })
-      if (abhaFile) {
+      if (readyCards.length) {
         await uploadCards.mutateAsync({
           patientId: activePatient.id,
-          cardLabel: "ABHA Card",
-          cardNumber: abhaNumber.trim() || undefined,
-          file: abhaFile,
+          cards: readyCards.map((c) => ({
+            label: c.name.trim(),
+            number: /abha/i.test(c.name) ? abhaNumber.trim() || undefined : undefined,
+            file: c.file as File,
+          })),
         })
+        setPendingCards([])
       }
       setActivePatient((prev) =>
         prev
@@ -471,8 +632,15 @@ export function OpdVisitThreadPage() {
             }
           : prev
       )
-      patch({ bannerText: "ABHA details saved." })
-      toast({ title: "ABHA saved", description: abhaFile ? "Number and card uploaded." : "ABHA number updated." })
+      patch({
+        bannerText: readyCards.length
+          ? `Saved — ${readyCards.length} card${readyCards.length > 1 ? "s" : ""} uploaded.`
+          : "ABHA details saved.",
+      })
+      toast({
+        title: "Saved",
+        description: readyCards.length ? "ABHA number and cards uploaded." : "ABHA number updated.",
+      })
     } catch (err) {
       toast({
         title: "Could not save ABHA",
@@ -483,16 +651,24 @@ export function OpdVisitThreadPage() {
   }
 
   const patch = (p: Partial<ThreadState>) => setState((prev) => ({ ...prev, ...p }))
-  const goToStage = (n: number) => router.push(`/opd/visit-thread?stage=${Math.max(0, Math.min(8, n))}`)
+  const goToStage = (n: number) => {
+    // Keep the appointment/patient context across stages — the fee and token
+    // calls are built from it.
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("stage", String(Math.max(0, Math.min(8, n))))
+    router.push(`/opd/visit-thread?${params}`)
+  }
 
   function closeDrawer() {
     setDrawer(null)
+    tmpRef.current = {}
     setTmp({})
   }
   function closeModal() {
     setModal(null)
   }
   function openDrawer(cfg: DrawerCfg, initial: Record<string, string> = {}) {
+    tmpRef.current = initial
     setTmp(initial)
     setDrawer(cfg)
   }
@@ -516,16 +692,30 @@ export function OpdVisitThreadPage() {
     }
   }
 
-  function field(key: string, label: string, type: AdminFieldType, opts: { default?: string; placeholder?: string; helper?: string; options?: string[] } = {}): AdminFieldDescriptor {
+  function field(
+    key: string,
+    label: string,
+    type: AdminFieldType,
+    opts: { default?: string; placeholder?: string; helper?: string; options?: (string | { value: string; label: string })[] } = {}
+  ): FieldSpec {
     return {
       key,
       label,
       type,
-      value: tmp[key] ?? opts.default ?? "",
-      onChange: (v) => setTmp((prev) => ({ ...prev, [key]: v })),
+      defaultValue: opts.default,
       placeholder: opts.placeholder,
       helper: opts.helper,
-      options: opts.options?.map((o) => ({ value: o, label: o })),
+      options: opts.options?.map((o) => (typeof o === "string" ? { value: o, label: o } : o)),
+    }
+  }
+
+  function toFieldDescriptor(spec: FieldSpec): AdminFieldDescriptor {
+    const { defaultValue, key, ...rest } = spec
+    return {
+      ...rest,
+      id: key,
+      value: tmp[key] ?? defaultValue ?? "",
+      onChange: (v) => setTmp((prev) => ({ ...prev, [key]: v })),
     }
   }
 
@@ -541,18 +731,28 @@ export function OpdVisitThreadPage() {
   // ----- derived data -----
   const activeStage = STAGE_DEFS[s]
 
-  const queue = [
-    { token: "C-012", name: "Rajesh Kumar", wait: "In consultation", className: "text-adminreg-muted" },
-    { token: "C-013", name: "Sunita Patil", wait: "Next · ~5 min", className: "text-adminreg-text" },
-    {
-      token: "C-014",
-      name: state.tokenCancelled ? "Meera Kulkarni — CANCELLED" : "Meera Kulkarni (you)",
-      wait: state.tokenCancelled ? "—" : "~18 min",
-      className: state.tokenCancelled ? SUPERSEDED_CLASS : "text-adminreg-indigo-dark font-extrabold",
-    },
-    { token: "C-015", name: "Faisal Ahmed", wait: "~28 min", className: "text-adminreg-muted" },
-    { token: "C-016", name: "Deepa Reddy", wait: "~38 min", className: "text-adminreg-muted" },
-  ]
+  const queueRows = (liveQueue?.activeQueue ?? []).map((t) => {
+    const isThisVisit = !!activeToken && t.id === activeToken.id
+    const cancelled = t.status === "Cancelled"
+    const done = t.status === "Completed"
+    const doctorLabel = [t.userName, t.departmentName].filter(Boolean).join(" — ")
+    const patientLabel = cancelled
+      ? `${t.patientName} — CANCELLED`
+      : isThisVisit
+        ? `${t.patientName} (you)`
+        : t.patientName
+    return {
+      id: t.id,
+      token: t.tokenNumber,
+      name: doctorLabel ? `${patientLabel} · ${doctorLabel}` : patientLabel,
+      wait: cancelled ? "Cancelled" : t.waitTimeLabel,
+      className: cancelled || done
+        ? SUPERSEDED_CLASS
+        : isThisVisit
+          ? "text-adminreg-indigo-dark font-extrabold"
+          : "text-adminreg-muted",
+    }
+  })
 
   const vitalsRaw = [
     { label: "BP", value: "128/82", unit: "mmHg", crit: false },
@@ -597,35 +797,72 @@ export function OpdVisitThreadPage() {
       toast({ title: "No patient selected", description: "Search or register a patient first.", variant: "destructive" })
       return
     }
+    if (patientDetail.isLoading) {
+      toast({ title: "Loading patient record", description: "Please try again in a moment." })
+      return
+    }
+    const detail = patientDetail.data
+    editConfirmDuplicate.current = false
+    const currentDob = detail?.dateOfBirth || activePatient.dateOfBirth || ""
+    const currentGender = normalizeGender(detail?.gender || activePatient.gender)
+    const currentPhone = detail?.phone || (activePatient.phone === "—" ? "" : activePatient.phone)
     openDrawer(
       {
         badge: badge("LIVE EDIT"),
         title: "Edit demographics",
         saveLabel: updatePatient.isPending ? "Saving…" : "Save",
         onSave: async () => {
+          const values = tmpRef.current
+          const name = values.name?.trim()
+          const phone = values.phone?.trim()
+          const gender = values.gender?.trim()
+          const dob = toIsoDob(values.dob || "")
+          if (!name || !phone || !gender || !dob) {
+            toast({
+              title: "All fields required",
+              description: "Name, date of birth, gender and phone must all be filled.",
+              variant: "destructive",
+            })
+            return
+          }
           try {
             const updated = await updatePatient.mutateAsync({
               id: activePatient.id,
-              name: tmp.name?.trim() || activePatient.name,
-              phone: tmp.phone?.trim() || activePatient.phone,
+              name,
+              phone,
+              gender,
+              dateOfBirth: dob,
+              confirmDuplicate: editConfirmDuplicate.current,
             })
+            const nextDob = updated.dateOfBirth || dob
+            const nextGender = updated.gender || gender
             setActivePatient((prev) =>
               prev
                 ? {
                     ...prev,
-                    name: updated.name || tmp.name || prev.name,
-                    phone: updated.phone || tmp.phone || prev.phone,
+                    name: updated.name || name,
+                    phone: updated.phone || phone,
                     uhid: updated.registrationNumber || prev.uhid,
                     abha: updated.abhaNumber || updated.nationalId || prev.abha,
-                    gender: updated.gender || prev.gender,
-                    dateOfBirth: updated.dateOfBirth || prev.dateOfBirth,
-                    ageSex: formatAgeSex(ageFromDob(updated.dateOfBirth || prev.dateOfBirth), updated.gender || prev.gender),
+                    gender: nextGender,
+                    dateOfBirth: nextDob,
+                    ageSex: formatAgeSex(ageFromDob(nextDob), nextGender),
                   }
                 : prev
             )
+            void queryClient.invalidateQueries({ queryKey: ["meditrack", "patient-detail", activePatient.id] })
             patch({ bannerText: "Demographics updated." })
             closeDrawer()
           } catch (err) {
+            if (err instanceof RegistrationConflictError) {
+              editConfirmDuplicate.current = true
+              toast({
+                title: "Possible duplicate",
+                description: `${err.candidates.length || "Some"} similar patient(s) found. Save again to apply these changes anyway.`,
+                variant: "destructive",
+              })
+              return
+            }
             toast({
               title: "Could not update patient",
               description: getToastErrorMessage(err, "Update failed"),
@@ -633,20 +870,27 @@ export function OpdVisitThreadPage() {
             })
           }
         },
-        fields: [field("name", "Full name", "text"), field("phone", "Phone", "text")],
+        fields: [
+          field("name", "Full name", "text"),
+          field("dob", "Date of birth", "date"),
+          field("gender", "Gender", "select", {
+            options: [
+              { value: "", label: "Select gender" },
+              ...GENDER_OPTIONS,
+              ...(currentGender && !GENDER_OPTIONS.includes(currentGender) ? [currentGender] : []),
+            ],
+          }),
+          field("phone", "Phone", "text"),
+        ],
       },
-      { name: activePatient.name, phone: activePatient.phone === "—" ? "" : activePatient.phone }
+      {
+        name: detail?.name || activePatient.name,
+        dob: currentDob ? currentDob.slice(0, 10) : "",
+        gender: currentGender,
+        phone: currentPhone,
+      }
     )
   }
-  const openRegAmend = () =>
-    openDrawer({
-      badge: badge("AMENDMENT"),
-      title: "Correct demographics (post-registration)",
-      saveLabel: "Apply amendment",
-      consequenceNote: "This will also update 3 past visit records linked to UHID-0004821.",
-      onSave: doSave("Demographics amended across linked records.", { regAmended: true }),
-      fields: [field("dob", "Corrected date of birth", "text", { placeholder: "DD/MM/YYYY" }), field("reason", "Reason", "textarea", { placeholder: "e.g. DOB corrected — original entry had a transposed digit" })],
-    })
   const openVisitVoid = () =>
     openModal({
       badge: badge("VOID"),
@@ -676,44 +920,221 @@ export function OpdVisitThreadPage() {
       fields: [],
     })
 
-  const openFeeVoid = () =>
+  const openFeeVoid = (charge: FeeItem, index: number) =>
     openModal({
       badge: badge("VOID"),
       title: "Void collected fee?",
-      lines: ["Receipt REC-00842 has already been printed and cannot be un-issued.", "A credit note will be generated and a refund initiated to the original payment method."],
+      lines: collection
+        ? [
+            `Receipt ${collection.receiptNumber} has already been printed and cannot be un-issued.`,
+            "A credit note will be generated and a refund initiated to the original payment method.",
+          ]
+        : ["This charge has not been collected yet — it will be dropped from the payable list."],
       reasonField: true,
       reasonPlaceholder: "e.g. Duplicate charge entered in error",
       confirmLabel: "Void fee",
-      onConfirm: doConfirm("Fee voided. Credit note CN-0091 generated.", { feeVoided: true }),
+      onConfirm: async (reason: string) => {
+        if (!collection) {
+          setLocallyVoided((prev) => [...prev, index])
+          patch({ bannerText: `${charge.chargeName} removed from the payable list.` })
+          closeModal()
+          return
+        }
+        try {
+          const updated = await voidFeeItem.mutateAsync({
+            id: collection.id,
+            itemId: charge.id,
+            voidReason: reason?.trim() || "Charge voided",
+          })
+          setCollection(updated)
+          patch({ bannerText: `Charge voided on receipt ${updated.receiptNumber}.` })
+          closeModal()
+        } catch (err) {
+          toast({ title: "Could not void charge", description: getToastErrorMessage(err, "Void failed"), variant: "destructive" })
+        }
+      },
     })
+
   const openWaiver = () =>
     openDrawer({
       badge: badge("OVERRIDE"),
       title: "Waive consultation fee",
       saveLabel: "Apply waiver",
-      onSave: doSave("Fee waived.", { waiverApplied: true }),
+      onSave: async () => {
+        const reason = tmpRef.current.reason?.trim()
+        if (!reason) {
+          toast({ title: "Reason required", description: "A waiver bypasses a system rule and must be justified.", variant: "destructive" })
+          return
+        }
+        if (!collection) {
+          setPendingWaiverReason(reason)
+          patch({ bannerText: "Fee waived — applies when payment is confirmed." })
+          closeDrawer()
+          return
+        }
+        try {
+          const updated = await waiveFee.mutateAsync({ id: collection.id, waiverReason: reason })
+          setCollection(updated)
+          setPaymentMethod(updated.paymentMethod || "Waived")
+          patch({ bannerText: "Fee waived." })
+          closeDrawer()
+        } catch (err) {
+          toast({ title: "Could not waive fee", description: getToastErrorMessage(err, "Waiver failed"), variant: "destructive" })
+        }
+      },
       fields: [field("reason", "Reason (required — bypasses system rule)", "textarea", { placeholder: "e.g. Follow-up window expired 2 days ago, approved by shift supervisor" })],
     })
 
-  const openReassign = () =>
+  async function choosePaymentMethod(method: string) {
+    setPaymentMethod(method)
+    if (!collection) return
+    try {
+      const updated = await updateFeePaymentMethod.mutateAsync({ id: collection.id, paymentMethod: method })
+      setCollection(updated)
+    } catch (err) {
+      toast({ title: "Could not change payment method", description: getToastErrorMessage(err, "Update failed"), variant: "destructive" })
+    }
+  }
+
+  async function confirmPaymentAndIssueToken() {
+    if (collection) {
+      goNext()
+      return
+    }
+    if (!feeDoctorId) {
+      toast({
+        title: "No consulting doctor on this visit",
+        description: "Open the visit from a booked appointment so the doctor is known before collecting the fee.",
+        variant: "destructive",
+      })
+      return
+    }
+    try {
+      const created = await collectFee.mutateAsync({
+        appointmentId: appointmentId || null,
+        patientId: activePatient?.id || feeEstimate?.patientId || null,
+        userId: feeDoctorId,
+        departmentId: feeDepartmentId || null,
+        clinicId: clinicId || feeEstimate?.clinicId || null,
+        paymentMethod,
+        isWaived: !!pendingWaiverReason,
+        waiverReason: pendingWaiverReason,
+        visitType: feeEstimate?.visitType,
+        charges: payableCharges.map((c) => ({ tariffId: c.tariffId, chargeName: c.chargeName, amount: c.amount })),
+      })
+      setCollection(created)
+      setPaymentMethod(created.paymentMethod || paymentMethod)
+      setLocallyVoided([])
+      if (created.token) setActiveToken(created.token)
+      invalidateQueue()
+      patch({
+        bannerText: created.token
+          ? `Payment collected — receipt ${created.receiptNumber}. Token ${created.token.tokenNumber} issued.`
+          : `Payment collected — receipt ${created.receiptNumber}.`,
+      })
+      goNext()
+    } catch (err) {
+      toast({ title: "Could not collect fee", description: getToastErrorMessage(err, "Collection failed"), variant: "destructive" })
+    }
+  }
+
+  const openReassign = () => {
+    if (!activeToken) return
     openDrawer({
       badge: badge("LIVE EDIT"),
       title: "Reassign department / doctor",
       saveLabel: "Reassign",
-      onSave: doSave("Reassigned to Cardiology.", { reassigned: true }),
-      fields: [field("dept", "Department", "select", { options: ["Cardiology", "General Medicine", "Orthopedics"] }), field("reason", "Reason", "text", { placeholder: "e.g. Originally booked under wrong department" })],
+      onSave: async () => {
+        const doctorId = tmpRef.current.doctor
+        const reason = tmpRef.current.reason?.trim()
+        if (!doctorId) {
+          toast({ title: "Select a doctor", description: "Choose who the patient is being moved to.", variant: "destructive" })
+          return
+        }
+        try {
+          const updated = await reassignToken.mutateAsync({
+            tokenId: activeToken.id,
+            newDoctorUserId: doctorId,
+            reason: reason || null,
+          })
+          setActiveToken(updated)
+          setReassignNote({
+            header: `REASSIGNED · ${ROLE_LABEL[role] ?? "Front desk"}${reason ? ` · Reason: ${reason}` : ""}`,
+            body: `Moved to ${updated.departmentName}, ${updated.userName}. New token ${updated.tokenNumber}.`,
+          })
+          invalidateQueue()
+          patch({ bannerText: `Reassigned to ${updated.userName} — new token ${updated.tokenNumber}.` })
+          closeDrawer()
+        } catch (err) {
+          toast({ title: "Could not reassign", description: getToastErrorMessage(err, "Reassign failed"), variant: "destructive" })
+        }
+      },
+      fields: [
+        field("doctor", "Doctor", "select", {
+          options: [
+            { value: "", label: reassignDoctors.length ? "Select doctor" : "No doctors found for this department" },
+            ...reassignDoctors.map((d) => ({ value: d.providerId, label: d.providerName })),
+          ],
+        }),
+        field("reason", "Reason", "text", { placeholder: "e.g. Originally booked under wrong department" }),
+      ],
     })
-  const openTokenVoid = () =>
+  }
+
+  const openTokenVoid = () => {
+    if (!activeToken) return
     openModal({
       badge: badge("VOID"),
-      title: "Cancel token C-014?",
+      title: `Cancel token ${activeToken.tokenNumber}?`,
       lines: ["The slot stays visible in the queue, marked cancelled — not renumbered, so other tokens keep their expected position."],
       reasonField: true,
       reasonPlaceholder: "e.g. Patient left before being called",
       confirmLabel: "Cancel token",
-      onConfirm: doConfirm("Token C-014 cancelled.", { tokenCancelled: true }),
+      onConfirm: async (reason: string) => {
+        try {
+          const updated = await updateTokenStatus.mutateAsync({
+            tokenId: activeToken.id,
+            status: "Cancelled",
+            reason: reason?.trim() || "Cancelled at front desk",
+          })
+          setActiveToken(updated)
+          invalidateQueue()
+          patch({ bannerText: `Token ${updated.tokenNumber} cancelled.` })
+          closeModal()
+        } catch (err) {
+          toast({ title: "Could not cancel token", description: getToastErrorMessage(err, "Cancel failed"), variant: "destructive" })
+        }
+      },
     })
-  const requeue = () => patch({ bannerText: "Priya Shah re-queued as new token C-017." })
+  }
+
+  async function requeueToken(target: OpdQueueToken) {
+    try {
+      const updated = await updateTokenStatus.mutateAsync({
+        tokenId: target.id,
+        status: "Waiting",
+        reason: "Re-queued at front desk",
+      })
+      invalidateQueue()
+      patch({ bannerText: `${updated.patientName} re-queued as token ${updated.tokenNumber}.` })
+    } catch (err) {
+      toast({ title: "Could not re-queue", description: getToastErrorMessage(err, "Re-queue failed"), variant: "destructive" })
+    }
+  }
+
+  async function callInPatient() {
+    if (activeToken && activeToken.status !== "InConsultation" && activeToken.status !== "Cancelled") {
+      try {
+        const updated = await updateTokenStatus.mutateAsync({ tokenId: activeToken.id, status: "InConsultation" })
+        setActiveToken(updated)
+        invalidateQueue()
+      } catch (err) {
+        toast({ title: "Could not call in patient", description: getToastErrorMessage(err, "Update failed"), variant: "destructive" })
+        return
+      }
+    }
+    goNext()
+  }
 
   const openVitalsEdit = () =>
     openDrawer({ badge: badge("LIVE EDIT"), title: "Edit vitals (not yet reviewed)", saveLabel: "Save", onSave: doSave("Vitals updated."), fields: [field("spo2", "SpO2 (%)", "text", { default: "91" })] })
@@ -815,6 +1236,12 @@ export function OpdVisitThreadPage() {
           </div>
           <h1 className="text-[21px] font-extrabold tracking-[-0.01em] text-adminreg-text">{activeStage.name}</h1>
         </div>
+        <BranchSelect
+          value={branchId}
+          onValueChange={setBranchId}
+          branches={branches}
+          isLoading={isLoadingBranches}
+        />
       </div>
 
       {!editable && <ViewOnlyBanner role={ROLE_LABEL[role]} />}
@@ -1089,7 +1516,6 @@ export function OpdVisitThreadPage() {
                   {editable && activePatient && (
                     <div className="flex gap-3">
                       <LinkAction tone="edit" onClick={openRegEdit}>Edit</LinkAction>
-                      <LinkAction tone="amend" onClick={openRegAmend}>Amend (post-registration)</LinkAction>
                       <LinkAction tone="void" onClick={openVisitVoid}>Cancel visit</LinkAction>
                     </div>
                   )}
@@ -1108,69 +1534,83 @@ export function OpdVisitThreadPage() {
                         </div>
                       )}
                     </div>
-                    {state.regAmended && (
-                      <AddendumNote header="AMENDMENT · A. Bhatt · 12 Aug 2026, 10:12 · Reason: DOB corrected — original entry had a transposed digit">
-                        DOB corrected to 14 Mar 1992. This update also applied to 3 linked past visit records under this UHID.
-                      </AddendumNote>
-                    )}
                     <div className="mt-3 border-t border-adminreg-divider pt-3">
                       <FieldLabel>ABHA (Ayushman Bharat Health Account)</FieldLabel>
-                      <div className="mt-1.5 grid grid-cols-2 gap-2.5">
-                        <input
-                          value={abhaNumber}
-                          onChange={(e) => setAbhaNumber(e.target.value)}
-                          placeholder="Ayushman health account no."
-                          disabled={!editable}
-                          className="w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-60"
-                        />
-                        <label
-                          className={cn(
-                            "flex cursor-pointer items-center justify-center gap-2 border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-center text-sm text-adminreg-muted hover:text-adminreg-text",
-                            !editable && "pointer-events-none opacity-60"
-                          )}
-                        >
-                          <Upload className="h-4 w-4 flex-shrink-0" />
-                          <span className="truncate">Upload Ayushman card</span>
-                          <input
-                            type="file"
-                            accept="image/*,.pdf"
-                            disabled={!editable}
-                            className="hidden"
-                            onChange={(e) => setAbhaFile(e.target.files?.[0] ?? null)}
-                          />
-                        </label>
+                      <input
+                        value={abhaNumber}
+                        onChange={(e) => setAbhaNumber(e.target.value)}
+                        placeholder="Ayushman health account no."
+                        disabled={!editable}
+                        className="mt-1.5 w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-60"
+                      />
+
+                      <div className="mt-3.5 flex items-center justify-between gap-2">
+                        <div>
+                          <FieldLabel>Cards</FieldLabel>
+                          <p className="mt-0.5 text-[11px] text-adminreg-muted">PDF or image · name each card</p>
+                        </div>
+                        {editable && (
+                          <AdminButton type="button" variant="secondary" onClick={addPendingCard}>
+                            <Plus className="h-3.5 w-3.5" />
+                            Add card
+                          </AdminButton>
+                        )}
                       </div>
-                      {abhaFile && (
-                        <div className="mt-2 flex items-center gap-3">
-                          <button type="button" onClick={() => setAbhaPreviewOpen(true)} className="flex-shrink-0">
-                            {isAbhaImage ? (
-                              <img src={abhaPreviewUrl ?? undefined} alt="ABHA card preview" className="h-16 w-16 border border-adminreg-border object-cover" />
-                            ) : (
-                              <div className="flex h-16 w-16 items-center justify-center border border-adminreg-border bg-adminreg-header">
-                                <FileText className="h-7 w-7 text-adminreg-red-text" />
+
+                      {pendingCards.length === 0 ? (
+                        <p className="mt-2 text-[11px] text-adminreg-muted">
+                          No cards attached yet. Use Add card to attach an ABHA or insurance card.
+                        </p>
+                      ) : (
+                        <div className="mt-2 space-y-2">
+                          {pendingCards.map((card) => (
+                            <div key={card.key} className="border border-adminreg-border bg-adminreg-bg p-2.5">
+                              <div className="flex items-end gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <FieldLabel>Card name</FieldLabel>
+                                  <input
+                                    value={card.name}
+                                    onChange={(e) => updatePendingCard(card.key, { name: e.target.value })}
+                                    placeholder="e.g. ABHA Card"
+                                    disabled={!editable}
+                                    className="mt-1 w-full border border-adminreg-border bg-adminreg-card px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-60"
+                                  />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <FieldLabel>Upload</FieldLabel>
+                                  <label
+                                    className={cn(
+                                      "mt-1 flex h-[38px] cursor-pointer items-center gap-2 border border-dashed border-adminreg-border bg-adminreg-card px-2.5 text-sm text-adminreg-muted hover:text-adminreg-text",
+                                      !editable && "pointer-events-none opacity-60"
+                                    )}
+                                  >
+                                    <Upload className="h-4 w-4 flex-shrink-0" />
+                                    <span className="truncate">{card.file ? card.file.name : "Choose PDF or image…"}</span>
+                                    <input
+                                      type="file"
+                                      accept="image/*,.pdf"
+                                      disabled={!editable}
+                                      className="hidden"
+                                      onChange={(e) => updatePendingCard(card.key, { file: e.target.files?.[0] ?? null })}
+                                    />
+                                  </label>
+                                </div>
+                                {editable && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removePendingCard(card.key)}
+                                    className="mb-2.5 flex-shrink-0 text-adminreg-muted hover:text-adminreg-red-text"
+                                    aria-label="Remove card"
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </button>
+                                )}
                               </div>
-                            )}
-                          </button>
-                          <p className="text-xs text-adminreg-olive-dark">Uploaded — {abhaFile.name}</p>
-                        </div>
-                      )}
-                      {abhaPreviewOpen && abhaFile && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" onClick={() => setAbhaPreviewOpen(false)}>
-                          <div className="relative max-h-[90vh] max-w-[90vw] border border-adminreg-border bg-adminreg-card p-3" onClick={(e) => e.stopPropagation()}>
-                            <div className="mb-2 flex items-center justify-between gap-6">
-                              <p className="text-sm font-bold text-adminreg-text">{abhaFile.name}</p>
-                              <button type="button" onClick={() => setAbhaPreviewOpen(false)} className="text-adminreg-muted hover:text-adminreg-text">
-                                <X className="h-4 w-4" />
-                              </button>
                             </div>
-                            {isAbhaImage ? (
-                              <img src={abhaPreviewUrl ?? undefined} alt="ABHA card preview" className="max-h-[75vh] max-w-[85vw] object-contain" />
-                            ) : (
-                              <iframe src={abhaPreviewUrl ?? undefined} title="ABHA card PDF preview" className="h-[75vh] w-[85vw]" />
-                            )}
-                          </div>
+                          ))}
                         </div>
                       )}
+
                       {editable && (
                         <AdminButton
                           type="button"
@@ -1180,7 +1620,7 @@ export function OpdVisitThreadPage() {
                           disabled={updatePatient.isPending || uploadCards.isPending}
                         >
                           {(updatePatient.isPending || uploadCards.isPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                          Save ABHA
+                          Save ABHA &amp; cards
                         </AdminButton>
                       )}
                     </div>
@@ -1204,33 +1644,58 @@ export function OpdVisitThreadPage() {
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
               <div className="border border-adminreg-border bg-adminreg-card">
                 <div className="grid grid-cols-[1.6fr_1fr_90px] bg-adminreg-header px-4 py-2.5 text-[11px] font-bold text-adminreg-muted"><span>Charge</span><span>Amount (₹)</span><span /></div>
-                <div className="grid grid-cols-[1.6fr_1fr_90px] items-center border-t border-adminreg-divider px-4 py-2.5 text-sm">
-                  <span className={state.feeVoided ? SUPERSEDED_CLASS : ""}>Specialist consultation — Cardiology {state.feeVoided && <SupersededTag />}</span>
-                  <span className={cn("font-plexmono", state.feeVoided && SUPERSEDED_CLASS)}>700</span>
-                  {editable && !state.feeVoided && <LinkAction tone="void" onClick={openFeeVoid}>Void</LinkAction>}
-                </div>
-                {state.feeVoided && <div className="border-t border-adminreg-divider px-4 py-2.5 text-[11px] text-adminreg-amber-text">Receipt REC-00842 already printed and cannot be un-issued. Credit note CN-0091 generated; refund initiated to original payment method.</div>}
-                <div className="grid grid-cols-[1.6fr_1fr_90px] border-t border-adminreg-divider bg-adminreg-header px-4 py-2.5 text-sm font-bold"><span>Total payable</span><span className="font-plexmono">{state.feeVoided ? "₹0" : "₹700"}</span><span /></div>
+                {feeCharges.length === 0 && (
+                  <div className="border-t border-adminreg-divider px-4 py-2.5 text-sm text-adminreg-muted">
+                    No charges to collect for this visit yet.
+                  </div>
+                )}
+                {feeCharges.map((charge, index) => {
+                  const voided = charge.isVoid || locallyVoided.includes(index)
+                  return (
+                    <div key={charge.id || `${charge.chargeName}-${index}`} className="grid grid-cols-[1.6fr_1fr_90px] items-center border-t border-adminreg-divider px-4 py-2.5 text-sm">
+                      <span className={voided ? SUPERSEDED_CLASS : ""}>{charge.chargeName} {voided && <SupersededTag />}</span>
+                      <span className={cn("font-plexmono", voided && SUPERSEDED_CLASS)}>{charge.amount}</span>
+                      {editable && !voided && <LinkAction tone="void" onClick={() => openFeeVoid(charge, index)}>Void</LinkAction>}
+                    </div>
+                  )
+                })}
+                {anyChargeVoided && collection && (
+                  <div className="border-t border-adminreg-divider px-4 py-2.5 text-[11px] text-adminreg-amber-text">
+                    Receipt {collection.receiptNumber} already printed and cannot be un-issued. A credit note is generated; refund initiated to the original payment method.
+                  </div>
+                )}
+                <div className="grid grid-cols-[1.6fr_1fr_90px] border-t border-adminreg-divider bg-adminreg-header px-4 py-2.5 text-sm font-bold"><span>Total payable</span><span className="font-plexmono">₹{totalPayable}</span><span /></div>
               </div>
               <Panel>
                 <SectionLabel>Payment method</SectionLabel>
                 <div className="mb-3.5 flex flex-wrap gap-2">
-                  {["Cash", "UPI", "Card", "Cashless / TPA"].map((m) => {
-                    const active = state.tpaSelected ? m === "Cashless / TPA" : m === "Cash"
+                  {(feeEstimate?.availablePaymentMethods?.length ? feeEstimate.availablePaymentMethods : ["Cash", "UPI", "Card", "Cashless / TPA"]).map((m) => {
+                    const active = paymentMethod === m
                     return (
-                      <button key={m} type="button" disabled={!editable} onClick={() => patch({ tpaSelected: m === "Cashless / TPA" })} className={cn("px-3.5 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60", active ? "border-[1.5px] border-adminreg-indigo bg-adminreg-indigo-soft text-adminreg-indigo-dark" : "border border-adminreg-border bg-adminreg-bg text-adminreg-muted")}>
+                      <button key={m} type="button" disabled={!editable} onClick={() => void choosePaymentMethod(m)} className={cn("px-3.5 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60", active ? "border-[1.5px] border-adminreg-indigo bg-adminreg-indigo-soft text-adminreg-indigo-dark" : "border border-adminreg-border bg-adminreg-bg text-adminreg-muted")}>
                         {m}
                       </button>
                     )
                   })}
                 </div>
                 <p className="mb-3.5 text-[11px] text-adminreg-muted">Switching method before the visit proceeds is a live edit — no reason required.</p>
-                {state.tpaSelected && <div className="mb-3.5"><InlineWarning>Star Health pre-authorization pending. Token cannot be issued until approved or patient pays out-of-pocket.</InlineWarning></div>}
-                {editable && <AdminButton type="button" variant="secondary" className="mb-3.5" onClick={openWaiver}>Override — waive fee</AdminButton>}
-                {state.waiverApplied && (
-                  <AddendumNote header="OVERRIDE · A. Bhatt · Reason: Follow-up window expired 2 days ago, approved by shift supervisor">Fee waived — system&apos;s free-follow-up rule bypassed.</AddendumNote>
+                {paymentMethod === "Cashless / TPA" && <div className="mb-3.5"><InlineWarning>Cashless pre-authorization pending. Confirm approval or collect out-of-pocket before issuing the token.</InlineWarning></div>}
+                {editable && <AdminButton type="button" variant="secondary" className="mb-3.5" onClick={openWaiver} disabled={waiveFee.isPending}>Override — waive fee</AdminButton>}
+                {feeWaived && (
+                  <AddendumNote header={`OVERRIDE · ${ROLE_LABEL[role] ?? "Front desk"}${waiverReason ? ` · Reason: ${waiverReason}` : ""}`}>Fee waived — nothing to collect for this visit.</AddendumNote>
                 )}
-                {editable && <AdminButton type="button" accent="indigo" className="mt-4" onClick={goNext}>Confirm payment → Assign token</AdminButton>}
+                {collection && (
+                  <p className="mt-3.5 text-[11px] text-adminreg-muted">
+                    Receipt {collection.receiptNumber} · ₹{collection.amountPaid} {collection.paymentStatus?.toLowerCase()} via {collection.paymentMethod}
+                    {collection.token ? ` · token ${collection.token.tokenNumber}` : ""}
+                  </p>
+                )}
+                {editable && (
+                  <AdminButton type="button" accent="indigo" className="mt-4" onClick={() => void confirmPaymentAndIssueToken()} disabled={collectFee.isPending}>
+                    {collectFee.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {collection ? "Continue → Token & queue" : "Confirm payment → Assign token"}
+                  </AdminButton>
+                )}
               </Panel>
             </div>
           )}
@@ -1238,37 +1703,65 @@ export function OpdVisitThreadPage() {
           {s === 2 && (
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1.2fr]">
               <Panel>
-                <div className="flex justify-between"><SectionLabel>Assignment</SectionLabel>{editable && <LinkAction tone="edit" onClick={openReassign}>Reassign</LinkAction>}</div>
-                <FieldLabel>Department</FieldLabel><div className="mb-2.5"><FieldValue>Cardiology</FieldValue></div>
-                <FieldLabel>Doctor</FieldLabel><div className="mb-2.5"><FieldValue>Dr. Anjali Nair</FieldValue></div>
-                {state.reassigned && <AddendumNote header="REASSIGNED · A. Bhatt · Reason: Originally booked under wrong department">Moved to Cardiology, Dr. Anjali Nair.</AddendumNote>}
+                <div className="flex justify-between"><SectionLabel>Assignment</SectionLabel>{editable && activeToken && <LinkAction tone="edit" onClick={openReassign}>Reassign</LinkAction>}</div>
+                <FieldLabel>Department</FieldLabel><div className="mb-2.5"><FieldValue>{activeToken?.departmentName || feeDepartmentName}</FieldValue></div>
+                <FieldLabel>Doctor</FieldLabel><div className="mb-2.5"><FieldValue>{activeToken?.userName || feeDoctorName}</FieldValue></div>
+                {reassignNote && <AddendumNote header={reassignNote.header}>{reassignNote.body}</AddendumNote>}
                 <div className="mt-2.5"><FieldLabel>Visit type</FieldLabel></div>
                 <div className="mb-3.5 mt-1.5 flex gap-2">
-                  <span className="border-[1.5px] border-adminreg-indigo bg-adminreg-indigo-soft px-3 py-1.5 text-xs font-bold text-adminreg-indigo-dark">Walk-in</span>
-                  <span className="border border-adminreg-border bg-adminreg-bg px-3 py-1.5 text-xs font-semibold text-adminreg-muted">Pre-booked</span>
+                  {["Walk-in", "Pre-booked"].map((type) => {
+                    const active = (activeToken?.visitType || feeEstimate?.visitType || "Walk-in") === type
+                    return (
+                      <span key={type} className={cn("px-3 py-1.5 text-xs", active ? "border-[1.5px] border-adminreg-indigo bg-adminreg-indigo-soft font-bold text-adminreg-indigo-dark" : "border border-adminreg-border bg-adminreg-bg font-semibold text-adminreg-muted")}>
+                        {type}
+                      </span>
+                    )
+                  })}
                 </div>
                 <div className="bg-adminreg-sidebar px-4 py-4 text-center text-adminreg-card">
                   <div className="font-plexmono text-[10px] tracking-[0.05em] text-adminreg-sidebar-text-muted">TOKEN</div>
-                  <div className={cn("mt-1 font-plexmono text-[34px] font-bold", state.tokenCancelled && "opacity-50 line-through")}>C-014</div>
+                  <div className={cn("mt-1 font-plexmono text-[34px] font-bold", tokenCancelled && "opacity-50 line-through")}>{activeToken?.tokenNumber || "—"}</div>
                 </div>
-                {editable && !state.tokenCancelled && <button type="button" onClick={openTokenVoid} className="mt-2.5 block text-[11px] text-adminreg-amber-text underline">Cancel token</button>}
+                {editable && activeToken && !tokenCancelled && <button type="button" onClick={openTokenVoid} className="mt-2.5 block text-[11px] text-adminreg-amber-text underline">Cancel token</button>}
               </Panel>
               <Panel>
-                <div className="mb-3.5"><InlineWarning>⚠ Dr. Anjali Nair running approx. 25 min behind. Queue times adjusted.</InlineWarning></div>
-                <SectionLabel>Live queue — Cardiology</SectionLabel>
-                {queue.map((q) => (
-                  <div key={q.token} className="flex items-center justify-between border-t border-adminreg-divider py-2.5">
+                {liveQueue?.statusAlertMessage && <div className="mb-3.5"><InlineWarning>⚠ {liveQueue.statusAlertMessage}</InlineWarning></div>}
+                <SectionLabel>
+                  Live queue
+                  {selectedBranch?.name
+                    ? ` — ${selectedBranch.name}`
+                    : liveQueue?.departmentName
+                      ? ` — ${liveQueue.departmentName}`
+                      : " — all tokens today"}
+                </SectionLabel>
+                {!hasBranch && (
+                  <p className="border-t border-adminreg-divider py-2.5 text-sm text-adminreg-red">{noBranchMessage}</p>
+                )}
+                {hasBranch && liveQueueLoading && (
+                  <p className="border-t border-adminreg-divider py-2.5 text-sm text-adminreg-muted">Loading queue…</p>
+                )}
+                {hasBranch && !liveQueueLoading && queueRows.length === 0 && (
+                  <p className="border-t border-adminreg-divider py-2.5 text-sm text-adminreg-muted">No patients in the queue right now.</p>
+                )}
+                {queueRows.map((q) => (
+                  <div key={q.id} className="flex items-center justify-between border-t border-adminreg-divider py-2.5">
                     <span className={cn("font-plexmono font-bold", q.className)}>{q.token}</span>
                     <span className={cn("ml-3.5 flex-1 text-sm", q.className)}>{q.name}</span>
                     <span className="text-[11px] text-adminreg-muted">{q.wait}</span>
                   </div>
                 ))}
                 <p className="mt-2.5 text-[11px] text-adminreg-muted">Cancelled tokens keep their slot marked, not renumbered — patients tracking their token number by ear shouldn&apos;t see numbers shift under them.</p>
-                <div className="mt-2 flex items-center justify-between border-t border-dashed border-adminreg-border py-2.5">
-                  <span className="text-sm text-adminreg-amber-text">C-011 — Priya Shah — did not respond when called</span>
-                  {editable && <AdminButton type="button" variant="secondary" onClick={requeue}>Re-queue</AdminButton>}
-                </div>
-                {editable && <AdminButton type="button" accent="indigo" className="mt-4" onClick={goNext}>Called in → Vitals &amp; triage</AdminButton>}
+                {missedTokens.map((missed) => (
+                  <div key={missed.id} className="mt-2 flex items-center justify-between border-t border-dashed border-adminreg-border py-2.5">
+                    <span className="text-sm text-adminreg-amber-text">{missed.tokenNumber} — {missed.patientName} — {missed.missedReason || "did not respond when called"}</span>
+                    {editable && <AdminButton type="button" variant="secondary" onClick={() => void requeueToken(missed)} disabled={updateTokenStatus.isPending}>Re-queue</AdminButton>}
+                  </div>
+                ))}
+                {editable && (
+                  <AdminButton type="button" accent="indigo" className="mt-4" onClick={() => void callInPatient()} disabled={updateTokenStatus.isPending}>
+                    Called in → Vitals &amp; triage
+                  </AdminButton>
+                )}
               </Panel>
             </div>
           )}
@@ -1670,7 +2163,7 @@ export function OpdVisitThreadPage() {
               })}
             </div>
           ) : (
-            drawer.fields.map((f) => <AdminFormField {...f} />)
+            drawer.fields.map((f) => <AdminFormField key={f.key} {...toFieldDescriptor(f)} />)
           )}
         </AdminDrawer>
       )}
