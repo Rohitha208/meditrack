@@ -62,12 +62,15 @@ import {
 const NO_DEPARTMENT = "none"
 type SessionType = "OPD" | "Ward Round"
 
+const SLOT_DURATION_OPTIONS = ["5", "10", "15", "20", "30", "45", "60"]
+
 const EMPTY_SESSION_FORM = {
   dates: [] as Date[],
   start: "",
   end: "",
   type: "OPD" as SessionType,
   location: "",
+  slotDuration: "15",
 }
 
 function displayName(firstName?: string, lastName?: string, email?: string) {
@@ -350,6 +353,7 @@ export function AdminProvidersPage() {
         end: formatTimeForUi(s.endTime),
         type: sessionTypeToUi(s.sessionType),
         location: s.location || "—",
+        slotDuration: s.slotDurationMinutes > 0 ? `${s.slotDurationMinutes} min` : "—",
       })),
     [availabilitySessions]
   )
@@ -427,6 +431,21 @@ export function AdminProvidersPage() {
       return
     }
 
+    const slotDuration = Number(form.slotDuration)
+    if (!slotDuration || slotDuration <= 0) {
+      toast({ title: "Slot duration required", description: "Pick how long each appointment slot runs.", variant: "destructive" })
+      return
+    }
+
+    if (slotDuration > endMinutes - startMinutes) {
+      toast({
+        title: "Slot longer than the session",
+        description: `A ${slotDuration} min slot does not fit in a ${endMinutes - startMinutes} min session.`,
+        variant: "destructive",
+      })
+      return
+    }
+
     try {
       await createAvailability.mutateAsync({
         providerId: selected.id,
@@ -436,6 +455,7 @@ export function AdminProvidersPage() {
         endTime: timeToApi(end),
         sessionType: sessionTypeToApi(form.type),
         location: form.location.trim(),
+        slotDurationMinutes: slotDuration,
       })
       const dateCount = form.dates.length
       setForm(EMPTY_SESSION_FORM)
@@ -462,10 +482,13 @@ export function AdminProvidersPage() {
     const total = endMinutes - startMinutes
     const hours = Math.floor(total / 60)
     const mins = total % 60
-    if (hours && mins) return `${hours}h ${mins}m session`
-    if (hours) return `${hours}h session`
-    return `${mins}m session`
-  }, [form.start, form.end])
+    const length = hours && mins ? `${hours}h ${mins}m session` : hours ? `${hours}h session` : `${mins}m session`
+
+    const slot = Number(form.slotDuration)
+    if (!slot || slot <= 0 || slot > total) return length
+    const slotCount = Math.floor(total / slot)
+    return `${length} · ${slotCount} bookable slot${slotCount > 1 ? "s" : ""} of ${slot} min`
+  }, [form.start, form.end, form.slotDuration])
 
   const directoryColumns: MtColumn<MediTrackUser>[] = [
     {
@@ -593,6 +616,7 @@ export function AdminProvidersPage() {
                         <th className="px-5 py-3">Start</th>
                         <th className="px-5 py-3">End</th>
                         <th className="px-5 py-3">Type</th>
+                        <th className="px-5 py-3">Slot</th>
                         <th className="px-5 py-3">Location</th>
                         <th className="px-5 py-3 text-right">Action</th>
                       </tr>
@@ -600,7 +624,7 @@ export function AdminProvidersPage() {
                     <tbody>
                       {sessions.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="px-5 py-8 text-sm text-adminreg-muted">
+                          <td colSpan={7} className="px-5 py-8 text-sm text-adminreg-muted">
                             No sessions yet. Add a session below.
                           </td>
                         </tr>
@@ -611,6 +635,7 @@ export function AdminProvidersPage() {
                             <td className="px-5 py-3">{s.start}</td>
                             <td className="px-5 py-3">{s.end}</td>
                             <td className="px-5 py-3">{s.type}</td>
+                            <td className="px-5 py-3">{s.slotDuration}</td>
                             <td className="px-5 py-3">{s.location}</td>
                             <td className="px-5 py-3 text-right">
                               <button
@@ -646,7 +671,7 @@ export function AdminProvidersPage() {
                 }
               >
                 <form id="add-session-form" onSubmit={handleAddSession} className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
                     <div className="min-w-0 space-y-1">
                       <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Dates</Label>
                       <MultiDatePicker
@@ -684,6 +709,17 @@ export function AdminProvidersPage() {
                         <SelectContent>
                           <SelectItem value="OPD">OPD</SelectItem>
                           <SelectItem value="Ward Round">Ward Round</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Slot duration</Label>
+                      <Select value={form.slotDuration} onValueChange={(v) => setForm((f) => ({ ...f, slotDuration: v }))}>
+                        <SelectTrigger className="h-9 w-full text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {SLOT_DURATION_OPTIONS.map((minutes) => (
+                            <SelectItem key={minutes} value={minutes}>{minutes} min</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>

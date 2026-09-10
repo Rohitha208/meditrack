@@ -57,6 +57,17 @@ export interface RegisteredPatient {
   nationalId?: string | null;
 }
 
+export interface PatientDetail extends RegisteredPatient {
+  email?: string | null;
+  bloodGroup?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postalCode?: string | null;
+  abhaDocumentPath?: string | null;
+}
+
 export class RegistrationConflictError extends Error {
   candidates: DuplicatePatientCandidate[];
 

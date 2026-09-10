@@ -1,24 +1,26 @@
 import { useMutation } from "@tanstack/react-query";
 import { getMessageFromErrorBody } from "@/utils/apiErrorHandler";
 
-export interface UploadRegistrationCardsRequest {
-  patientId: string;
-  cardLabel?: string;
-  cardNumber?: string;
+export interface RegistrationCardInput {
+  label: string;
+  number?: string;
   file: File;
 }
 
-const uploadCards = async ({
-  patientId,
-  cardLabel = "ABHA Card",
-  cardNumber,
-  file,
-}: UploadRegistrationCardsRequest): Promise<void> => {
+export interface UploadRegistrationCardsRequest {
+  patientId: string;
+  cards: RegistrationCardInput[];
+}
+
+const uploadCards = async ({ patientId, cards }: UploadRegistrationCardsRequest): Promise<void> => {
   const form = new FormData();
   form.append("patientId", patientId);
-  form.append("cardLabels", cardLabel);
-  if (cardNumber) form.append("cardNumbers", cardNumber);
-  form.append("cardFiles", file);
+  // Backend matches labels/numbers/files by index, so append one entry per card.
+  cards.forEach((card) => {
+    form.append("cardLabels", card.label);
+    form.append("cardNumbers", card.number || "");
+    form.append("cardFiles", card.file);
+  });
 
   const response = await fetch("/api/meditrack/patients/register/upload", {
     method: "POST",
@@ -26,7 +28,7 @@ const uploadCards = async ({
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(getMessageFromErrorBody(result, "Failed to upload card"));
+    throw new Error(getMessageFromErrorBody(result, "Failed to upload cards"));
   }
 };
 
