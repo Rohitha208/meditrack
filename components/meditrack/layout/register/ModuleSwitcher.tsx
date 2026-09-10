@@ -6,6 +6,12 @@ import { cn } from "@/lib/utils"
 import { useStaffRole } from "./RoleProvider"
 import { canAccessAdmin } from "./rbac"
 
+/** Lab / Radiology Tech's OPD home is the Sample Collection worklist, and
+ * their IPD home is Diagnostics & OT — not stage 0 of either. */
+const ROLE_MODULE_HOME: Partial<Record<string, Partial<Record<"opd" | "ipd", string>>>> = {
+  labtech: { opd: "/opd/diagnostics?screen=sample-collection", ipd: "/ipd/stay?stage=4" },
+}
+
 interface ModuleDef {
   key: "admin" | "opd" | "ipd"
   label: string
@@ -36,7 +42,12 @@ export function ModuleSwitcher({ isSuperAdmin = false }: { isSuperAdmin?: boolea
   return (
     <div className="flex-shrink-0 space-y-1 border-b border-adminreg-sidebar-border px-3 py-3">
       {MODULES.map((m) => {
-        const href = isSuperAdmin && m.key === "admin" ? "/admin/companies" : m.href
+        const href =
+          isSuperAdmin && m.key === "admin"
+            ? "/admin/companies"
+            : (m.key === "opd" || m.key === "ipd") && ROLE_MODULE_HOME[role]?.[m.key]
+              ? ROLE_MODULE_HOME[role]![m.key]!
+              : m.href
         const active = m.match(pathname)
         const disabled =
           href === null ||

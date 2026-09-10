@@ -7,14 +7,15 @@
  * all four states.
  */
 
-export type StaffRole = "frontdesk" | "doctor" | "nurse" | "admin"
+export type StaffRole = "frontdesk" | "doctor" | "nurse" | "labtech" | "admin"
 
-export const ROLES: StaffRole[] = ["frontdesk", "doctor", "nurse", "admin"]
+export const ROLES: StaffRole[] = ["frontdesk", "doctor", "nurse", "labtech", "admin"]
 
 export const ROLE_LABEL: Record<StaffRole, string> = {
   frontdesk: "Front Desk",
   doctor: "Doctor",
   nurse: "Nurse",
+  labtech: "Lab / Radiology Tech",
   admin: "Hospital Admin",
 }
 
@@ -33,6 +34,18 @@ export function appointmentBookingEditable(role: StaffRole): boolean {
   return role === "frontdesk"
 }
 
+/** The three OPD Diagnostics worklists (Sample Collection / Imaging Performed
+ * / Result Entry) are the Lab / Radiology Tech's home; Hospital Admin sees
+ * them read-only for oversight. Everyone else works from the Diagnostics
+ * stage of the visit thread instead. */
+export function canAccessDxWorklist(role: StaffRole): boolean {
+  return role === "labtech" || role === "admin"
+}
+
+export function dxWorklistEditable(role: StaffRole): boolean {
+  return role === "labtech"
+}
+
 /** Which of the 9 OPD visit-thread stage indices (0-8) a role can see at all,
  * and which of those it can additionally edit — everything visible-but-not-
  * editable renders in view-only mode (banner + no mutating controls).
@@ -45,11 +58,16 @@ export function appointmentBookingEditable(role: StaffRole): boolean {
  * it went through consultation/diagnostics/prescription/pharmacy even
  * though they didn't touch those stages), they just can't edit stages
  * outside their own. Nurse stays narrow — Vitals & Triage only — mirroring
- * the same explicit MAR-only restriction the spec states for IPD. */
+ * the same explicit MAR-only restriction the spec states for IPD.
+ *
+ * Lab / Radiology Tech works from the three Diagnostics worklists (see
+ * canAccessDxWorklist), not the visit thread — in the thread they only reach
+ * the Diagnostics stage, which they own. Nurse is likewise narrowed. */
 export const OPD_STAGE_ACCESS: Record<StaffRole, { visible: number[]; editable: number[] }> = {
   frontdesk: { visible: [0, 1, 2, 3, 4, 5, 6, 7, 8], editable: [0, 1, 2, 8] },
   doctor: { visible: [0, 1, 2, 3, 4, 5, 6, 7, 8], editable: [4, 5, 6] },
   nurse: { visible: [3], editable: [3] },
+  labtech: { visible: [5], editable: [] },
   admin: { visible: [0, 1, 2, 3, 4, 5, 6, 7, 8], editable: [] },
 }
 
@@ -78,11 +96,15 @@ export function firstVisibleStage(role: StaffRole): number {
  * care across a multi-day admission matters even for stages they don't own),
  * they just can't edit stages outside their own. Nurse is the one deliberate
  * exception, per the spec: "Nurse sees only the MAR (no billing, no
- * admin)" — narrowed to stage 3 alone, not just non-editable elsewhere. */
+ * admin)" — narrowed to stage 3 alone, not just non-editable elsewhere.
+ *
+ * Lab / Radiology Tech owns Diagnostics & OT (stage 4) only — same narrow
+ * treatment as Nurse. */
 export const IPD_STAGE_ACCESS: Record<StaffRole, { visible: number[]; editable: number[] }> = {
   frontdesk: { visible: [0, 1, 2, 3, 4, 5, 6, 7], editable: [0, 1, 2, 5, 7] },
   doctor: { visible: [0, 1, 2, 3, 4, 5, 6, 7], editable: [4, 6] },
   nurse: { visible: [3], editable: [3] },
+  labtech: { visible: [4], editable: [4] },
   admin: { visible: [0, 1, 2, 3, 4, 5, 6, 7], editable: [] },
 }
 

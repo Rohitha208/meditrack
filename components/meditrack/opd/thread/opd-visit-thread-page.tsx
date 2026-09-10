@@ -58,6 +58,8 @@ import {
   InlineInfo,
   ViewOnlyBanner,
 } from "@/components/meditrack/opd/shared/ui"
+import { DxOrderPanel } from "@/components/meditrack/opd/shared/DxOrderPanel"
+import { RxAddPanel } from "@/components/meditrack/opd/shared/RxAddPanel"
 import { STAGE_DEFS, MODE_BADGE_TONE, SUPERSEDED_CLASS } from "./theme"
 // Admission referral (Stage 5) — reviewable via a 5-state chip row, same
 // convention as the Registration search-outcome chips.
@@ -468,6 +470,10 @@ export function OpdVisitThreadPage() {
   // state can be inspected directly.
   const [demoReferralState, setDemoReferralState] = useState<DemoReferralState>("not-referred")
   const [admitReason, setAdmitReason] = useState("Unstable angina with a rising troponin — needs a monitored bed and inpatient workup today.")
+
+  // Consultation (Stage 4) — "Order diagnostics" expands the same DxOrderPanel
+  // in place rather than navigating, per the addendum spec.
+  const [inlineDxOpen, setInlineDxOpen] = useState(false)
 
   function fileAdmissionReferral() {
     if (!admitReason.trim()) return
@@ -1830,13 +1836,13 @@ export function OpdVisitThreadPage() {
                     <AddendumNote key={i} header={`ADDENDUM · ${a.by} · ${a.time} · Reason: ${a.reason}`}>{a.text}</AddendumNote>
                   ))}
                 </div>
-                {editable && <AdminButton type="button" variant="secondary" className="mt-3" onClick={openAddendum}>+ Add addendum</AdminButton>}
+                {/* {editable && <AdminButton type="button" variant="secondary" className="mt-3" onClick={openAddendum}>+ Add addendum</AdminButton>} */}
 
                 {editable && (
                   <>
                     <div className="mt-5"><SectionLabel>Next step</SectionLabel></div>
                     <div className="mb-3.5 flex flex-wrap gap-2">
-                      <AdminButton type="button" accent="indigo" onClick={goNext}>Order diagnostics</AdminButton>
+                      <AdminButton type="button" accent="indigo" onClick={() => setInlineDxOpen((v) => !v)}>{inlineDxOpen ? "Close diagnostics order" : "Order diagnostics"}</AdminButton>
                       <AdminButton type="button" variant="secondary" onClick={() => { patch({ diagnosticsSkipped: true }); goToStage(6) }}>Skip — prescribe directly</AdminButton>
                       <AdminButton type="button" variant="secondary">Refer to specialist</AdminButton>
                       {demoReferralState === "not-referred" && (
@@ -1851,6 +1857,17 @@ export function OpdVisitThreadPage() {
                       )}
                     </div>
                   </>
+                )}
+                {editable && inlineDxOpen && (
+                  <div className="mb-3.5">
+                    <DxOrderPanel
+                      editable={editable}
+                      compact
+                      visitId={PATIENT.visitId}
+                      patientLabel={`${PATIENT.name} · ${PATIENT.ageSex}`}
+                      orderingDoctor="Dr. Anjali Nair · Cardiology"
+                    />
+                  </div>
                 )}
                 <div className="flex items-center justify-between bg-adminreg-header px-3.5 py-2.5">
                   <span className="text-xs">Chest X-ray — ordered</span>
@@ -1996,6 +2013,13 @@ export function OpdVisitThreadPage() {
                 {editable && <div className="mt-3"><AdminButton type="button" variant="secondary" onClick={() => patch({ diagnosticsSkipped: false })}>Undo — order diagnostics now</AdminButton></div>}
               </div>
             ) : (
+              <div className="space-y-6">
+              <DxOrderPanel
+                editable={editable}
+                visitId={PATIENT.visitId}
+                patientLabel={`${PATIENT.name} · ${PATIENT.ageSex}`}
+                orderingDoctor="Dr. Anjali Nair · Cardiology"
+              />
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <Panel>
                   <SectionLabel>Ordered tests</SectionLabel>
@@ -2028,11 +2052,18 @@ export function OpdVisitThreadPage() {
                   {editable && <AdminButton type="button" accent="indigo" className="mt-2" onClick={goNext}>Back to doctor → e-Prescription</AdminButton>}
                 </Panel>
               </div>
+              </div>
             )
           )}
 
           {s === 6 && (
-            <div>
+            <div className="space-y-4">
+              <RxAddPanel
+                editable={editable}
+                prescriberReg="MCI/KA-2011-44821"
+                prescriberName="Dr. Anjali Nair"
+                existingDrugs={rx.map((r) => r.drug)}
+              />
               <div className="border border-adminreg-border bg-adminreg-card">
                 <div className="grid grid-cols-[1.2fr_1fr_80px_90px_1fr] bg-adminreg-header px-4 py-2.5 text-[11px] font-bold text-adminreg-muted"><span>Drug</span><span>Dosage</span><span>Duration</span><span>Schedule</span><span /></div>
                 {rx.map((r) => (
