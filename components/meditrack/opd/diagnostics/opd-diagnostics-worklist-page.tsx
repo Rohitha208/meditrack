@@ -1,35 +1,69 @@
 "use client"
 
-import { useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { useSearchParams } from "next/navigation"
 import Link from "next/link"
+import { useQueryClient } from "@tanstack/react-query"
 import { cn } from "@/lib/utils"
 import { AdminButton } from "@/components/meditrack/admin/register"
 import { useStaffRole } from "@/components/meditrack/layout/register/RoleProvider"
 import { ROLE_LABEL, dxWorklistEditable } from "@/components/meditrack/layout/register/rbac"
+import { useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
 import { SectionLabel, Panel, InlineInfo, ViewOnlyBanner } from "@/components/meditrack/opd/shared/ui"
 import { DX_WORKLIST_DEFS, IMAGING_FAIL_REASONS, REJECTION_REASONS, type DxWorklistKey } from "./theme"
+import {
+  useAddDiagnosticResult,
+  useCollectDiagnosticSample,
+  useDiagnosticWorklist,
+  useRejectDiagnosticSpecimen,
+  type DiagnosticSpecimen,
+  type DiagnosticWorklistItem,
+} from "@/queries/meditrack/opd-diagnostics"
 
-// ---------------------------------------------------------------------------
-// Frontend/UI only. Three technician worklists that sit between "order
-// placed" on the Diagnostics stage and "result available". All state is
-// local React state — the same independent-demo-state approach as the rest
-// of OPD (no live shared store between screens).
-// ---------------------------------------------------------------------------
+/** The equipment picker lives on this screen until a machine register exists. */
+const IMAGING_ROOMS = [
+  "DR Room 1 · Siemens Ysio Max",
+  "Portable · Fuji FDR Go",
+  "USG Room 2 · GE Logiq P9",
+  "USG Room 3 · Philips Affiniti 50",
+  "CT Room 1 · Siemens Somatom go.Top",
+  "CT Room 2 · GE Revolution",
+]
 
-/** The whole OPD demo is pinned to this day (see the shell header + every
- * seed record); collection/imaging timestamps use it so they read as part
- * of the same visit rather than "today". */
-const DEMO_DATE_LABEL = "12 Aug 2026"
+function todayIsoDate() {
+  return new Date().toLocaleDateString("en-CA")
+}
 
-/** Current clock time as HH:MM — the default the technician sees, still editable. */
+function dateLabel(d = new Date()) {
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`
+}
+
 function nowHhMm() {
   const d = new Date()
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
 }
 
-function Eyebrow({ children }: { children: ReactNode }) {
-  return <div className="font-plexmono text-[9.5px] uppercase tracking-[0.05em] text-adminreg-muted2">{children}</div>
+function hhMm(value?: string | null) {
+  if (!value) return "—"
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return "—"
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
+}
+
+function atTimeToday(hhmm: string) {
+  const [h, m] = hhmm.split(":").map(Number)
+  const d = new Date()
+  d.setHours(h || 0, m || 0, 0, 0)
+  return d.toISOString()
+}
+
+function isRejected(status?: string | null) {
+  return (status || "").toLowerCase() === "rejected"
+}
+
+function isImagingModality(modality?: string | null) {
+  return (modality || "").toUpperCase() === "RADIOLOGY"
 }
 
 function Chip({ tone, children }: { tone: "urgent" | "routine" | "collected" | "awaiting" | "recollection" | "performed" | "repeat" | "overdue" | "fresh"; children: ReactNode }) {
@@ -75,90 +109,130 @@ function DashedTag({ children }: { children: ReactNode }) {
   return <div className="border border-dashed border-adminreg-border px-2.5 py-1 font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-muted2">{children}</div>
 }
 
+function EmptyWorklist({ message }: { message: string }) {
+  return <p className="px-3.5 py-8 text-center text-xs text-adminreg-muted">{message}</p>
+}
+
+function invalidateWorklists(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: ["meditrack", "opd-dx-worklist"] })
+  void queryClient.invalidateQueries({ queryKey: ["meditrack", "opd-dx-visit"] })
+}
+
+function pathoTone(label?: string | null): "collected" | "recollection" | "awaiting" {
+  const v = (label || "").toLowerCase()
+  if (v.includes("collected") && !v.includes("awaiting")) return "collected"
+  if (v.includes("recollection")) return "recollection"
+  return "awaiting"
+}
+
+function imagingTone(label?: string | null): "performed" | "repeat" | "awaiting" {
+  const v = (label || "").toLowerCase()
+  if (v.includes("performed") || v === "scan done") return "performed"
+  if (v.includes("repeat")) return "repeat"
+  return "awaiting"
+}
+
+function displayId(item: DiagnosticWorklistItem) {
+  return item.orderNumber || item.orderId
+}
+
+function specNoFor(item: DiagnosticWorklistItem) {
+  return item.specimenNumber || item.specimenBarcode || displayId(item)
+}
+
+function rejectedAttempts(attempts: DiagnosticSpecimen[]) {
+  return attempts.filter((a) => isRejected(a.status))
+}
+
+function collectedAttempt(attempts: DiagnosticSpecimen[]) {
+  return [...attempts].reverse().find((a) => !isRejected(a.status))
+}
+
+function failedAttempt(attempts: DiagnosticSpecimen[]) {
+  return [...attempts].reverse().find((a) => isRejected(a.status))
+}
+
+function useKeepSelection(items: DiagnosticWorklistItem[], selectedId: string | null, setSelectedId: (id: string) => void) {
+  useEffect(() => {
+    if (items.length === 0) return
+    if (selectedId && items.some((i) => i.orderId === selectedId)) return
+    setSelectedId(items[0].orderId)
+  }, [items, selectedId, setSelectedId])
+}
+
 // =========================================================================
 // Screen 1 — Sample Collection (PHLEBOTOMY)
 // =========================================================================
 
-type PathoStatus = "awaiting" | "collected" | "recollection"
+function SampleCollectionScreen({ editable, clinicId }: { editable: boolean; clinicId?: string }) {
+  const queryClient = useQueryClient()
+  const collect = useCollectDiagnosticSample()
+  const reject = useRejectDiagnosticSpecimen()
+  const worklist = useDiagnosticWorklist({
+    stage: "collection",
+    modality: "LAB",
+    date: todayIsoDate(),
+    includeDone: true,
+  })
 
-interface PathoOrder {
-  id: string
-  test: string
-  patient: string
-  uhid: string
-  visitId: string
-  specimen: string
-  orderedBy: string
-  orderedTime: string
-  priority: "URGENT" | "ROUTINE"
-  payment: string
-  status: PathoStatus
-}
-
-const PATHO_SEED: PathoOrder[] = [
-  { id: "LAB-4471", test: "Serum Potassium", patient: "Meera Kulkarni", uhid: "UHID-0004821", visitId: "OPD-20260812-0091", specimen: "Serum · 3 mL · plain red-top vial", orderedBy: "Dr. Anjali Nair", orderedTime: "09:04", priority: "URGENT", payment: "Cash — receipt REC-00861", status: "collected" },
-  { id: "LAB-4483", test: "Haemoglobin", patient: "Anita Desai", uhid: "UHID-0004410", visitId: "OPD-20260812-0099", specimen: "Whole blood · 2 mL · EDTA lavender vial", orderedBy: "Dr. Rohan Mehta", orderedTime: "11:31", priority: "ROUTINE", payment: "Star Health TPA — pre-authorised", status: "collected" },
-  { id: "LAB-4478", test: "Fasting Blood Sugar", patient: "Rakesh Menon", uhid: "UHID-0003190", visitId: "OPD-20260812-0104", specimen: "Plasma · 2 mL · fluoride grey vial", orderedBy: "Dr. Rohan Mehta", orderedTime: "10:22", priority: "ROUTINE", payment: "Cash — receipt REC-00863", status: "awaiting" },
-  { id: "LAB-4491", test: "Complete Blood Count (CBC)", patient: "Imran Sheikh", uhid: "UHID-0004930", visitId: "OPD-20260812-0110", specimen: "Whole blood · 2 mL · EDTA lavender vial", orderedBy: "Dr. Sana Kapoor", orderedTime: "11:18", priority: "ROUTINE", payment: "Cash — receipt REC-00871", status: "awaiting" },
-  { id: "LAB-4494", test: "Troponin-I", patient: "Sunita Patil", uhid: "UHID-0004102", visitId: "OPD-20260812-0112", specimen: "Serum · 3 mL · plain red-top vial", orderedBy: "Dr. Anjali Nair", orderedTime: "11:47", priority: "URGENT", payment: "Cash — receipt REC-00873", status: "awaiting" },
-]
-
-interface CollectionEvent {
-  attempt: number
-  kind: "collected" | "rejected"
-  by: string
-  time: string
-  specimen: string
-  reason?: string
-}
-
-function SampleCollectionScreen({ editable }: { editable: boolean }) {
-  const [orders, setOrders] = useState<PathoOrder[]>(PATHO_SEED)
-  const [selectedId, setSelectedId] = useState("LAB-4478")
+  const orders = worklist.data?.items ?? []
+  const awaitingCount = worklist.data?.awaitingCount ?? orders.filter((o) => pathoTone(o.statusLabel) !== "collected").length
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [barcode, setBarcode] = useState("")
-  const [events, setEvents] = useState<Record<string, CollectionEvent[]>>({})
   const [banner, setBanner] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [rejecting, setRejecting] = useState(false)
-  // Collection time — the phlebotomist confirms/edits this; it defaults to
-  // the current clock time (pinned to the demo day) and is stamped onto the
-  // collected event, the confirmation banner and the attempt log.
   const [collectTime, setCollectTime] = useState(nowHhMm)
+  const todayLabel = dateLabel()
 
-  const awaitingCount = orders.filter((o) => o.status !== "collected").length
-  const selected = orders.find((o) => o.id === selectedId)!
-  const log = events[selected.id] ?? []
-  const attempt = log.filter((e) => e.kind === "rejected").length + 1
-  const specNo = `SPEC-20260812-${selected.id.split("-")[1]}`
+  useKeepSelection(orders, selectedId, setSelectedId)
 
-  function markCollected() {
-    if (!editable) return
+  const selectedOrder = orders.find((o) => o.orderId === selectedId)
+  const log = selectedOrder?.attempts ?? []
+  const attempt = selectedOrder?.collectionAttempt || rejectedAttempts(log).length + 1
+  const specNo = selectedOrder ? specNoFor(selectedOrder) : ""
+  const status = pathoTone(selectedOrder?.statusLabel)
+  const collected = collectedAttempt(log)
+  const lastReject = failedAttempt(log)
+
+  async function markCollected() {
+    if (!editable || !selectedOrder) return
+    setError(null)
     const spec = barcode.trim() || specNo
-    setOrders((os) => os.map((o) => (o.id === selected.id ? { ...o, status: "collected" } : o)))
-    setEvents((e) => ({
-      ...e,
-      [selected.id]: [...(e[selected.id] ?? []), { attempt, kind: "collected", by: "K. Rao (Phlebotomy)", time: collectTime, specimen: spec }],
-    }))
-    setBanner(`✓ ${selected.test} collected at ${collectTime} · ${spec}. ${selected.id} now appears on the result-entry worklist.`)
-    setBarcode("")
-    setRejecting(false)
+    try {
+      await collect.mutateAsync({
+        orderId: selectedOrder.orderId,
+        specimenBarcode: barcode.trim() || undefined,
+        sampleCollectedAt: atTimeToday(collectTime),
+      })
+      invalidateWorklists(queryClient)
+      setBanner(`✓ ${selectedOrder.testName} collected at ${collectTime} · ${spec}. ${displayId(selectedOrder)} now appears on the result-entry worklist.`)
+      setBarcode("")
+      setRejecting(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not mark collected.")
+    }
   }
 
-  function rejectSample(reason: string) {
-    setOrders((os) => os.map((o) => (o.id === selected.id ? { ...o, status: "recollection" } : o)))
-    setEvents((e) => ({
-      ...e,
-      [selected.id]: [...(e[selected.id] ?? []), { attempt, kind: "rejected", by: "M. Pillai (Lab)", time: "12:14", specimen: specNo, reason }],
-    }))
-    setBanner(`${selected.test} — specimen rejected at lab receipt (${reason}). Order stays open; ${selected.id} returns to this worklist as NEEDS RECOLLECTION. Billing untouched.`)
-    setRejecting(false)
+  async function rejectSample(reason: string) {
+    if (!selectedOrder) return
+    setError(null)
+    try {
+      await reject.mutateAsync({ orderId: selectedOrder.orderId, reason })
+      invalidateWorklists(queryClient)
+      setBanner(`${selectedOrder.testName} — specimen rejected at lab receipt (${reason}). Order stays open; ${displayId(selectedOrder)} returns to this worklist as NEEDS RECOLLECTION. Billing untouched.`)
+      setRejecting(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reject specimen.")
+    }
   }
 
   return (
     <div>
-      {banner && (
-        <div className="mb-4 flex items-start justify-between gap-4 border border-adminreg-olive bg-adminreg-olive-soft px-4 py-2.5 text-xs text-adminreg-olive-dark">
-          <span>{banner}</span>
-          <button type="button" onClick={() => setBanner(null)} className="flex-shrink-0 font-plexmono text-[10px] uppercase tracking-wide underline">Dismiss</button>
+      {(banner || error) && (
+        <div className={cn("mb-4 flex items-start justify-between gap-4 px-4 py-2.5 text-xs", error ? "border border-adminreg-red bg-adminreg-red-soft text-adminreg-red-text" : "border border-adminreg-olive bg-adminreg-olive-soft text-adminreg-olive-dark")}>
+          <span>{error || banner}</span>
+          <button type="button" onClick={() => { setBanner(null); setError(null) }} className="flex-shrink-0 font-plexmono text-[10px] uppercase tracking-wide underline">Dismiss</button>
         </div>
       )}
 
@@ -171,48 +245,59 @@ function SampleCollectionScreen({ editable }: { editable: boolean }) {
               <span className="font-plexmono text-[9.5px] uppercase tracking-[0.04em] text-adminreg-muted2">{awaitingCount} awaiting collection</span>
             </div>
             <p className="text-xs text-adminreg-muted">
-              K. Rao (Phlebotomy). Pathology orders that are payment- or coverage-cleared and awaiting a specimen. This queue sits upstream of result entry — a technician entering results never sees an uncollected order.
+              Pathology orders confirmed on Diagnostics. Awaiting a specimen before result entry.
             </p>
           </div>
-          {orders.map((o) => (
-            <WorklistRow key={o.id} active={o.id === selectedId} onClick={() => { setSelectedId(o.id); setRejecting(false); setBarcode("") }}>
-              <div className="flex items-start justify-between gap-2">
-                <span className="text-sm font-semibold text-adminreg-text">{o.test}</span>
-                <Chip tone={o.status === "collected" ? "collected" : o.status === "recollection" ? "recollection" : "awaiting"}>
-                  {o.status === "collected" ? "Collected" : o.status === "recollection" ? "Needs recollection" : "Awaiting collection"}
-                </Chip>
-              </div>
-              <div className="mt-0.5 text-xs text-adminreg-muted">{o.patient} · {o.uhid}</div>
-              <div className="text-xs text-adminreg-muted">{o.specimen}</div>
-              <div className="mt-1 flex items-center justify-between">
-                <span className="font-plexmono text-[10px] text-adminreg-muted2">{o.id} · ordered {o.orderedTime}</span>
-                <Chip tone={o.priority === "URGENT" ? "urgent" : "routine"}>{o.priority}</Chip>
-              </div>
-            </WorklistRow>
-          ))}
+          {worklist.isLoading && orders.length === 0 && <EmptyWorklist message="Loading collection worklist…" />}
+          {!worklist.isLoading && orders.length === 0 && (
+            <EmptyWorklist message={worklist.error instanceof Error ? worklist.error.message : "No lab orders awaiting collection. Confirm a LAB test on Diagnostics and it appears here."} />
+          )}
+          {orders.map((o) => {
+            const tone = pathoTone(o.statusLabel)
+            return (
+              <WorklistRow key={o.orderId} active={o.orderId === selectedId} onClick={() => { setSelectedId(o.orderId); setRejecting(false); setBarcode(""); setError(null) }}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-semibold text-adminreg-text">{o.testName}</span>
+                  <Chip tone={tone === "collected" ? "collected" : tone === "recollection" ? "recollection" : "awaiting"}>
+                    {o.statusLabel || (tone === "collected" ? "Collected" : tone === "recollection" ? "Needs recollection" : "Awaiting collection")}
+                  </Chip>
+                </div>
+                <div className="mt-0.5 text-xs text-adminreg-muted">{o.patientName || "—"} · {o.patientUhid || "—"}</div>
+                <div className="text-xs text-adminreg-muted">{o.specimenLine || "Specimen as per Test Master"}</div>
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="font-plexmono text-[10px] text-adminreg-muted2">{displayId(o)} · ordered {hhMm(o.orderedAt)}</span>
+                  <Chip tone={(o.priority || "").toUpperCase() === "URGENT" ? "urgent" : "routine"}>{o.priority || "ROUTINE"}</Chip>
+                </div>
+              </WorklistRow>
+            )
+          })}
         </div>
 
         {/* Detail */}
         <Panel>
-          <div className="text-lg font-extrabold text-adminreg-text">{selected.test}</div>
-          <div className="text-xs text-adminreg-muted">{selected.patient} · {selected.uhid} · {selected.visitId}</div>
+          {!selectedOrder ? (
+            <p className="text-sm text-adminreg-muted">Select an order from the worklist.</p>
+          ) : (
+            <>
+          <div className="text-lg font-extrabold text-adminreg-text">{selectedOrder.testName}</div>
+          <div className="text-xs text-adminreg-muted">{selectedOrder.patientName || "—"} · {selectedOrder.patientUhid || "—"} · {selectedOrder.visitId}</div>
           <div className="mt-2"><Chip tone="routine">Pathology · specimen required</Chip></div>
-          <p className="mt-2 font-plexmono text-[10px] text-adminreg-muted2">{selected.id} · ordered by {selected.orderedBy} at {selected.orderedTime} · payment cleared</p>
+          <p className="mt-2 font-plexmono text-[10px] text-adminreg-muted2">{displayId(selectedOrder)} · ordered by {selectedOrder.orderedByName || "—"} at {hhMm(selectedOrder.orderedAt)} · payment cleared</p>
 
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <DetailBox label="Specimen required">{selected.specimen}</DetailBox>
-            <DetailBox label="Payment / coverage" tone="indigo">{selected.payment}</DetailBox>
+            <DetailBox label="Specimen required">{selectedOrder.specimenLine || "As per Test Master"}</DetailBox>
+            <DetailBox label="Payment / coverage" tone="indigo">{selectedOrder.paymentLine || "Payment cleared"}</DetailBox>
           </div>
 
-          {selected.status === "collected" ? (
+          {status === "collected" ? (
             <>
               <div className="mt-3 border-l-[3px] border-adminreg-olive bg-adminreg-olive-soft p-3">
                 <div className="font-plexmono text-[10px] font-bold uppercase tracking-[0.04em] text-adminreg-olive-dark">Collected — in the result-entry queue</div>
                 <p className="mt-0.5 font-plexmono text-[10px] text-adminreg-olive-dark">
-                  {(log.find((e) => e.kind === "collected")?.time) ?? collectTime} · {(log.find((e) => e.kind === "collected")?.specimen) ?? specNo} · K. Rao (Phlebotomy)
+                  {hhMm(collected?.collectedAt || selectedOrder.sampleCollectedAt)} · {collected?.specimenNumber || selectedOrder.specimenBarcode || specNo} · {selectedOrder.collectedByName || collected?.collectedByName || "Phlebotomy"}
                 </p>
                 <p className="mt-1.5 text-xs text-adminreg-olive-dark">
-                  Chain of custody starts here. {selected.test} is now visible to M. Pillai on Result Entry; nothing before this point was.
+                  Chain of custody starts here. {selectedOrder.testName} is now visible on Result Entry; nothing before this point was.
                 </p>
                 <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
                   <Link href="/opd/diagnostics?screen=result-entry" className="font-semibold text-adminreg-olive-dark underline">Open Result Entry →</Link>
@@ -220,21 +305,21 @@ function SampleCollectionScreen({ editable }: { editable: boolean }) {
                 </div>
               </div>
             </>
-          ) : selected.status === "recollection" ? (
+          ) : status === "recollection" ? (
             <div className="mt-3">
               <div className="mb-2"><DashedTag>Recollection — attempt {attempt}</DashedTag></div>
               <div className="border-l-[3px] border-adminreg-red bg-adminreg-red-soft p-3">
                 <div className="font-plexmono text-[10px] font-bold uppercase tracking-[0.04em] text-adminreg-red-text">Recollection required — order still open</div>
                 <p className="mt-1 text-xs text-adminreg-red-text">
-                  Specimen {specNo} rejected at lab receipt — {log.filter((e) => e.kind === "rejected").slice(-1)[0]?.reason}. Reported by M. Pillai (Lab). Order stays open; recollection required.
+                  {selectedOrder.recollectionReason || `Specimen ${specNo} rejected at lab receipt — ${lastReject?.rejectionReason || "needs recollection"}. Order stays open; recollection required.`}
                 </p>
               </div>
-              <CollectForm editable={editable} barcode={barcode} setBarcode={setBarcode} specNo={specNo} onCollect={markCollected} time={collectTime} setTime={setCollectTime} />
+              <CollectForm editable={editable} barcode={barcode} setBarcode={setBarcode} specNo={specNo} onCollect={() => void markCollected()} time={collectTime} setTime={setCollectTime} dateLabel={todayLabel} busy={collect.isPending} />
             </div>
           ) : (
             <div className="mt-3">
               <div className="mb-2"><DashedTag>Awaiting collection — attempt {attempt}</DashedTag></div>
-              <CollectForm editable={editable} barcode={barcode} setBarcode={setBarcode} specNo={specNo} onCollect={markCollected} time={collectTime} setTime={setCollectTime} />
+              <CollectForm editable={editable} barcode={barcode} setBarcode={setBarcode} specNo={specNo} onCollect={() => void markCollected()} time={collectTime} setTime={setCollectTime} dateLabel={todayLabel} busy={collect.isPending} />
             </div>
           )}
 
@@ -248,7 +333,7 @@ function SampleCollectionScreen({ editable }: { editable: boolean }) {
               <div className="mt-2 font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-red-text">Rejection reason</div>
               <div className="mt-1 flex flex-wrap gap-1.5">
                 {REJECTION_REASONS.map((r) => (
-                  <button key={r} type="button" onClick={() => rejectSample(r)} className="border border-adminreg-red bg-adminreg-card px-2 py-1 text-[11px] font-semibold text-adminreg-red-text hover:bg-adminreg-red-soft">{r}</button>
+                  <button key={r} type="button" disabled={reject.isPending} onClick={() => void rejectSample(r)} className="border border-adminreg-red bg-adminreg-card px-2 py-1 text-[11px] font-semibold text-adminreg-red-text hover:bg-adminreg-red-soft">{r}</button>
                 ))}
               </div>
               <button type="button" onClick={() => setRejecting(false)} className="mt-2 text-[11px] text-adminreg-muted underline">Cancel</button>
@@ -259,16 +344,23 @@ function SampleCollectionScreen({ editable }: { editable: boolean }) {
             <div className="mt-3 border-t border-adminreg-divider pt-2.5">
               <div className="font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-muted2">Collection attempts — same order</div>
               <div className="mt-1.5 space-y-1.5">
-                {log.map((e, i) => (
-                  <div key={i} className="flex items-start justify-between gap-2 border border-adminreg-divider bg-adminreg-bg px-2.5 py-1.5 text-[11px]">
-                    <span className="text-adminreg-text">
-                      Attempt {e.attempt} — {e.kind === "collected" ? `collected by ${e.by}. Specimen ${e.specimen}.` : `rejected by ${e.by} — ${e.reason}.`}
-                    </span>
-                    <Chip tone={e.kind === "collected" ? "collected" : "recollection"}>{e.kind === "collected" ? "Collected" : "Rejected"}</Chip>
-                  </div>
-                ))}
+                {log.map((e) => {
+                  const rejected = isRejected(e.status)
+                  return (
+                    <div key={e.id} className="flex items-start justify-between gap-2 border border-adminreg-divider bg-adminreg-bg px-2.5 py-1.5 text-[11px]">
+                      <span className="text-adminreg-text">
+                        {e.line || (rejected
+                          ? `Attempt ${e.attemptNo} — rejected by ${e.rejectedByName || "Lab"} — ${e.rejectionReason}.`
+                          : `Attempt ${e.attemptNo} — collected by ${e.collectedByName || "Phlebotomy"}. Specimen ${e.specimenNumber || e.barcode || specNo}.`)}
+                      </span>
+                      <Chip tone={rejected ? "recollection" : "collected"}>{rejected ? "Rejected" : "Collected"}</Chip>
+                    </div>
+                  )
+                })}
               </div>
             </div>
+          )}
+            </>
           )}
         </Panel>
       </div>
@@ -276,7 +368,7 @@ function SampleCollectionScreen({ editable }: { editable: boolean }) {
   )
 }
 
-function CollectForm({ editable, barcode, setBarcode, specNo, onCollect, time, setTime }: { editable: boolean; barcode: string; setBarcode: (v: string) => void; specNo: string; onCollect: () => void; time: string; setTime: (v: string) => void }) {
+function CollectForm({ editable, barcode, setBarcode, specNo, onCollect, time, setTime, dateLabel, busy }: { editable: boolean; barcode: string; setBarcode: (v: string) => void; specNo: string; onCollect: () => void; time: string; setTime: (v: string) => void; dateLabel: string; busy?: boolean }) {
   return (
     <div className="mt-3">
       <div className="font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-muted2">Specimen barcode — optional</div>
@@ -297,7 +389,7 @@ function CollectForm({ editable, barcode, setBarcode, specNo, onCollect, time, s
         <div className="border border-adminreg-border bg-adminreg-bg p-2.5">
           <div className="font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-muted2">Collection time</div>
           <div className="mt-1 flex items-center gap-1.5">
-            <span className="font-plexmono text-[11px] text-adminreg-muted">{DEMO_DATE_LABEL} ·</span>
+            <span className="font-plexmono text-[11px] text-adminreg-muted">{dateLabel} ·</span>
             <input
               type="time"
               value={time}
@@ -311,8 +403,8 @@ function CollectForm({ editable, barcode, setBarcode, specNo, onCollect, time, s
         <DetailBox label="Collected by">K. Rao (Phlebotomy)</DetailBox>
       </div>
       {editable && (
-        <AdminButton type="button" accent="indigo" className="mt-3 w-full" disabled={!time} onClick={onCollect}>
-          Mark collected — {DEMO_DATE_LABEL} {time}
+        <AdminButton type="button" accent="indigo" className="mt-3 w-full" disabled={!time || busy} onClick={onCollect}>
+          {busy ? "Saving…" : `Mark collected — ${dateLabel} ${time}`}
         </AdminButton>
       )}
     </div>
@@ -323,73 +415,75 @@ function CollectForm({ editable, barcode, setBarcode, specNo, onCollect, time, s
 // Screen 2 — Imaging Performed (RADIOGRAPHER)
 // =========================================================================
 
-type ImagingStatus = "awaiting" | "performed" | "repeat"
+function ImagingPerformedScreen({ editable, clinicId }: { editable: boolean; clinicId?: string }) {
+  const queryClient = useQueryClient()
+  const collect = useCollectDiagnosticSample()
+  const reject = useRejectDiagnosticSpecimen()
+  const worklist = useDiagnosticWorklist({
+    stage: "collection",
+    modality: "RADIOLOGY",
+    date: todayIsoDate(),
+    includeDone: true,
+  })
 
-interface ImagingOrder {
-  id: string
-  study: string
-  patient: string
-  uhid: string
-  visitId: string
-  orderedBy: string
-  orderedTime: string
-  priority: "URGENT" | "ROUTINE"
-  payment: string
-  equipment: string[]
-  status: ImagingStatus
-}
-
-const IMAGING_SEED: ImagingOrder[] = [
-  { id: "RAD-2210", study: "Chest X-ray (PA view)", patient: "Meera Kulkarni", uhid: "UHID-0004821", visitId: "OPD-20260812-0091", orderedBy: "Dr. Anjali Nair", orderedTime: "09:34", priority: "URGENT", payment: "Star Health TPA — pre-authorised", equipment: ["DR Room 1 · Siemens Ysio Max", "Portable · Fuji FDR Go"], status: "performed" },
-  { id: "RAD-2214", study: "USG Abdomen", patient: "Rakesh Menon", uhid: "UHID-0003190", visitId: "OPD-20260812-0104", orderedBy: "Dr. Rohan Mehta", orderedTime: "10:44", priority: "ROUTINE", payment: "Cash — receipt REC-00863", equipment: ["USG Room 2 · GE Logiq P9", "USG Room 3 · Philips Affiniti 50"], status: "awaiting" },
-  { id: "RAD-2218", study: "CT Chest (plain)", patient: "Imran Sheikh", uhid: "UHID-0004930", visitId: "OPD-20260812-0110", orderedBy: "Dr. Sana Kapoor", orderedTime: "11:26", priority: "ROUTINE", payment: "Cash — receipt REC-00871", equipment: ["CT Room 1 · Siemens Somatom go.Top", "CT Room 2 · GE Revolution"], status: "awaiting" },
-]
-
-interface ImagingEvent {
-  attempt: number
-  kind: "performed" | "failed"
-  by: string
-  time: string
-  equipment: string
-  reason?: string
-}
-
-function ImagingPerformedScreen({ editable }: { editable: boolean }) {
-  const [orders, setOrders] = useState<ImagingOrder[]>(IMAGING_SEED)
-  const [selectedId, setSelectedId] = useState("RAD-2214")
+  const orders = worklist.data?.items ?? []
+  const awaitingCount = worklist.data?.awaitingCount ?? orders.filter((o) => imagingTone(o.statusLabel) !== "performed").length
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [equipment, setEquipment] = useState<string | null>(null)
-  const [events, setEvents] = useState<Record<string, ImagingEvent[]>>({})
   const [banner, setBanner] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [failing, setFailing] = useState(false)
+  const doneTime = nowHhMm()
+  const todayLabel = dateLabel()
 
-  const awaitingCount = orders.filter((o) => o.status !== "performed").length
-  const selected = orders.find((o) => o.id === selectedId)!
-  const log = events[selected.id] ?? []
-  const attempt = log.filter((e) => e.kind === "failed").length + 1
-  const doneTime = "12:03"
+  useKeepSelection(orders, selectedId, setSelectedId)
+  const selectedOrder = orders.find((o) => o.orderId === selectedId)
+  const log = selectedOrder?.attempts ?? []
+  const attempt = selectedOrder?.collectionAttempt || rejectedAttempts(log).length + 1
+  const status = imagingTone(selectedOrder?.statusLabel)
+  const performed = collectedAttempt(log)
+  const lastFail = failedAttempt(log)
+  const rooms = selectedOrder?.equipmentUsed && !IMAGING_ROOMS.includes(selectedOrder.equipmentUsed)
+    ? [selectedOrder.equipmentUsed, ...IMAGING_ROOMS]
+    : IMAGING_ROOMS
 
-  function markPerformed() {
-    if (!editable || !equipment) return
-    setOrders((os) => os.map((o) => (o.id === selected.id ? { ...o, status: "performed" } : o)))
-    setEvents((e) => ({ ...e, [selected.id]: [...(e[selected.id] ?? []), { attempt, kind: "performed", by: "S. Fernandes (Radiographer)", time: doneTime, equipment }] }))
-    setBanner(`✓ ${selected.study} performed at ${doneTime} on ${equipment}. ${selected.id} now appears on the result-entry worklist for the report.`)
-    setEquipment(null)
-    setFailing(false)
+  async function markPerformed() {
+    if (!editable || !selectedOrder || !equipment) return
+    setError(null)
+    try {
+      await collect.mutateAsync({
+        orderId: selectedOrder.orderId,
+        equipmentUsed: equipment,
+        sampleCollectedAt: atTimeToday(doneTime),
+      })
+      invalidateWorklists(queryClient)
+      setBanner(`✓ ${selectedOrder.testName} performed at ${doneTime} on ${equipment}. ${displayId(selectedOrder)} now appears on the result-entry worklist for the report.`)
+      setEquipment(null)
+      setFailing(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not mark performed.")
+    }
   }
 
-  function logFailed(reason: string) {
-    setOrders((os) => os.map((o) => (o.id === selected.id ? { ...o, status: "repeat" } : o)))
-    setEvents((e) => ({ ...e, [selected.id]: [...(e[selected.id] ?? []), { attempt, kind: "failed", by: "S. Fernandes (Radiographer)", time: "12:21", equipment: equipment ?? "—", reason }] }))
-    setBanner(`✓ ${selected.id} — attempt logged as failed (${reason}). The failed attempt stays on the order record; a repeat is now due.`)
-    setFailing(false)
+  async function logFailed(reason: string) {
+    if (!selectedOrder) return
+    setError(null)
+    try {
+      await reject.mutateAsync({ orderId: selectedOrder.orderId, reason })
+      invalidateWorklists(queryClient)
+      setBanner(`✓ ${displayId(selectedOrder)} — attempt logged as failed (${reason}). The failed attempt stays on the order record; a repeat is now due.`)
+      setFailing(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not log failed attempt.")
+    }
   }
 
   return (
     <div>
-      {banner && (
-        <div className="mb-4 flex items-start justify-between gap-4 border border-adminreg-olive bg-adminreg-olive-soft px-4 py-2.5 text-xs text-adminreg-olive-dark">
-          <span>{banner}</span>
-          <button type="button" onClick={() => setBanner(null)} className="flex-shrink-0 font-plexmono text-[10px] uppercase tracking-wide underline">Dismiss</button>
+      {(banner || error) && (
+        <div className={cn("mb-4 flex items-start justify-between gap-4 px-4 py-2.5 text-xs", error ? "border border-adminreg-red bg-adminreg-red-soft text-adminreg-red-text" : "border border-adminreg-olive bg-adminreg-olive-soft text-adminreg-olive-dark")}>
+          <span>{error || banner}</span>
+          <button type="button" onClick={() => { setBanner(null); setError(null) }} className="flex-shrink-0 font-plexmono text-[10px] uppercase tracking-wide underline">Dismiss</button>
         </div>
       )}
 
@@ -404,36 +498,47 @@ function ImagingPerformedScreen({ editable }: { editable: boolean }) {
               S. Fernandes (Radiographer). Radiology orders that are payment- or coverage-cleared and awaiting the scan. No specimen is involved — what is captured here is the equipment used and the time performed.
             </p>
           </div>
-          {orders.map((o) => (
-            <WorklistRow key={o.id} active={o.id === selectedId} onClick={() => { setSelectedId(o.id); setEquipment(null); setFailing(false) }}>
-              <div className="flex items-start justify-between gap-2">
-                <span className="text-sm font-semibold text-adminreg-text">{o.study}</span>
-                <Chip tone={o.status === "performed" ? "performed" : o.status === "repeat" ? "repeat" : "awaiting"}>
-                  {o.status === "performed" ? "Performed" : o.status === "repeat" ? "Repeat required" : "Awaiting imaging"}
-                </Chip>
-              </div>
-              <div className="mt-0.5 text-xs text-adminreg-muted">{o.patient} · {o.uhid}</div>
-              <div className="mt-1 flex items-center justify-between">
-                <span className="font-plexmono text-[10px] text-adminreg-muted2">{o.id} · ordered {o.orderedTime}</span>
-                <Chip tone={o.priority === "URGENT" ? "urgent" : "routine"}>{o.priority}</Chip>
-              </div>
-            </WorklistRow>
-          ))}
+          {worklist.isLoading && orders.length === 0 && <EmptyWorklist message="Loading imaging worklist…" />}
+          {!worklist.isLoading && orders.length === 0 && (
+            <EmptyWorklist message={worklist.error instanceof Error ? worklist.error.message : "Nothing on the imaging worklist."} />
+          )}
+          {orders.map((o) => {
+            const tone = imagingTone(o.statusLabel)
+            return (
+              <WorklistRow key={o.orderId} active={o.orderId === selectedId} onClick={() => { setSelectedId(o.orderId); setEquipment(null); setFailing(false); setError(null) }}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-semibold text-adminreg-text">{o.testName}</span>
+                  <Chip tone={tone === "performed" ? "performed" : tone === "repeat" ? "repeat" : "awaiting"}>
+                    {o.statusLabel || (tone === "performed" ? "Performed" : tone === "repeat" ? "Repeat required" : "Awaiting imaging")}
+                  </Chip>
+                </div>
+                <div className="mt-0.5 text-xs text-adminreg-muted">{o.patientName || "—"} · {o.patientUhid || "—"}</div>
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="font-plexmono text-[10px] text-adminreg-muted2">{displayId(o)} · ordered {hhMm(o.orderedAt)}</span>
+                  <Chip tone={(o.priority || "").toUpperCase() === "URGENT" ? "urgent" : "routine"}>{o.priority || "ROUTINE"}</Chip>
+                </div>
+              </WorklistRow>
+            )
+          })}
         </div>
 
         <Panel>
-          <div className="text-lg font-extrabold text-adminreg-text">{selected.study}</div>
-          <div className="text-xs text-adminreg-muted">{selected.patient} · {selected.uhid} · {selected.visitId}</div>
+          {!selectedOrder ? (
+            <p className="text-sm text-adminreg-muted">Select an order from the worklist.</p>
+          ) : (
+            <>
+          <div className="text-lg font-extrabold text-adminreg-text">{selectedOrder.testName}</div>
+          <div className="text-xs text-adminreg-muted">{selectedOrder.patientName || "—"} · {selectedOrder.patientUhid || "—"} · {selectedOrder.visitId}</div>
           <div className="mt-2"><Chip tone="routine">Radiology · no specimen</Chip></div>
-          <p className="mt-2 font-plexmono text-[10px] text-adminreg-muted2">{selected.id} · ordered by {selected.orderedBy} at {selected.orderedTime} · payment cleared</p>
+          <p className="mt-2 font-plexmono text-[10px] text-adminreg-muted2">{displayId(selectedOrder)} · ordered by {selectedOrder.orderedByName || "—"} at {hhMm(selectedOrder.orderedAt)} · payment cleared</p>
 
-          <div className="mt-3"><DetailBox label="Payment / coverage" tone="indigo">{selected.payment}</DetailBox></div>
+          <div className="mt-3"><DetailBox label="Payment / coverage" tone="indigo">{selectedOrder.paymentLine || "Payment cleared"}</DetailBox></div>
 
-          {selected.status === "performed" ? (
+          {status === "performed" ? (
             <div className="mt-3 border-l-[3px] border-adminreg-olive bg-adminreg-olive-soft p-3">
               <div className="font-plexmono text-[10px] font-bold uppercase tracking-[0.04em] text-adminreg-olive-dark">Imaging performed — in the result-entry queue</div>
               <p className="mt-0.5 font-plexmono text-[10px] text-adminreg-olive-dark">
-                {(log.find((e) => e.kind === "performed")?.time) ?? doneTime} · {(log.find((e) => e.kind === "performed")?.equipment) ?? selected.equipment[0]} · S. Fernandes (Radiographer)
+                {hhMm(performed?.collectedAt || selectedOrder.sampleCollectedAt)} · {selectedOrder.equipmentUsed || performed?.line || rooms[0]} · {selectedOrder.collectedByName || "Radiographer"}
               </p>
               <p className="mt-1.5 text-xs text-adminreg-olive-dark">Images are with PACS and the order is now on Result Entry for the radiologist&apos;s report.</p>
               <div className="mt-2"><Link href="/opd/diagnostics?screen=result-entry" className="text-[11px] font-semibold text-adminreg-olive-dark underline">Open Result Entry →</Link></div>
@@ -441,19 +546,19 @@ function ImagingPerformedScreen({ editable }: { editable: boolean }) {
           ) : (
             <div className="mt-3">
               <div className="mb-2">
-                <DashedTag>{selected.status === "repeat" ? `Repeat — attempt ${attempt}` : `Awaiting imaging — attempt ${attempt}`}</DashedTag>
+                <DashedTag>{status === "repeat" ? `Repeat — attempt ${attempt}` : `Awaiting imaging — attempt ${attempt}`}</DashedTag>
               </div>
-              {selected.status === "repeat" && (
+              {status === "repeat" && (
                 <div className="mb-2 border-l-[3px] border-adminreg-amber bg-adminreg-amber-soft p-3">
                   <div className="font-plexmono text-[10px] font-bold uppercase tracking-[0.04em] text-adminreg-amber-text">Repeat due — earlier attempt failed</div>
                   <p className="mt-1 text-xs text-adminreg-amber-text">
-                    Attempt {attempt - 1} failed — {log.filter((e) => e.kind === "failed").slice(-1)[0]?.reason}. Logged by S. Fernandes (Radiographer). Original attempt record retained for the radiologist.
+                    {selectedOrder.recollectionReason || `Attempt ${attempt - 1} failed — ${lastFail?.rejectionReason || "repeat required"}. Original attempt record retained for the radiologist.`}
                   </p>
                 </div>
               )}
               <div className="font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-muted2">Modality / equipment used</div>
               <div className="mt-1 flex flex-col gap-1.5">
-                {selected.equipment.map((eq) => (
+                {rooms.map((eq) => (
                   <button
                     key={eq}
                     type="button"
@@ -466,13 +571,13 @@ function ImagingPerformedScreen({ editable }: { editable: boolean }) {
                 ))}
               </div>
               <div className="mt-2 grid grid-cols-2 gap-2">
-                <DetailBox label="Performed at">12 Aug 2026 · {doneTime}</DetailBox>
+                <DetailBox label="Performed at">{todayLabel} · {doneTime}</DetailBox>
                 <DetailBox label="Radiographer">S. Fernandes</DetailBox>
               </div>
               {editable && (
                 <>
-                  <AdminButton type="button" accent="indigo" className="mt-3 w-full" disabled={!equipment} onClick={markPerformed}>
-                    {equipment ? `Mark imaging performed — 12 Aug ${doneTime}` : "Choose the equipment used to continue"}
+                  <AdminButton type="button" accent="indigo" className="mt-3 w-full" disabled={!equipment || collect.isPending} onClick={() => void markPerformed()}>
+                    {collect.isPending ? "Saving…" : equipment ? `Mark imaging performed — ${todayLabel.split(" ").slice(0, 2).join(" ")} ${doneTime}` : "Choose the equipment used to continue"}
                   </AdminButton>
                   <button type="button" onClick={() => setFailing((v) => !v)} className="mt-2 text-[11px] text-adminreg-amber-text underline">Log a failed attempt instead</button>
                 </>
@@ -482,7 +587,7 @@ function ImagingPerformedScreen({ editable }: { editable: boolean }) {
                   <div className="font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-amber-text">Failure reason — appended, not overwritten</div>
                   <div className="mt-1 flex flex-wrap gap-1.5">
                     {IMAGING_FAIL_REASONS.map((r) => (
-                      <button key={r} type="button" onClick={() => logFailed(r)} className="border border-adminreg-amber bg-adminreg-card px-2 py-1 text-[11px] font-semibold text-adminreg-amber-text hover:bg-adminreg-amber-soft">{r}</button>
+                      <button key={r} type="button" disabled={reject.isPending} onClick={() => void logFailed(r)} className="border border-adminreg-amber bg-adminreg-card px-2 py-1 text-[11px] font-semibold text-adminreg-amber-text hover:bg-adminreg-amber-soft">{r}</button>
                     ))}
                   </div>
                 </div>
@@ -494,16 +599,23 @@ function ImagingPerformedScreen({ editable }: { editable: boolean }) {
             <div className="mt-3 border-t border-adminreg-divider pt-2.5">
               <div className="font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-muted2">Attempts — same order</div>
               <div className="mt-1.5 space-y-1.5">
-                {log.map((e, i) => (
-                  <div key={i} className="flex items-start justify-between gap-2 border border-adminreg-divider bg-adminreg-bg px-2.5 py-1.5 text-[11px]">
-                    <span className="text-adminreg-text">
-                      Attempt {e.attempt} — {e.kind === "performed" ? `performed on ${e.equipment} by ${e.by}.` : `failed (${e.reason}), logged by ${e.by}.`}
-                    </span>
-                    <Chip tone={e.kind === "performed" ? "performed" : "repeat"}>{e.kind === "performed" ? "Performed" : "Failed"}</Chip>
-                  </div>
-                ))}
+                {log.map((e) => {
+                  const failed = isRejected(e.status)
+                  return (
+                    <div key={e.id} className="flex items-start justify-between gap-2 border border-adminreg-divider bg-adminreg-bg px-2.5 py-1.5 text-[11px]">
+                      <span className="text-adminreg-text">
+                        {e.line || (failed
+                          ? `Attempt ${e.attemptNo} — failed (${e.rejectionReason}), logged by ${e.rejectedByName || "Radiographer"}.`
+                          : `Attempt ${e.attemptNo} — performed on ${selectedOrder.equipmentUsed || "equipment"} by ${e.collectedByName || "Radiographer"}.`)}
+                      </span>
+                      <Chip tone={failed ? "repeat" : "performed"}>{failed ? "Failed" : "Performed"}</Chip>
+                    </div>
+                  )
+                })}
               </div>
             </div>
+          )}
+            </>
           )}
         </Panel>
       </div>
@@ -515,52 +627,63 @@ function ImagingPerformedScreen({ editable }: { editable: boolean }) {
 // Screen 3 — Result Entry (LAB / RADIOLOGY) — derived queue
 // =========================================================================
 
-interface ResultRow {
-  id: string
-  test: string
-  patient: string
-  uhid: string
-  visitId: string
-  orderedBy: string
-  sampleTime: string
-  specNo: string
-  ageLabel: string
-  overdue: boolean
-  kind: "numeric" | "narrative"
-  unit?: string
-  normalRange?: string
-  critical?: (v: string) => boolean
-  status: "draft" | "submitted"
-}
+function ResultEntryScreen({ editable, clinicId }: { editable: boolean; clinicId?: string }) {
+  const queryClient = useQueryClient()
+  const addResult = useAddDiagnosticResult()
+  const params = { stage: "result-entry" as const, date: todayIsoDate(), includeDone: true }
+  const lab = useDiagnosticWorklist({ ...params, modality: "LAB" })
+  const rad = useDiagnosticWorklist({ ...params, modality: "RADIOLOGY" })
 
-const RESULT_SEED: ResultRow[] = [
-  { id: "LAB-4471", test: "Serum Potassium", patient: "Meera Kulkarni", uhid: "UHID-0004821", visitId: "OPD-20260812-0091", orderedBy: "Dr. Anjali Nair", sampleTime: "09:12", specNo: "SPEC-20260812-4471", ageLabel: "2h 41m ago", overdue: true, kind: "numeric", unit: "mmol/L", normalRange: "3.5–5.1 mmol/L", critical: (v) => { const n = Number(v); return !Number.isNaN(n) && (n < 3.0 || n > 6.0) }, status: "draft" },
-  { id: "LAB-4483", test: "Haemoglobin", patient: "Anita Desai", uhid: "UHID-0004410", visitId: "OPD-20260812-0099", orderedBy: "Dr. Rohan Mehta", sampleTime: "11:42", specNo: "SPEC-20260812-4483", ageLabel: "11m ago", overdue: false, kind: "numeric", unit: "g/dL", normalRange: "12.0–15.5 g/dL", critical: (v) => { const n = Number(v); return !Number.isNaN(n) && n < 7 }, status: "draft" },
-  { id: "RAD-2210", test: "Chest X-ray (PA view)", patient: "Meera Kulkarni", uhid: "UHID-0004821", visitId: "OPD-20260812-0091", orderedBy: "Dr. Anjali Nair", sampleTime: "09:41", specNo: "PACS-RAD-2210", ageLabel: "2h 12m ago", overdue: true, kind: "narrative", status: "draft" },
-]
+  const rows = useMemo(() => [...(lab.data?.items ?? []), ...(rad.data?.items ?? [])], [lab.data?.items, rad.data?.items])
+  const awaiting = (lab.data?.awaitingCount ?? 0) + (rad.data?.awaitingCount ?? 0)
+  const upstream = (lab.data?.upstreamCount ?? 0) + (rad.data?.upstreamCount ?? 0)
+  const ready = rows.length
+  const totalKnown = ready + upstream
 
-function ResultEntryScreen({ editable }: { editable: boolean }) {
-  const [rows, setRows] = useState<ResultRow[]>(RESULT_SEED)
-  const [selectedId, setSelectedId] = useState("LAB-4471")
-  const [value, setValue] = useState("6.4")
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [value, setValue] = useState("")
   const [banner, setBanner] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [submittedIds, setSubmittedIds] = useState<Set<string>>(new Set())
 
-  const selected = rows.find((r) => r.id === selectedId)!
-  const awaiting = rows.filter((r) => r.status === "draft").length
-  const isCritical = !!selected.critical?.(value)
+  useKeepSelection(rows, selectedId, setSelectedId)
+  const selected = rows.find((r) => r.orderId === selectedId)
+  const kind = selected && isImagingModality(selected.modality) ? "narrative" : "numeric"
+  const submitted = selected ? submittedIds.has(selected.orderId) || !selected.canEnterResult : false
+  const numericValue = Number(value)
+  const isCritical = kind === "numeric" && selected && !Number.isNaN(numericValue) && (
+    (selected.criticalLow != null && numericValue < selected.criticalLow) ||
+    (selected.criticalHigh != null && numericValue > selected.criticalHigh)
+  )
+  const loadError = lab.error || rad.error
+  const loading = (lab.isLoading || rad.isLoading) && rows.length === 0
 
-  function submit() {
-    if (!editable) return
-    setRows((rs) => rs.map((r) => (r.id === selected.id ? { ...r, status: "submitted" } : r)))
-    setBanner(`✓ ${selected.test} result entered${selected.kind === "numeric" ? ` — ${value} ${selected.unit}` : ""}. Now visible to ${selected.orderedBy}${isCritical ? " and auto-flagged CRITICAL — pushed to the doctor." : "."}`)
+  async function submit() {
+    if (!editable || !selected || !value.trim()) return
+    setError(null)
+    const numeric = kind === "numeric" ? Number(value) : NaN
+    try {
+      await addResult.mutateAsync({
+        orderId: selected.orderId,
+        valueText: kind === "narrative" || Number.isNaN(numeric) ? value.trim() : undefined,
+        valueNumeric: kind === "numeric" && !Number.isNaN(numeric) ? numeric : undefined,
+        unit: selected.unit || undefined,
+        referenceRange: selected.normalRange || undefined,
+      })
+      setSubmittedIds((prev) => new Set(prev).add(selected.orderId))
+      invalidateWorklists(queryClient)
+      setBanner(`✓ ${selected.testName} result entered${kind === "numeric" ? ` — ${value} ${selected.unit || ""}` : ""}. Now visible to ${selected.orderedByName || "the ordering doctor"}${isCritical ? " and auto-flagged CRITICAL — pushed to the doctor." : "."}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not submit result.")
+    }
   }
 
   return (
     <div>
-      {banner && (
-        <div className="mb-4 flex items-start justify-between gap-4 border border-adminreg-olive bg-adminreg-olive-soft px-4 py-2.5 text-xs text-adminreg-olive-dark">
-          <span>{banner}</span>
-          <button type="button" onClick={() => setBanner(null)} className="flex-shrink-0 font-plexmono text-[10px] uppercase tracking-wide underline">Dismiss</button>
+      {(banner || error) && (
+        <div className={cn("mb-4 flex items-start justify-between gap-4 px-4 py-2.5 text-xs", error ? "border border-adminreg-red bg-adminreg-red-soft text-adminreg-red-text" : "border border-adminreg-olive bg-adminreg-olive-soft text-adminreg-olive-dark")}>
+          <span>{error || banner}</span>
+          <button type="button" onClick={() => { setBanner(null); setError(null) }} className="flex-shrink-0 font-plexmono text-[10px] uppercase tracking-wide underline">Dismiss</button>
         </div>
       )}
 
@@ -577,40 +700,51 @@ function ResultEntryScreen({ editable }: { editable: boolean }) {
           </div>
           <div className="p-3.5">
             <InlineInfo>
-              3 of 8 orders are ready for entry. 5 still upstream — pathology orders appear here only once Sample Collection marks them collected, radiology only once Imaging Performed marks the scan done.{" "}
+              {ready} of {totalKnown || ready} orders are ready for entry. {upstream} still upstream — pathology orders appear here only once Sample Collection marks them collected, radiology only once Imaging Performed marks the scan done.{" "}
               <Link href="/opd/diagnostics?screen=sample-collection" className="font-semibold underline">Sample Collection →</Link>{" "}
               <Link href="/opd/diagnostics?screen=imaging-performed" className="font-semibold underline">Imaging Performed →</Link>
             </InlineInfo>
           </div>
-          {rows.map((r) => (
-            <WorklistRow key={r.id} active={r.id === selectedId} onClick={() => { setSelectedId(r.id); setValue(r.id === "LAB-4471" ? "6.4" : "") }}>
-              <div className="flex items-start justify-between gap-2">
-                <span className="text-sm font-semibold text-adminreg-text">{r.test}</span>
-                <Chip tone={r.status === "submitted" ? "performed" : r.overdue ? "overdue" : "fresh"}>
-                  {r.status === "submitted" ? "Entered" : r.overdue ? "Overdue" : "Fresh"}
-                </Chip>
-              </div>
-              <div className="mt-0.5 text-xs text-adminreg-muted">{r.patient} · {r.uhid}</div>
-              <div className="text-xs text-adminreg-muted">Ordered by {r.orderedBy}</div>
-              <div className="mt-1 font-plexmono text-[10px] text-adminreg-muted2">Sample {r.sampleTime} · {r.specNo} · {r.ageLabel}</div>
-            </WorklistRow>
-          ))}
+          {loading && <EmptyWorklist message="Loading result-entry worklist…" />}
+          {!loading && rows.length === 0 && (
+            <EmptyWorklist message={loadError instanceof Error ? loadError.message : "Nothing ready for result entry."} />
+          )}
+          {rows.map((r) => {
+            const entered = submittedIds.has(r.orderId) || !r.canEnterResult
+            return (
+              <WorklistRow key={r.orderId} active={r.orderId === selectedId} onClick={() => { setSelectedId(r.orderId); setValue(""); setError(null) }}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-semibold text-adminreg-text">{r.testName}</span>
+                  <Chip tone={entered ? "performed" : r.isOverdue ? "overdue" : "fresh"}>
+                    {entered ? "Entered" : r.isOverdue ? "Overdue" : "Fresh"}
+                  </Chip>
+                </div>
+                <div className="mt-0.5 text-xs text-adminreg-muted">{r.patientName || "—"} · {r.patientUhid || "—"}</div>
+                <div className="text-xs text-adminreg-muted">Ordered by {r.orderedByName || "—"}</div>
+                <div className="mt-1 font-plexmono text-[10px] text-adminreg-muted2">Sample {hhMm(r.sampleCollectedAt)} · {specNoFor(r)} · {r.waitingLabel || ""}</div>
+              </WorklistRow>
+            )
+          })}
         </div>
 
         <Panel>
-          <div className="text-lg font-extrabold text-adminreg-text">{selected.test}</div>
-          <div className="text-xs text-adminreg-muted">{selected.patient} · {selected.uhid} · {selected.visitId}</div>
-          <div className="mt-2"><Chip tone="routine">{selected.kind === "numeric" ? "Pathology · numeric result" : "Radiology · narrative report"}</Chip></div>
-          <p className="mt-2 font-plexmono text-[10px] text-adminreg-muted2">{selected.id} · ordered by {selected.orderedBy} · sample {selected.sampleTime} · {selected.specNo}</p>
+          {!selected ? (
+            <p className="text-sm text-adminreg-muted">Select an order from the worklist.</p>
+          ) : (
+            <>
+          <div className="text-lg font-extrabold text-adminreg-text">{selected.testName}</div>
+          <div className="text-xs text-adminreg-muted">{selected.patientName || "—"} · {selected.patientUhid || "—"} · {selected.visitId}</div>
+          <div className="mt-2"><Chip tone="routine">{kind === "numeric" ? "Pathology · numeric result" : "Radiology · narrative report"}</Chip></div>
+          <p className="mt-2 font-plexmono text-[10px] text-adminreg-muted2">{displayId(selected)} · ordered by {selected.orderedByName || "—"} · sample {hhMm(selected.sampleCollectedAt)} · {specNoFor(selected)}</p>
 
-          {selected.status === "submitted" ? (
+          {submitted ? (
             <div className="mt-3 border-l-[3px] border-adminreg-olive bg-adminreg-olive-soft p-3 text-xs text-adminreg-olive-dark">
-              Result submitted and released to {selected.orderedBy}. It now shows on the Diagnostics stage of {selected.visitId}.
+              Result submitted and released to {selected.orderedByName || "the ordering doctor"}. It now shows on the Diagnostics stage of this visit.
             </div>
           ) : (
             <>
               <div className="mt-3"><DashedTag>Draft — not visible to the doctor yet</DashedTag></div>
-              {selected.kind === "numeric" ? (
+              {kind === "numeric" ? (
                 <>
                   <div className="mt-3 font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-muted2">Result value</div>
                   <div className="mt-1 flex items-center gap-2">
@@ -627,11 +761,11 @@ function ResultEntryScreen({ editable }: { editable: boolean }) {
                   </div>
                   <div className="mt-2 border border-adminreg-border bg-adminreg-bg px-2.5 py-1.5">
                     <div className="font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-muted2">Normal range · Admin → Test Master</div>
-                    <div className="text-xs text-adminreg-text">{selected.normalRange}</div>
+                    <div className="text-xs text-adminreg-text">{selected.normalRange || "—"}</div>
                   </div>
                   {isCritical && (
                     <div className="mt-2 border-2 border-adminreg-red bg-adminreg-red-soft px-3 py-2 text-xs font-bold text-adminreg-red-text">
-                      ⚠ Outside the critical range — submitting will auto-flag this and push it to {selected.orderedBy} immediately.
+                      ⚠ Outside the critical range — submitting will auto-flag this and push it to {selected.orderedByName || "the ordering doctor"} immediately.
                     </div>
                   )}
                 </>
@@ -647,10 +781,12 @@ function ResultEntryScreen({ editable }: { editable: boolean }) {
               )}
 
               {editable && (
-                <AdminButton type="button" accent="indigo" className="mt-3 w-full" disabled={!value.trim()} onClick={submit}>
-                  Submit result → release to {selected.orderedBy}
+                <AdminButton type="button" accent="indigo" className="mt-3 w-full" disabled={!value.trim() || addResult.isPending} onClick={() => void submit()}>
+                  {addResult.isPending ? "Submitting…" : `Submit result → release to ${selected.orderedByName || "the ordering doctor"}`}
                 </AdminButton>
               )}
+            </>
+          )}
             </>
           )}
         </Panel>
@@ -666,6 +802,7 @@ function ResultEntryScreen({ editable }: { editable: boolean }) {
 export function OpdDiagnosticsWorklistPage() {
   const searchParams = useSearchParams()
   const { role } = useStaffRole()
+  const { clinicId } = useBranchScope()
   const screenParam = (searchParams.get("screen") as DxWorklistKey) || "sample-collection"
   const def = useMemo(() => DX_WORKLIST_DEFS.find((d) => d.key === screenParam) ?? DX_WORKLIST_DEFS[0], [screenParam])
 
@@ -686,9 +823,9 @@ export function OpdDiagnosticsWorklistPage() {
 
       <div className="px-4 pb-16 pt-6 font-archivo sm:px-6 md:px-8">
         <div className="mx-auto max-w-[1240px]">
-          {def.key === "sample-collection" && <SampleCollectionScreen editable={editable} />}
-          {def.key === "imaging-performed" && <ImagingPerformedScreen editable={editable} />}
-          {def.key === "result-entry" && <ResultEntryScreen editable={editable} />}
+          {def.key === "sample-collection" && <SampleCollectionScreen editable={editable} clinicId={clinicId} />}
+          {def.key === "imaging-performed" && <ImagingPerformedScreen editable={editable} clinicId={clinicId} />}
+          {def.key === "result-entry" && <ResultEntryScreen editable={editable} clinicId={clinicId} />}
         </div>
       </div>
     </div>

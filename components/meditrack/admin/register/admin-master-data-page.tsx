@@ -33,6 +33,7 @@ import {
   useGetDiagnosisCodes,
   useGetDrugs,
   useGetLabTests,
+  useGetTestCategories,
   useGetStock,
   useUpdateDiagnosisCode,
   useUpdateDrug,
@@ -78,7 +79,19 @@ const EMPANELMENT_OPTIONS = ["Empanelled", "Renewal pending", "Not empanelled"]
 const STOCK_STATUS_OPTIONS = ["In stock", "Low stock", "Critical stock"]
 
 const EMPTY_DRUG = { name: "", schedule: SCHEDULE_OPTIONS[0], unit: UNIT_OPTIONS[0] }
-const EMPTY_TEST = { name: "", code: "", sample: "", tat: "" }
+const EMPTY_TEST = { name: "", code: "", category: "", rate: "", sample: "", tat: "" }
+const FALLBACK_TEST_CATEGORIES = [
+  { name: "Haematology", modality: "LAB" },
+  { name: "Biochemistry", modality: "LAB" },
+  { name: "Microbiology", modality: "LAB" },
+  { name: "Serology", modality: "LAB" },
+  { name: "Pathology", modality: "LAB" },
+  { name: "Imaging", modality: "RADIOLOGY" },
+  { name: "Radiology", modality: "RADIOLOGY" },
+  { name: "Ultrasound", modality: "RADIOLOGY" },
+  { name: "Cardiac diagnostics", modality: "RADIOLOGY" },
+  { name: "Pulmonary function", modality: "RADIOLOGY" },
+]
 const EMPTY_DIAGNOSIS = { code: "", description: "", version: ICD_VERSIONS[0] }
 const EMPTY_PAYER = { name: "", type: PAYER_TYPES[0], empanelment: EMPANELMENT_OPTIONS[0] }
 const EMPTY_STOCK = { drug: "", batch: "", expiry: "", qty: "", status: STOCK_STATUS_OPTIONS[0] }
@@ -106,6 +119,18 @@ function scheduleToForm(schedule?: string | null) {
   if (!schedule) return "None"
   const cleaned = schedule.replace(/^sch\.?\s*/i, "").trim()
   return SCHEDULE_OPTIONS.includes(cleaned) ? cleaned : "None"
+}
+
+function formatRate(value?: number | null) {
+  if (value == null || Number.isNaN(value)) return "—"
+  return `₹${value.toLocaleString("en-IN")}`
+}
+
+function parseRate(raw: string): number | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  const n = Number(trimmed)
+  return Number.isFinite(n) ? n : null
 }
 
 function formatLastEdited(value?: string | null) {
@@ -209,6 +234,8 @@ export function AdminMasterDataPage() {
     { pageNumber: 1, pageSize: 100 },
     tab === "tests"
   )
+  const { data: fetchedCategories = [] } = useGetTestCategories(tab === "tests")
+  const testCategories = fetchedCategories.length > 0 ? fetchedCategories : FALLBACK_TEST_CATEGORIES
   const {
     data: diagnosisData,
     isLoading: loadingDiagnosis,
@@ -277,6 +304,9 @@ export function AdminMasterDataPage() {
   const [payerForm, setPayerForm] = useState(EMPTY_PAYER)
   const [stockForm, setStockForm] = useState(EMPTY_STOCK)
 
+  const selectedTestCategory = testCategories.find((c) => c.name === testForm.category)
+  const isImagingTest = (selectedTestCategory?.modality || "").toUpperCase() === "RADIOLOGY"
+
   const isSaving =
     createDrug.isPending ||
     updateDrug.isPending ||
@@ -324,6 +354,8 @@ export function AdminMasterDataPage() {
     setTestForm({
       name: row.name || "",
       code: row.code || "",
+      category: row.category || "",
+      rate: row.rate != null ? String(row.rate) : "",
       sample: row.sampleType || "",
       tat: row.tat || "",
     })
@@ -417,7 +449,9 @@ export function AdminMasterDataPage() {
           const payload = {
             name: testForm.name.trim(),
             code: testForm.code.trim() || null,
-            sampleType: testForm.sample.trim() || null,
+            category: testForm.category.trim() || null,
+            rate: parseRate(testForm.rate),
+            sampleType: isImagingTest ? null : testForm.sample.trim() || null,
             tat: testForm.tat.trim() || null,
           }
           if (mode === "add") {
@@ -605,13 +639,45 @@ export function AdminMasterDataPage() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Sample type</Label>
+            <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Category</Label>
+            <Select
+              value={testForm.category || "__none"}
+              onValueChange={(v) => setTestForm((f) => ({ ...f, category: v === "__none" ? "" : v }))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select category" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">Select category</SelectItem>
+                {testCategories.map((c) => (
+                  <SelectItem key={c.name} value={c.name}>
+                    {c.name} · {c.modality === "RADIOLOGY" ? "Imaging" : "Lab"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Rate</Label>
             <Input
-              value={testForm.sample}
-              onChange={(e) => setTestForm((f) => ({ ...f, sample: e.target.value }))}
-              placeholder="e.g. Serum"
+              type="number"
+              min={0}
+              step="0.01"
+              value={testForm.rate}
+              onChange={(e) => setTestForm((f) => ({ ...f, rate: e.target.value }))}
+              placeholder="e.g. 350"
             />
           </div>
+          {!isImagingTest && (
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Sample type</Label>
+              <Input
+                value={testForm.sample}
+                onChange={(e) => setTestForm((f) => ({ ...f, sample: e.target.value }))}
+                placeholder="e.g. Serum"
+              />
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">TAT</Label>
             <Input
@@ -899,12 +965,12 @@ export function AdminMasterDataPage() {
               <TableShell
                 headers={
                   testsHaveBranch
-                    ? ["Test", "Code", "Sample type", "TAT", "Branch", "Last edited", "Action"]
-                    : ["Test", "Code", "Sample type", "TAT", "Last edited", "Action"]
+                    ? ["Test", "Code", "Type", "Category", "Rate", "TAT", "Branch", "Action"]
+                    : ["Test", "Code", "Type", "Category", "Rate", "TAT", "Action"]
                 }
               >
                 {tests.length === 0 ? (
-                  <EmptyRow colSpan={testsHaveBranch ? 7 : 6} message="No tests yet. Add a test to get started." />
+                  <EmptyRow colSpan={testsHaveBranch ? 8 : 7} message="No tests yet. Add a test to get started." />
                 ) : (
                   tests.map((t) => {
                     const branch = resolveBranchName(t)
@@ -918,12 +984,13 @@ export function AdminMasterDataPage() {
                       >
                         <td className="px-5 py-3 font-medium text-adminreg-text">{t.name}</td>
                         <td className="px-5 py-3 font-mono text-xs">{t.code || "—"}</td>
-                        <td className="px-5 py-3 text-adminreg-muted">{t.sampleType || "—"}</td>
+                        <td className="px-5 py-3 text-adminreg-muted">{t.typeLabel || "—"}</td>
+                        <td className="px-5 py-3 text-adminreg-muted">{t.category || "—"}</td>
+                        <td className="px-5 py-3 font-mono text-xs">{formatRate(t.rate)}</td>
                         <td className="px-5 py-3">{t.tat || "—"}</td>
                         {testsHaveBranch && (
                           <td className="px-5 py-3 text-adminreg-muted">{branch || "—"}</td>
                         )}
-                        <td className="px-5 py-3 text-adminreg-muted">{formatLastEdited(t.updatedAt)}</td>
                         <td className="px-5 py-3 text-right">
                           <RowActions
                             actions={[
@@ -1168,6 +1235,9 @@ export function AdminMasterDataPage() {
             <>
               <InfoRow label="Test" value={viewTest.name} />
               <InfoRow label="Code" value={viewTest.code || "—"} />
+              <InfoRow label="Type" value={viewTest.typeLabel || "—"} />
+              <InfoRow label="Category" value={viewTest.category || "—"} />
+              <InfoRow label="Rate" value={formatRate(viewTest.rate)} />
               <InfoRow label="Sample type" value={viewTest.sampleType || "—"} />
               <InfoRow label="TAT" value={viewTest.tat || "—"} />
               <InfoRow label="Status" value={viewTest.isActive ? "Active" : "Inactive"} />

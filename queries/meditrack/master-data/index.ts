@@ -4,6 +4,7 @@ export * from "./create-drug";
 export * from "./update-drug";
 export * from "./delete-drug";
 export * from "./get-lab-tests";
+export * from "./get-test-categories";
 export * from "./create-lab-test";
 export * from "./update-lab-test";
 export * from "./delete-lab-test";

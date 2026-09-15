@@ -23,6 +23,7 @@ interface AdminModalProps {
    * OVERRIDE REQUIRED / etc, same convention as AdminDrawer's badge. */
   badge?: { label: string; tone: DrawerBadgeTone }
   confirmLabel?: string
+  cancelLabel?: string
   danger?: boolean
   /** Module accent for a non-danger confirm button. */
   accent?: "olive" | "indigo"
@@ -39,7 +40,7 @@ interface AdminModalProps {
  * destructive action explains its consequence in plain language via
  * `lines`, rather than a generic "Are you sure?".
  */
-export function AdminModal({ open, onOpenChange, title, lines, badge, confirmLabel = "Confirm", danger, accent = "olive", onConfirm, children }: AdminModalProps) {
+export function AdminModal({ open, onOpenChange, title, lines, badge, confirmLabel = "Confirm", cancelLabel = "Cancel", danger, accent = "olive", onConfirm, children }: AdminModalProps) {
   return (
     <AlertDialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <AlertDialogPrimitive.Portal>
@@ -65,7 +66,7 @@ export function AdminModal({ open, onOpenChange, title, lines, badge, confirmLab
           {children}
           <div className="mt-5 flex items-center justify-end gap-2">
             <AlertDialogPrimitive.Cancel asChild>
-              <AdminButton type="button" variant="secondary">Cancel</AdminButton>
+              <AdminButton type="button" variant="secondary">{cancelLabel}</AdminButton>
             </AlertDialogPrimitive.Cancel>
             <AlertDialogPrimitive.Action asChild>
               <AdminButton type="button" variant={danger ? "danger" : "primary"} accent={accent} onClick={onConfirm}>{confirmLabel}</AdminButton>

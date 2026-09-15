@@ -21,7 +21,6 @@ import { APPOINTMENT_TABS } from "@/components/meditrack/opd/appointments/theme"
 import { DX_WORKLIST_DEFS } from "@/components/meditrack/opd/diagnostics/theme"
 import { IPD_BANDS, IPD_STAGE_DEFS } from "@/components/meditrack/ipd/thread/theme"
 
-const PATIENT = { name: "Meera Kulkarni", ageSex: "34 / Female", uhid: "UHID-0004821", visitId: "OPD-20260812-0091" }
 const HANDOFFS = ["A. Bhatt · 09:14", "A. Bhatt · 09:16", "A. Bhatt · 09:18", "K. Rao · 09:31", "Dr. Nair · 09:52", "M. Pillai · 10:20", "Dr. Nair · 10:24", "S. Verma · 10:41"]
 
 function AdminNav({ isSuperAdmin }: { isSuperAdmin: boolean }) {
@@ -165,10 +164,25 @@ function OpdNav() {
       )}
 
       <div className={cn("mb-3 border-b border-l-[3px] border-adminreg-sidebar-border border-l-adminreg-indigo bg-white/[0.03] px-3.5 py-3", isAdminRole && "border-l-adminreg-amber")}>
-        <div className="text-sm font-bold text-adminreg-sidebar-text">{PATIENT.name}</div>
-        <div className="mt-0.5 text-[11px] text-adminreg-sidebar-text-secondary">{PATIENT.ageSex}</div>
-        <div className="mt-1.5 font-plexmono text-[10px] text-adminreg-sidebar-text-muted">UHID {PATIENT.uhid}</div>
-        <div className="mt-0.5 font-plexmono text-[10px] text-adminreg-sidebar-text-muted">Visit {PATIENT.visitId}</div>
+        {searchParams.get("name") ? (
+          <>
+            <div className="text-sm font-bold text-adminreg-sidebar-text">{searchParams.get("name")}</div>
+            {searchParams.get("phone") && (
+              <div className="mt-0.5 text-[11px] text-adminreg-sidebar-text-secondary">{searchParams.get("phone")}</div>
+            )}
+            {searchParams.get("uhid") && (
+              <div className="mt-1.5 font-plexmono text-[10px] text-adminreg-sidebar-text-muted">UHID {searchParams.get("uhid")}</div>
+            )}
+            <div className="mt-0.5 font-plexmono text-[10px] text-adminreg-sidebar-text-muted">
+              Visit {searchParams.get("visitId") || searchParams.get("ref") || searchParams.get("appointmentId") || "—"}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-sm font-bold text-adminreg-sidebar-text">No patient selected</div>
+            <div className="mt-0.5 text-[11px] text-adminreg-sidebar-text-secondary">Pick today’s visit from Diagnostics or Consultation</div>
+          </>
+        )}
         {isAdminRole && <p className="mt-1.5 font-plexmono text-[9px] uppercase tracking-wide text-adminreg-amber">Oversight view — read only</p>}
       </div>
 
@@ -205,7 +219,12 @@ function OpdNav() {
         const active = currentStage === i
         const editable = isStageEditable(role, i)
         return (
-          <Link key={def.name} href={`/opd/visit-thread?stage=${i}`} className="flex gap-2.5 px-2 py-2">
+          <Link key={def.name} href={(() => {
+            if (!pathname.startsWith("/opd/visit-thread")) return `/opd/visit-thread?stage=${i}`
+            const params = new URLSearchParams(searchParams.toString())
+            params.set("stage", String(i))
+            return `/opd/visit-thread?${params}`
+          })()} className="flex gap-2.5 px-2 py-2">
             <div className="flex w-4 flex-shrink-0 flex-col items-center">
               <span className={cn("mt-[3px] h-2.5 w-2.5 rounded-full border-[1.5px]", active ? "border-adminreg-indigo bg-adminreg-indigo shadow-[0_0_0_3px_rgba(51,69,110,0.25)]" : "border-adminreg-sidebar-text-muted bg-transparent")} />
               {i < 8 && <div className="mt-0.5 min-h-[20px] w-[1.5px] flex-1 bg-adminreg-sidebar-border" />}

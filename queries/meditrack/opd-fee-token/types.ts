@@ -87,6 +87,7 @@ export interface OpdFeeCollection {
   id: string;
   companyId: string;
   clinicId?: string | null;
+  visitId?: string | null;
   appointmentId?: string | null;
   patientId?: string | null;
   patientName?: string | null;
