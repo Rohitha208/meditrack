@@ -17,6 +17,10 @@ export interface MediTrackLabTest {
   id: string;
   name: string;
   code?: string | null;
+  category?: string | null;
+  modality?: string | null;
+  typeLabel?: string | null;
+  rate?: number | null;
   sampleType?: string | null;
   tat?: string | null;
   isActive: boolean;
@@ -24,6 +28,11 @@ export interface MediTrackLabTest {
   updatedAt?: string | null;
   clinicId?: string | null;
   clinicName?: string | null;
+}
+
+export interface TestCategoryOption {
+  name: string;
+  modality: string;
 }
 
 export interface MediTrackDiagnosisCode {

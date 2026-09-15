@@ -9,10 +9,11 @@ import {
 } from "./types";
 
 function throwIfConflict(status: number, result: any, fallback: string): never {
-  if (status === 409) {
-    const candidates = (result?.candidates || result?.Candidates || []) as DuplicatePatientCandidate[];
+  const candidates = (result?.candidates || result?.Candidates || []) as DuplicatePatientCandidate[];
+  const msg = String(result?.message || result?.Message || "");
+  if (status === 409 || /duplicate/i.test(msg)) {
     throw new RegistrationConflictError(
-      result?.message || result?.Message || "Potential duplicate patient(s) found.",
+      msg || "Potential duplicate patient(s) found.",
       Array.isArray(candidates) ? candidates : []
     );
   }

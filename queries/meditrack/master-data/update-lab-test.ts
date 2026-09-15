@@ -6,6 +6,8 @@ export interface UpdateLabTestRequest {
   id: string;
   name: string;
   code?: string | null;
+  category?: string | null;
+  rate?: number | null;
   sampleType?: string | null;
   tat?: string | null;
   isActive?: boolean;

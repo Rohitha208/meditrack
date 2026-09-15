@@ -5,6 +5,8 @@ import type { MediTrackLabTest } from "./types";
 export interface CreateLabTestRequest {
   name: string;
   code?: string | null;
+  category?: string | null;
+  rate?: number | null;
   sampleType?: string | null;
   tat?: string | null;
 }

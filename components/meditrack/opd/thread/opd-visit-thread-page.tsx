@@ -36,6 +36,15 @@ import {
   type OpdToken as OpdQueueToken,
 } from "@/queries/meditrack/opd-fee-token"
 import {
+  diagnosticVisitKey,
+  isGuid,
+  useAmendDiagnosticResult,
+  useDiagnosticVisit,
+  useUpdateDiagnosticOrder,
+  useVoidDiagnosticOrder,
+  type DiagnosticOrder,
+} from "@/queries/meditrack/opd-diagnostics"
+import {
   RegistrationConflictError,
   useCreatePatientRegistration,
   usePatientDetail,
@@ -44,6 +53,15 @@ import {
   useUploadRegistrationCards,
   type RegistrationSearchResult,
 } from "@/queries/meditrack/patient-registration"
+import { useOpdVitals, useSaveOpdVitals } from "@/queries/meditrack/opd-vitals"
+import {
+  useAmendConsultationNote,
+  useConsultationAmendments,
+  useConsultationContext,
+  useConsultationNote,
+  useCreateConsultationNote,
+} from "@/queries/meditrack/opd-consultation"
+import { getUserId } from "@/utils/clientCookie"
 import {
   SectionLabel,
   FieldLabel,
@@ -124,16 +142,79 @@ interface PendingCard {
 
 const EMPTY_NEW_PATIENT: NewPatientForm = { fullName: "", dob: "", gender: "", mobile: "" }
 
-const GENDER_OPTIONS = ["Female", "Male", "Other"]
+const EMPTY_VITALS_DRAFT = {
+  bloodPressure: "",
+  pulse: "",
+  spo2: "",
+  tempF: "",
+  weightKg: "",
+}
+
+const GENDER_OPTIONS = [
+  { value: "female", label: "Female" },
+  { value: "male", label: "Male" },
+  { value: "unknown", label: "Other" },
+] as const
+
+function toApiGender(value?: string | null) {
+  if (!value) return ""
+  const g = value.trim().toLowerCase()
+  if (g === "male" || g === "m") return "male"
+  if (g === "female" || g === "f") return "female"
+  if (g === "other" || g === "unknown" || g === "o") return "unknown"
+  return ""
+}
+
+function genderLabel(value?: string | null) {
+  const g = toApiGender(value)
+  return GENDER_OPTIONS.find((o) => o.value === g)?.label || value || ""
+}
 
 function normalizeGender(value?: string | null) {
-  if (!value) return ""
-  const trimmed = value.trim()
-  return GENDER_OPTIONS.find((g) => g.toLowerCase() === trimmed.toLowerCase()) ?? trimmed
+  return toApiGender(value)
 }
 
 function formatAgeSex(age?: number | null, gender?: string | null) {
-  return `${age != null ? age : "—"} / ${gender || "—"}`
+  return `${age != null ? age : "—"} / ${genderLabel(gender) || "—"}`
+}
+
+function celsiusToFahrenheit(c?: number | null) {
+  if (c == null || Number.isNaN(Number(c))) return ""
+  return String(Math.round(((Number(c) * 9) / 5 + 32) * 10) / 10)
+}
+
+function fahrenheitToCelsius(value: string): number | null {
+  const n = Number(value)
+  if (!value.trim() || Number.isNaN(n)) return null
+  return Math.round((((n - 32) * 5) / 9) * 10) / 10
+}
+
+function parseOptionalNumber(value: string): number | null {
+  const n = Number(value)
+  if (!value.trim() || Number.isNaN(n)) return null
+  return n
+}
+
+function isBpCritical(bp?: string | null) {
+  if (!bp) return false
+  const parts = bp.split("/")
+  if (parts.length !== 2) return false
+  const sys = Number(parts[0].trim())
+  const dia = Number(parts[1].trim())
+  if (Number.isNaN(sys) || Number.isNaN(dia)) return false
+  return sys < 100 || sys > 150 || dia < 60 || dia > 100
+}
+
+function isPulseCritical(n?: number | null) {
+  return n != null && (n < 60 || n > 100)
+}
+
+function isTempCCritical(c?: number | null) {
+  return c != null && (c < 35 || c > 38)
+}
+
+function isSpo2Critical(n?: number | null) {
+  return n != null && n < 92
 }
 
 function formatLastVisit(value?: string | null) {
@@ -141,6 +222,39 @@ function formatLastVisit(value?: string | null) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return "No prior visit on file"
   return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+}
+
+function formatConsultWhen(value?: string | null, withTime = false) {
+  if (!value) return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  const time = date.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false })
+  const today = new Date()
+  if (date.toDateString() === today.toDateString()) return `Today ${time}`
+  if (withTime) {
+    return `${date.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}, ${time}`
+  }
+  return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+}
+
+function consultationNoteBody(note?: {
+  physicalExamFindings?: string | null
+  diagnosis?: string | null
+  treatmentPlan?: string | null
+} | null) {
+  if (!note) return ""
+  return [note.physicalExamFindings, note.diagnosis, note.treatmentPlan]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(" ")
+}
+
+function consultationDoctorLabel(note?: {
+  doctorName?: string | null
+  veterinarian?: { firstName?: string; lastName?: string } | null
+} | null) {
+  const nested = [note?.veterinarian?.firstName, note?.veterinarian?.lastName].filter(Boolean).join(" ").trim()
+  return note?.doctorName?.trim() || nested || ""
 }
 
 function ageFromDob(value?: string | null) {
@@ -152,6 +266,12 @@ function ageFromDob(value?: string | null) {
   const m = today.getMonth() - dob.getMonth()
   if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age -= 1
   return age
+}
+
+function toDateInputValue(value?: string | null) {
+  if (!value) return ""
+  const iso = value.slice(0, 10)
+  return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : ""
 }
 
 function toIsoDob(value: string): string | null {
@@ -270,6 +390,8 @@ interface ModalCfg {
   reasonPlaceholder?: string
   heavy?: boolean
   confirmLabel: string
+  cancelLabel?: string
+  danger?: boolean
   onConfirm: (reason: string, ack: boolean) => void
 }
 
@@ -308,6 +430,11 @@ export function OpdVisitThreadPage() {
   const updateFeePaymentMethod = useUpdateFeePaymentMethod()
   const updateTokenStatus = useUpdateTokenStatus()
   const reassignToken = useReassignToken()
+  const saveOpdVitals = useSaveOpdVitals()
+  const [chiefComplaint, setChiefComplaint] = useState("")
+  const [vitalsDraft, setVitalsDraft] = useState(EMPTY_VITALS_DRAFT)
+  const [editingVitalKey, setEditingVitalKey] = useState<string | null>(null)
+  const [visitPickQuery, setVisitPickQuery] = useState("")
 
   const [dismissedDeepLink, setDismissedDeepLink] = useState(false)
   const [state, setState] = useState<ThreadState>(INITIAL_STATE)
@@ -332,6 +459,8 @@ export function OpdVisitThreadPage() {
   const [newPatientOrigin, setNewPatientOrigin] = useState<"search" | "direct">("direct")
   const [newPatientForm, setNewPatientForm] = useState<NewPatientForm>(EMPTY_NEW_PATIENT)
   const [newPatientTouched, setNewPatientTouched] = useState(false)
+  const [completingPatient, setCompletingPatient] = useState<RegistrationSearchResult | null>(null)
+  const completingPrefillId = useRef<string | null>(null)
   const [activePatient, setActivePatient] = useState<ActiveRegPatient | null>(null)
   const [pendingDuplicateConfirm, setPendingDuplicateConfirm] = useState(false)
   const editConfirmDuplicate = useRef(false)
@@ -350,9 +479,9 @@ export function OpdVisitThreadPage() {
   const [activeToken, setActiveToken] = useState<OpdQueueToken | null>(null)
   const [reassignNote, setReassignNote] = useState<{ header: string; body: string } | null>(null)
 
-  // Registration search only returns age/gender, so pull the full record for
-  // the selected patient — Edit needs date of birth and the linked ABHA.
-  const patientDetail = usePatientDetail(activePatient?.id)
+  // Full record for Edit after the visit is open, and to prefill DOB/gender
+  // on the capture form after Select.
+  const patientDetail = usePatientDetail(completingPatient?.id || activePatient?.id)
 
   useEffect(() => {
     const detail = patientDetail.data
@@ -378,11 +507,40 @@ export function OpdVisitThreadPage() {
       return { ...prev, gender, dateOfBirth, phone, uhid, abha, ageSex }
     })
     const linkedAbha = detail.abhaNumber || detail.nationalId
-    if (linkedAbha) setAbhaNumber((prev) => prev || linkedAbha)
-  }, [patientDetail.data])
+    if (linkedAbha && activePatient?.id === detail.id) setAbhaNumber((prev) => prev || linkedAbha)
+  }, [patientDetail.data, activePatient?.id])
+
+  useEffect(() => {
+    if (!completingPatient) {
+      completingPrefillId.current = null
+      return
+    }
+    if (completingPrefillId.current !== completingPatient.id) {
+      completingPrefillId.current = completingPatient.id
+    }
+    const detail = patientDetail.data
+    if (!detail || detail.id !== completingPatient.id) return
+    setNewPatientForm((prev) => {
+      const next = {
+        fullName: prev.fullName.trim() ? prev.fullName : detail.name || completingPatient.name || "",
+        dob: prev.dob.trim() ? prev.dob : toDateInputValue(detail.dateOfBirth),
+        gender: prev.gender.trim() ? prev.gender : normalizeGender(detail.gender || completingPatient.gender),
+        mobile: prev.mobile.trim() ? prev.mobile : detail.phone || completingPatient.phone || "",
+      }
+      if (
+        next.fullName === prev.fullName &&
+        next.dob === prev.dob &&
+        next.gender === prev.gender &&
+        next.mobile === prev.mobile
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [completingPatient, patientDetail.data])
 
   // A fee already collected for this appointment survives a page reload.
-  const { data: existingCollection } = useFeeCollectionByAppointment(appointmentId || undefined)
+  const { data: existingCollection, isLoading: collectionLoading } = useFeeCollectionByAppointment(appointmentId || undefined)
 
   useEffect(() => {
     if (!existingCollection) return
@@ -390,6 +548,36 @@ export function OpdVisitThreadPage() {
     setPaymentMethod(existingCollection.paymentMethod || "Cash")
     if (existingCollection.token) setActiveToken(existingCollection.token)
   }, [existingCollection])
+
+  useEffect(() => {
+    if (!collection) return
+    const params = new URLSearchParams(searchParams.toString())
+    let changed = false
+    if (isGuid(collection.visitId) && params.get("visitId") !== collection.visitId) {
+      params.set("visitId", collection.visitId as string)
+      changed = true
+    }
+    if (collection.appointmentId && !params.get("appointmentId")) {
+      params.set("appointmentId", collection.appointmentId)
+      changed = true
+    }
+    if (collection.patientName && !params.get("name")) {
+      params.set("name", collection.patientName)
+      changed = true
+    }
+    if (collection.patientUhid && params.get("uhid") !== collection.patientUhid) {
+      params.set("uhid", collection.patientUhid)
+      changed = true
+    }
+    if (collection.patientPhone && !params.get("phone")) {
+      params.set("phone", collection.patientPhone)
+      changed = true
+    }
+    if (!changed) return
+    router.replace(`/opd/visit-thread?${params.toString()}`)
+    // searchParams is read for current URL values; collection fields are the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collection?.visitId, collection?.appointmentId, collection?.patientName, collection?.patientUhid, collection?.patientPhone, router])
 
   const { data: feeEstimate } = useFeeEstimate(
     { appointmentId: appointmentId || undefined, patientId: activePatient?.id, clinicId },
@@ -407,6 +595,63 @@ export function OpdVisitThreadPage() {
   const feeDepartmentName = collection?.departmentName || feeEstimate?.departmentName || "—"
   const feeDoctorName = collection?.userName || feeEstimate?.userName || "—"
 
+  const visitIdParam = searchParams.get("visitId") || ""
+  const diagnosticVisitId = isGuid(collection?.visitId)
+    ? collection.visitId!
+    : isGuid(visitIdParam)
+      ? visitIdParam
+      : ""
+  const vitalsQuery = useOpdVitals(diagnosticVisitId, (s === 3 || s === 4) && !!diagnosticVisitId)
+  const vitals = vitalsQuery.data ?? null
+  const vitalsPatientId = collection?.patientId || activePatient?.id || feeEstimate?.patientId || ""
+  const consultContextQuery = useConsultationContext(diagnosticVisitId, s === 4 && !!diagnosticVisitId)
+  const consultContext = consultContextQuery.data
+  const consultAppointmentId = isGuid(appointmentId)
+    ? appointmentId
+    : isGuid(collection?.appointmentId)
+      ? collection.appointmentId!
+      : isGuid(consultContext?.appointmentId)
+        ? consultContext.appointmentId
+        : ""
+  const consultNoteQuery = useConsultationNote(consultAppointmentId, s === 4 && !!consultAppointmentId)
+  const consultNote = consultNoteQuery.data ?? null
+  const consultAmendmentsQuery = useConsultationAmendments(consultNote?.id, s === 4 && !!consultNote?.id)
+  const createConsultationNote = useCreateConsultationNote()
+  const amendConsultationNote = useAmendConsultationNote()
+  const consultAddendums = consultAmendmentsQuery.data ?? []
+
+  useEffect(() => {
+    if (vitals?.chiefComplaint != null) setChiefComplaint(vitals.chiefComplaint)
+    if (!vitals) return
+    setVitalsDraft({
+      bloodPressure: vitals.bloodPressure || "",
+      pulse: vitals.heartRateBpm != null ? String(vitals.heartRateBpm) : "",
+      tempF: celsiusToFahrenheit(vitals.temperatureC),
+      spo2: vitals.spo2 != null ? String(vitals.spo2) : "",
+      weightKg: vitals.weightKg != null ? String(vitals.weightKg) : "",
+    })
+  }, [vitals?.id, vitals?.updatedAt, vitals?.chiefComplaint])
+
+  const dxVisitQuery = useDiagnosticVisit(diagnosticVisitId, (s === 4 || s === 5 || s === 8) && !!diagnosticVisitId)
+  const voidDxOrder = useVoidDiagnosticOrder()
+  const updateDxOrder = useUpdateDiagnosticOrder()
+  const amendDxResult = useAmendDiagnosticResult()
+  const dxVisit = dxVisitQuery.data
+  const dxOrders = dxVisit?.orders ?? []
+  const dxPatientLabel = dxVisit?.patient?.name
+    ? `${dxVisit.patient.name}${dxVisit.patient.uhid ? ` · ${dxVisit.patient.uhid}` : dxVisit.patient.age != null ? ` · ${dxVisit.patient.age} / ${dxVisit.patient.gender || "—"}` : ""}`
+    : activePatient
+      ? `${activePatient.name}${activePatient.uhid && activePatient.uhid !== "—" ? ` · ${activePatient.uhid}` : ` · ${activePatient.ageSex}`}`
+      : collection?.patientName
+        ? `${collection.patientName}${collection.patientUhid ? ` · ${collection.patientUhid}` : ""}`
+        : searchParams.get("name") || ""
+  const dxOrderingDoctor =
+    feeDoctorName !== "—"
+      ? `${feeDoctorName}${feeDepartmentName !== "—" ? ` · ${feeDepartmentName}` : ""}`
+      : dxVisit?.patient?.providerName
+        ? `${dxVisit.patient.providerName}${dxVisit.patient.departmentName ? ` · ${dxVisit.patient.departmentName}` : ""}`
+        : "Dr. Anjali Nair · Cardiology"
+
   const tokenCancelled = activeToken?.status === "Cancelled"
   const queueDate = activeToken?.tokenDate
     ? activeToken.tokenDate.slice(0, 10)
@@ -417,14 +662,31 @@ export function OpdVisitThreadPage() {
       companyId: companyId || undefined,
       date: queueDate,
     },
-    s === 2 && !!clinicId
+    s === 2 && !!clinicId || ((s === 4 || s === 5) && !!clinicId && !isGuid(diagnosticVisitId))
   )
   const missedTokens = liveQueue?.missedTokens ?? []
+  const visitPickNeedle = visitPickQuery.trim().toLowerCase()
+  const todayVisitOptions = [...(liveQueue?.activeQueue ?? []), ...(liveQueue?.missedTokens ?? [])]
+    .filter((token, index, all) => all.findIndex((t) => t.id === token.id) === index)
+    .filter((token) => token.status !== "Cancelled")
+    .filter((token) => {
+      if (!visitPickNeedle) return true
+      return [token.patientName, token.tokenNumber, token.userName, token.departmentName]
+        .filter(Boolean)
+        .some((part) => String(part).toLowerCase().includes(visitPickNeedle))
+    })
+  const awaitingVisitContext = Boolean(appointmentId) && collectionLoading
+  const needsVisitPick = (s === 4 || s === 5) && !isGuid(diagnosticVisitId) && !awaitingVisitContext
 
   const { data: reassignDoctors = [] } = useGetDepartmentDoctors(
     activeToken?.departmentId || undefined,
     clinicId,
     s === 2 && !!activeToken?.departmentId
+  )
+  const { data: consultDoctors = [] } = useGetDepartmentDoctors(
+    feeDepartmentId || undefined,
+    clinicId,
+    s === 4 && !!feeDepartmentId
   )
 
   const invalidateQueue = () =>
@@ -474,6 +736,7 @@ export function OpdVisitThreadPage() {
   // Consultation (Stage 4) — "Order diagnostics" expands the same DxOrderPanel
   // in place rather than navigating, per the addendum spec.
   const [inlineDxOpen, setInlineDxOpen] = useState(false)
+  const [clinicalNotesDraft, setClinicalNotesDraft] = useState("")
 
   function fileAdmissionReferral() {
     if (!admitReason.trim()) return
@@ -484,6 +747,8 @@ export function OpdVisitThreadPage() {
     setSelectedCandidate(null)
     setShowNewPatientForm(false)
     setPendingDuplicateConfirm(false)
+    setCompletingPatient(null)
+    completingPrefillId.current = null
   }
 
   function clearRegistrationSearch() {
@@ -496,8 +761,25 @@ export function OpdVisitThreadPage() {
   }
 
   function openNewPatientForm(origin: "search" | "direct") {
+    setCompletingPatient(null)
+    completingPrefillId.current = null
     setNewPatientOrigin(origin)
     setNewPatientForm({ ...EMPTY_NEW_PATIENT, mobile: origin === "search" ? regQuery : "" })
+    setNewPatientTouched(false)
+    setPendingDuplicateConfirm(false)
+    setShowNewPatientForm(true)
+  }
+
+  function openExistingPatientForm(candidate: RegistrationSearchResult) {
+    setCompletingPatient(candidate)
+    completingPrefillId.current = candidate.id
+    setNewPatientOrigin("search")
+    setNewPatientForm({
+      fullName: candidate.name || "",
+      dob: "",
+      gender: normalizeGender(candidate.gender),
+      mobile: candidate.phone || "",
+    })
     setNewPatientTouched(false)
     setPendingDuplicateConfirm(false)
     setShowNewPatientForm(true)
@@ -515,15 +797,16 @@ export function OpdVisitThreadPage() {
       const data = await registrationSearch.mutateAsync(q)
       setRegResults(data.results)
       setSelectedCandidate(null)
+      setCompletingPatient(null)
+      completingPrefillId.current = null
       setShowNewPatientForm(false)
-      if (data.matchType === "none" || data.results.length === 0) setRegOutcome("no-match")
-      else if (data.results.length === 1) setRegOutcome("single")
-      else setRegOutcome("multiple")
-
-      if (override?.autoSelect && data.results.length === 1) {
-        const patient = mapSearchResult(data.results[0])
-        activatePatient(patient, `Checked in — visit opened for ${patient.name}.`)
-        return
+      if (data.matchType === "none" || data.results.length === 0) {
+        setRegOutcome("no-match")
+      } else if (data.results.length === 1) {
+        setRegOutcome("single")
+        openExistingPatientForm(data.results[0])
+      } else {
+        setRegOutcome("multiple")
       }
 
       if (override?.autoSelect && data.results.length === 0) {
@@ -556,13 +839,62 @@ export function OpdVisitThreadPage() {
     const dob = toIsoDob(newPatientForm.dob)
     if (!dob) return
 
+    if (completingPatient) {
+      try {
+        const updated = await updatePatient.mutateAsync({
+          id: completingPatient.id,
+          name: newPatientForm.fullName.trim(),
+          dateOfBirth: dob,
+          gender: toApiGender(newPatientForm.gender),
+          phone: newPatientForm.mobile.trim(),
+          confirmDuplicate,
+        })
+        editConfirmDuplicate.current = false
+        const nextDob = updated.dateOfBirth || dob
+        const nextGender = updated.gender || newPatientForm.gender.trim()
+        const patient: ActiveRegPatient = {
+          id: updated.id || completingPatient.id,
+          name: updated.name || newPatientForm.fullName.trim(),
+          ageSex: formatAgeSex(ageFromDob(nextDob), nextGender),
+          uhid: updated.registrationNumber || completingPatient.uhid || "—",
+          phone: updated.phone || newPatientForm.mobile.trim(),
+          abha: updated.abhaNumber || updated.nationalId || completingPatient.abha || "Not linked",
+          gender: nextGender,
+          dateOfBirth: nextDob,
+        }
+        setShowNewPatientForm(false)
+        setCompletingPatient(null)
+        completingPrefillId.current = null
+        setPendingDuplicateConfirm(false)
+        setRegOutcome("idle")
+        setRegResults([])
+        if (openVisit) {
+          activatePatient(patient, `Visit opened for ${patient.name}.`)
+        } else {
+          toast({ title: "Saved", description: `${patient.name}'s details were updated.` })
+        }
+        void queryClient.invalidateQueries({ queryKey: ["meditrack", "patient-detail", completingPatient.id] })
+      } catch (err) {
+        if (err instanceof RegistrationConflictError) {
+          askContinueDuplicate(err, () => void submitNewPatient(openVisit, true))
+          return
+        }
+        toast({
+          title: "Could not save patient",
+          description: getToastErrorMessage(err, "Update failed"),
+          variant: "destructive",
+        })
+      }
+      return
+    }
+
     try {
       const created = await createPatient.mutateAsync({
         name: newPatientForm.fullName.trim(),
         dateOfBirth: dob,
-        gender: newPatientForm.gender.trim(),
+        gender: toApiGender(newPatientForm.gender),
         phone: newPatientForm.mobile.trim(),
-        confirmDuplicate: confirmDuplicate || pendingDuplicateConfirm,
+        confirmDuplicate,
       })
       const patient: ActiveRegPatient = {
         id: created.id,
@@ -581,12 +913,7 @@ export function OpdVisitThreadPage() {
       activatePatient(patient, openVisit ? `${patient.name} registered — visit opened.` : `${patient.name} registered. No visit opened yet.`)
     } catch (err) {
       if (err instanceof RegistrationConflictError) {
-        setPendingDuplicateConfirm(true)
-        toast({
-          title: "Possible duplicate",
-          description: `${err.candidates.length || "Some"} similar patient(s) found. Click again to register anyway, or select an existing match.`,
-          variant: "destructive",
-        })
+        askContinueDuplicate(err, () => void submitNewPatient(openVisit, true))
         return
       }
       toast({
@@ -665,6 +992,34 @@ export function OpdVisitThreadPage() {
     router.push(`/opd/visit-thread?${params}`)
   }
 
+  function openVisitFromToken(token: OpdQueueToken) {
+    if (!token.appointmentId) {
+      toast({
+        title: "No visit for this token",
+        description: "Collect the consultation fee first — diagnostics attach to that visit.",
+        variant: "destructive",
+      })
+      return
+    }
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("stage", String(s))
+    params.set("appointmentId", token.appointmentId)
+    if (token.patientName) params.set("name", token.patientName)
+    router.push(`/opd/visit-thread?${params}`)
+    setActiveToken(token)
+    setVisitPickQuery("")
+  }
+
+  function clearVisitContext() {
+    const params = new URLSearchParams()
+    params.set("stage", String(s))
+    router.push(`/opd/visit-thread?${params}`)
+    setCollection(null)
+    setActiveToken(null)
+    setActivePatient(null)
+    setVisitPickQuery("")
+  }
+
   function closeDrawer() {
     setDrawer(null)
     tmpRef.current = {}
@@ -682,6 +1037,22 @@ export function OpdVisitThreadPage() {
     setModalReason("")
     setModalAck(false)
     setModal(cfg)
+  }
+
+  function askContinueDuplicate(err: RegistrationConflictError, onYes: () => void) {
+    const n = err.candidates.length
+    const who = n > 0 ? `${n} patient${n === 1 ? "" : "s"}` : "another patient"
+    openModal({
+      title: "This number already exists",
+      lines: [`This number already exists with ${who}. Do you want to continue?`],
+      confirmLabel: "Yes",
+      cancelLabel: "No",
+      danger: false,
+      onConfirm: () => {
+        closeModal()
+        onYes()
+      },
+    })
   }
   function doSave(bannerMsg: string, extra: Partial<ThreadState> = {}) {
     return () => {
@@ -761,19 +1132,69 @@ export function OpdVisitThreadPage() {
   })
 
   const vitalsRaw = [
-    { label: "BP", value: "128/82", unit: "mmHg", crit: false },
-    { label: "PULSE", value: "88", unit: "bpm", crit: false },
-    { label: "TEMP", value: "98.6", unit: "°F", crit: false },
-    { label: "SPO2", value: "91", unit: "%", crit: true },
-    { label: "WEIGHT", value: "64", unit: "kg", crit: false },
+    { key: "bloodPressure", label: "BP", value: vitalsDraft.bloodPressure.trim() || "—", unit: "mmHg", placeholder: "128/82", crit: isBpCritical(vitalsDraft.bloodPressure) },
+    { key: "pulse", label: "PULSE", value: vitalsDraft.pulse.trim() || "—", unit: "bpm", placeholder: "88", crit: isPulseCritical(parseOptionalNumber(vitalsDraft.pulse)) },
+    { key: "tempF", label: "TEMP", value: vitalsDraft.tempF.trim() || "—", unit: "°F", placeholder: "98.6", crit: isTempCCritical(fahrenheitToCelsius(vitalsDraft.tempF)) },
+    { key: "spo2", label: "SPO2", value: vitalsDraft.spo2.trim() || "—", unit: "%", placeholder: "98", crit: isSpo2Critical(parseOptionalNumber(vitalsDraft.spo2)) },
+    { key: "weightKg", label: "WEIGHT", value: vitalsDraft.weightKg.trim() || "—", unit: "kg", placeholder: "64", crit: false },
   ]
 
-  const history = [
-    { time: "04 Jun 2026", by: "Dr. Anjali Nair", what: "Routine follow-up — BP controlled, continue Atenolol 50mg." },
-    { time: "12 Jan 2026", by: "Dr. Anjali Nair", what: "Diagnosed hypertension, started Atenolol 50mg OD." },
-    { time: "Today 09:31", by: "Kavita Rao (Nurse)", what: "Vitals recorded. SpO2 91% — flagged critical." },
-    { time: "Today 09:18", by: "Ajay Bhatt (Front Desk)", what: "Token C-014 issued, Cardiology, walk-in." },
-  ]
+  const vitalsReadyToSave =
+    Boolean(vitalsDraft.bloodPressure.trim()) &&
+    Boolean(vitalsDraft.pulse.trim()) &&
+    Boolean(vitalsDraft.tempF.trim()) &&
+    Boolean(vitalsDraft.spo2.trim()) &&
+    Boolean(vitalsDraft.weightKg.trim()) &&
+    Boolean(chiefComplaint.trim())
+
+  const criticalBanner = vitals?.isEmergencyEscalation
+    ? isSpo2Critical(vitals.spo2)
+      ? { title: `CRITICAL: SpO2 ${vitals.spo2}% — below safe threshold`, description: "Escalate to doctor immediately." }
+      : isPulseCritical(vitals.heartRateBpm)
+        ? { title: `CRITICAL: Pulse ${vitals.heartRateBpm} bpm — outside 60–100`, description: "Escalate to doctor immediately." }
+        : isTempCCritical(vitals.temperatureC)
+          ? { title: `CRITICAL: Temperature ${celsiusToFahrenheit(vitals.temperatureC)}°F — outside safe range`, description: "Escalate to doctor immediately." }
+          : isBpCritical(vitals.bloodPressure)
+            ? { title: `CRITICAL: BP ${vitals.bloodPressure} — outside safe range`, description: "Escalate to doctor immediately." }
+            : { title: "CRITICAL: Vitals outside safe threshold", description: "Escalate to doctor immediately." }
+    : null
+
+  const signedNoteBody = consultationNoteBody(consultNote)
+  const signedNoteDoctor = consultationDoctorLabel(consultNote) || (feeDoctorName !== "—" ? feeDoctorName : "")
+  const signedNoteWhen = formatConsultWhen(consultNote?.signedAt || consultNote?.visitDate, true)
+  const visitHistory = (() => {
+    const rows: { key: string; time: string; by: string; what: string }[] = []
+    const past = (consultContext?.pastRecords ?? []).filter((record) => record.id !== consultNote?.id)
+    for (const record of past) {
+      rows.push({
+        key: record.id,
+        time: formatConsultWhen(record.visitDate) || formatLastVisit(record.visitDate),
+        by: record.doctorName?.trim() || "Doctor",
+        what: record.diagnosis?.trim() || record.chiefComplaint?.trim() || record.outcome?.trim() || "Consultation recorded.",
+      })
+    }
+    if (vitals) {
+      const spo2Bit = vitals.spo2 != null ? ` SpO2 ${vitals.spo2}%` : ""
+      rows.push({
+        key: `vitals-${vitals.id}`,
+        time: formatConsultWhen(vitals.updatedAt || vitals.createdAt) || "Today",
+        by: "Nurse",
+        what: vitals.isEmergencyEscalation
+          ? `Vitals recorded.${spo2Bit || ""} — flagged critical.`
+          : `Vitals recorded.${spo2Bit ? `${spo2Bit}.` : ""}`,
+      })
+    }
+    if (activeToken) {
+      const visitType = (activeToken.visitType || "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase()
+      rows.push({
+        key: `token-${activeToken.id}`,
+        time: formatConsultWhen(activeToken.createdAt) || "Today",
+        by: "Front Desk",
+        what: `Token ${activeToken.tokenNumber} issued${activeToken.departmentName ? `, ${activeToken.departmentName}` : ""}${visitType ? `, ${visitType}` : ""}.`,
+      })
+    }
+    return rows
+  })()
 
   const rx = [
     { drug: "Salbutamol Inhaler", dose: "2 puffs QID", duration: "5 days", schedule: null as string | null, note: null as string | null, superseded: false },
@@ -789,10 +1210,12 @@ export function OpdVisitThreadPage() {
   ]
 
   const summaryLines = [
-    { k: "Visit ID", v: PATIENT.visitId },
-    { k: "Doctor", v: "Dr. Anjali Nair — Cardiology" },
+    { k: "Visit ID", v: diagnosticVisitId || PATIENT.visitId },
+    { k: "Doctor", v: dxOrderingDoctor.includes("—") ? "Dr. Anjali Nair — Cardiology" : dxOrderingDoctor.replace(" · ", " — ") },
     { k: "Diagnosis (provisional)", v: "Early bronchospasm; hypertension, controlled" },
-    { k: "Tests ordered", v: "ECG (normal), Chest X-ray (voided)" },
+    { k: "Tests ordered", v: dxOrders.length
+      ? dxOrders.map((o) => `${o.testName || "Test"}${o.isVoid ? " (voided)" : o.result ? "" : ""}`).join(", ")
+      : "—" },
     { k: "Prescription", v: "3 items — 1 Schedule H" },
     { k: "Amount collected", v: "₹700 consultation + ₹336 pharmacy" },
   ]
@@ -821,7 +1244,7 @@ export function OpdVisitThreadPage() {
           const values = tmpRef.current
           const name = values.name?.trim()
           const phone = values.phone?.trim()
-          const gender = values.gender?.trim()
+          const gender = toApiGender(values.gender)
           const dob = toIsoDob(values.dob || "")
           if (!name || !phone || !gender || !dob) {
             toast({
@@ -831,14 +1254,14 @@ export function OpdVisitThreadPage() {
             })
             return
           }
-          try {
+          const saveDemographics = async (confirmDuplicate: boolean) => {
             const updated = await updatePatient.mutateAsync({
               id: activePatient.id,
               name,
               phone,
               gender,
               dateOfBirth: dob,
-              confirmDuplicate: editConfirmDuplicate.current,
+              confirmDuplicate,
             })
             const nextDob = updated.dateOfBirth || dob
             const nextGender = updated.gender || gender
@@ -859,13 +1282,19 @@ export function OpdVisitThreadPage() {
             void queryClient.invalidateQueries({ queryKey: ["meditrack", "patient-detail", activePatient.id] })
             patch({ bannerText: "Demographics updated." })
             closeDrawer()
+          }
+          try {
+            await saveDemographics(false)
           } catch (err) {
             if (err instanceof RegistrationConflictError) {
-              editConfirmDuplicate.current = true
-              toast({
-                title: "Possible duplicate",
-                description: `${err.candidates.length || "Some"} similar patient(s) found. Save again to apply these changes anyway.`,
-                variant: "destructive",
+              askContinueDuplicate(err, () => {
+                void saveDemographics(true).catch((retryErr) => {
+                  toast({
+                    title: "Could not update patient",
+                    description: getToastErrorMessage(retryErr, "Update failed"),
+                    variant: "destructive",
+                  })
+                })
               })
               return
             }
@@ -883,7 +1312,6 @@ export function OpdVisitThreadPage() {
             options: [
               { value: "", label: "Select gender" },
               ...GENDER_OPTIONS,
-              ...(currentGender && !GENDER_OPTIONS.includes(currentGender) ? [currentGender] : []),
             ],
           }),
           field("phone", "Phone", "text"),
@@ -1142,55 +1570,384 @@ export function OpdVisitThreadPage() {
     goNext()
   }
 
-  const openVitalsEdit = () =>
-    openDrawer({ badge: badge("LIVE EDIT"), title: "Edit vitals (not yet reviewed)", saveLabel: "Save", onSave: doSave("Vitals updated."), fields: [field("spo2", "SpO2 (%)", "text", { default: "91" })] })
-  const openVitalsAmend = () =>
-    openDrawer({
-      badge: badge("AMENDMENT"),
-      title: "Correct vitals (already reviewed)",
-      saveLabel: "Apply amendment",
-      consequenceNote: "Dr. Anjali Nair already reviewed and acted on the original SpO2 reading — she will be notified of this correction.",
-      onSave: doSave("Vitals amended. Doctor notified.", { vitalsAmended: true }),
-      fields: [field("newSpo2", "Corrected SpO2 (%)", "text", { default: "96" }), field("reason", "Reason", "text", { placeholder: "e.g. Re-checked with second device — first reading likely faulty probe" })],
-    })
-  const retriageAction = () => patch({ retriaged: true, bannerText: "Re-assessment logged." })
+  function vitalsSnapshotFromForm(values: Record<string, string>, extra: { isCompleted?: boolean; isRetriage?: boolean; notes?: string | null } = {}) {
+    const complaint = (values.chiefComplaint ?? chiefComplaint).trim()
+    return {
+      visitId: diagnosticVisitId,
+      patientId: vitalsPatientId || null,
+      bloodPressure: values.bloodPressure?.trim() || vitals?.bloodPressure || null,
+      heartRateBpm: parseOptionalNumber(values.pulse ?? "") ?? vitals?.heartRateBpm ?? null,
+      temperatureC: fahrenheitToCelsius(values.tempF ?? "") ?? vitals?.temperatureC ?? null,
+      spo2: parseOptionalNumber(values.spo2 ?? values.newSpo2 ?? "") ?? vitals?.spo2 ?? null,
+      weightKg: parseOptionalNumber(values.weightKg ?? "") ?? vitals?.weightKg ?? null,
+      chiefComplaint: complaint || vitals?.chiefComplaint || null,
+      notes: extra.notes ?? vitals?.notes ?? null,
+      isRetriage: extra.isRetriage ?? vitals?.isRetriage ?? false,
+      isCompleted: extra.isCompleted ?? vitals?.isCompleted ?? false,
+    }
+  }
+
+  async function persistVitals(payload: ReturnType<typeof vitalsSnapshotFromForm>) {
+    if (!isGuid(diagnosticVisitId)) {
+      toast({ title: "No visit yet", description: "Collect the fee first so a visit exists for these vitals.", variant: "destructive" })
+      return null
+    }
+    if (!payload.chiefComplaint?.trim()) {
+      toast({ title: "Chief complaint required", description: "Enter the chief complaint before saving vitals.", variant: "destructive" })
+      return null
+    }
+    try {
+      const saved = await saveOpdVitals.mutateAsync({ id: vitals?.id, ...payload })
+      setChiefComplaint(saved.chiefComplaint || payload.chiefComplaint || "")
+      return saved
+    } catch (err) {
+      toast({
+        title: "Could not save vitals",
+        description: getToastErrorMessage(err, "Update failed"),
+        variant: "destructive",
+      })
+      return null
+    }
+  }
+
+  const openVitalsEdit = () => {
+    if (!isGuid(diagnosticVisitId)) {
+      toast({ title: "No visit yet", description: "Collect the fee first so a visit exists for these vitals.", variant: "destructive" })
+      return
+    }
+    setEditingVitalKey(null)
+    openDrawer(
+      {
+        badge: badge("LIVE EDIT"),
+        title: vitals ? "Edit vitals (not yet reviewed)" : "Record vitals",
+        saveLabel: saveOpdVitals.isPending ? "Saving…" : "Save",
+        onSave: async () => {
+          const saved = await persistVitals(vitalsSnapshotFromForm(tmpRef.current))
+          if (!saved) return
+          patch({ bannerText: "Vitals updated." })
+          closeDrawer()
+        },
+        fields: [
+          field("bloodPressure", "BP (mmHg)", "text", { placeholder: "128/82" }),
+          field("pulse", "Pulse (bpm)", "text"),
+          field("tempF", "Temp (°F)", "text"),
+          field("spo2", "SpO2 (%)", "text"),
+          field("weightKg", "Weight (kg)", "text"),
+          field("chiefComplaint", "Chief complaint", "textarea", { placeholder: "Why the patient is here today" }),
+        ],
+      },
+      {
+        bloodPressure: vitalsDraft.bloodPressure,
+        pulse: vitalsDraft.pulse,
+        tempF: vitalsDraft.tempF,
+        spo2: vitalsDraft.spo2,
+        weightKg: vitalsDraft.weightKg,
+        chiefComplaint: chiefComplaint || vitals?.chiefComplaint || "",
+      }
+    )
+  }
+
+  function currentVitalsForm(overrides: Record<string, string> = {}) {
+    return {
+      ...vitalsDraft,
+      chiefComplaint: chiefComplaint || vitals?.chiefComplaint || "",
+      ...overrides,
+    }
+  }
+
+  function startVitalBoxEdit(key: string) {
+    if (!isGuid(diagnosticVisitId)) {
+      toast({ title: "No visit yet", description: "Collect the fee first so a visit exists for these vitals.", variant: "destructive" })
+      return
+    }
+    setEditingVitalKey(key)
+  }
+
+  async function saveDraftVitals(isCompleted = false) {
+    if (!vitalsReadyToSave) {
+      toast({
+        title: "Fill all vitals first",
+        description: "Enter BP, pulse, temp, SpO2, weight and chief complaint, then save.",
+        variant: "destructive",
+      })
+      return null
+    }
+    setEditingVitalKey(null)
+    const saved = await persistVitals(
+      vitalsSnapshotFromForm(currentVitalsForm(), {
+        isCompleted,
+        isRetriage: vitals?.isRetriage,
+      })
+    )
+    if (!saved) return null
+    patch({ bannerText: isCompleted ? "Vitals saved — sending to doctor." : "Vitals saved." })
+    return saved
+  }
+
+  const openVitalsAmend = () => {
+    if (!vitals?.id) {
+      toast({ title: "No vitals on file", description: "Record vitals first, then correct them.", variant: "destructive" })
+      return
+    }
+    openDrawer(
+      {
+        badge: badge("AMENDMENT"),
+        title: "Correct vitals (already reviewed)",
+        saveLabel: saveOpdVitals.isPending ? "Saving…" : "Apply amendment",
+        consequenceNote: "The original reading stays in the visit history. The doctor will see the corrected values.",
+        onSave: async () => {
+          const values = tmpRef.current
+          const saved = await persistVitals(
+            vitalsSnapshotFromForm(
+              { ...values, spo2: values.newSpo2 || values.spo2 },
+              { notes: values.reason?.trim() || vitals.notes, isCompleted: vitals.isCompleted }
+            )
+          )
+          if (!saved) return
+          patch({ bannerText: "Vitals amended. Doctor notified.", vitalsAmended: true })
+          closeDrawer()
+        },
+        fields: [
+          field("newSpo2", "Corrected SpO2 (%)", "text"),
+          field("reason", "Reason", "text", { placeholder: "e.g. Re-checked with second device — first reading likely faulty probe" }),
+        ],
+      },
+      {
+        newSpo2: vitals.spo2 != null ? String(vitals.spo2) : "",
+        reason: "",
+      }
+    )
+  }
+
+  const retriageAction = async () => {
+    if (!vitals?.id) {
+      toast({ title: "No vitals on file", description: "Record vitals before logging a re-assessment.", variant: "destructive" })
+      return
+    }
+    const saved = await persistVitals(
+      vitalsSnapshotFromForm(
+        {
+          bloodPressure: vitals.bloodPressure || "",
+          pulse: vitals.heartRateBpm != null ? String(vitals.heartRateBpm) : "",
+          tempF: celsiusToFahrenheit(vitals.temperatureC),
+          spo2: vitals.spo2 != null ? String(vitals.spo2) : "",
+          weightKg: vitals.weightKg != null ? String(vitals.weightKg) : "",
+          chiefComplaint: chiefComplaint || vitals.chiefComplaint || "",
+        },
+        { isRetriage: true, isCompleted: false }
+      )
+    )
+    if (!saved) return
+    patch({ retriaged: true, bannerText: "Re-assessment logged." })
+  }
+
+  async function sendToDoctor() {
+    const saved = await saveDraftVitals(true)
+    if (!saved) return
+    goNext()
+  }
 
   const openAddendum = () =>
     openDrawer({
       badge: badge("AMENDMENT"),
       title: "Add addendum to signed notes",
-      saveLabel: "Add addendum",
-      onSave: () => {
-        setState((prev) => ({
-          ...prev,
-          addendums: [...prev.addendums, { by: "Dr. Anjali Nair", time: "12 Aug, 10:05", reason: tmp.reason || "Clarification", text: tmp.text || "" }],
-          bannerText: "Addendum added — original note unchanged.",
-        }))
-        closeDrawer()
+      saveLabel: amendConsultationNote.isPending ? "Saving…" : "Add addendum",
+      onSave: async () => {
+        const text = tmpRef.current.text?.trim()
+        const reason = tmpRef.current.reason?.trim()
+        if (!text) {
+          toast({ title: "Addendum text required", description: "Enter what is being clarified or added.", variant: "destructive" })
+          return
+        }
+        if (!consultNote?.id) {
+          toast({ title: "No signed note", description: "Sign clinical notes before adding an addendum.", variant: "destructive" })
+          return
+        }
+        const amendedBy = getUserId() || feeDoctorId
+        if (!isGuid(amendedBy)) {
+          toast({ title: "Could not add addendum", description: "Signed-in user is missing.", variant: "destructive" })
+          return
+        }
+        try {
+          await amendConsultationNote.mutateAsync({
+            id: consultNote.id,
+            amendmentText: text,
+            reason: reason || null,
+            amendedBy,
+          })
+          patch({ bannerText: "Addendum added — original note unchanged." })
+          closeDrawer()
+        } catch (err) {
+          toast({ title: "Could not add addendum", description: getToastErrorMessage(err, "Addendum failed"), variant: "destructive" })
+        }
       },
       fields: [field("text", "Addendum text", "textarea", { placeholder: "What is being clarified or added..." }), field("reason", "Reason", "text", { placeholder: "e.g. Clarify wheeze severity for referring physician" })],
     })
-  const openCancelOrder = () =>
+
+  async function signClinicalNotes(opts?: { outcome?: string; referredToUserId?: string | null }) {
+    if (!isGuid(diagnosticVisitId)) {
+      toast({ title: "No visit yet", description: "Collect the consultation fee first — notes attach to that visit.", variant: "destructive" })
+      return false
+    }
+    const findings = clinicalNotesDraft.trim()
+    if (!findings && opts?.outcome !== "refer_specialist") {
+      toast({ title: "Notes required", description: "Enter clinical notes before signing.", variant: "destructive" })
+      return false
+    }
+    const veterinarianId = getUserId() || feeDoctorId || null
+    try {
+      await createConsultationNote.mutateAsync({
+        clinicId: isGuid(clinicId) ? clinicId : collection?.clinicId || null,
+        visitId: diagnosticVisitId,
+        veterinarianId: isGuid(veterinarianId) ? veterinarianId : null,
+        visitDate: new Date().toISOString(),
+        chiefComplaint: vitals?.chiefComplaint || chiefComplaint || null,
+        physicalExamFindings: findings || null,
+        weightKg: vitals?.weightKg ?? null,
+        temperatureCelsius: vitals?.temperatureC ?? null,
+        heartRate: vitals?.heartRateBpm ?? null,
+        outcome: opts?.outcome || null,
+        referredToUserId: opts?.referredToUserId || null,
+      })
+      setClinicalNotesDraft("")
+      patch({
+        bannerText: opts?.outcome === "refer_specialist"
+          ? "Referral recorded — clinical notes signed."
+          : "Clinical notes signed.",
+      })
+      return true
+    } catch (err) {
+      toast({ title: "Could not sign notes", description: getToastErrorMessage(err, "Sign failed"), variant: "destructive" })
+      return false
+    }
+  }
+
+  const openReferSpecialist = () => {
+    if (consultNote?.id) {
+      toast({
+        title: "Notes already signed",
+        description: "Add an addendum if this referral needs documenting.",
+      })
+      return
+    }
+    openDrawer({
+      badge: badge("LIVE EDIT"),
+      title: "Refer to specialist",
+      saveLabel: createConsultationNote.isPending ? "Saving…" : "Refer",
+      onSave: async () => {
+        const referredToUserId = tmpRef.current.doctor
+        if (!isGuid(referredToUserId)) {
+          toast({ title: "Select a doctor", description: "Choose who the patient is being referred to.", variant: "destructive" })
+          return
+        }
+        const saved = await signClinicalNotes({ outcome: "refer_specialist", referredToUserId })
+        if (saved) closeDrawer()
+      },
+      fields: [
+        field("doctor", "Specialist", "select", {
+          options: [
+            { value: "", label: consultDoctors.length ? "Select doctor" : "No doctors found for this department" },
+            ...consultDoctors.map((d) => ({ value: d.providerId, label: d.providerName })),
+          ],
+        }),
+      ],
+    })
+  }
+
+  const refreshDx = () => {
+    if (diagnosticVisitId) void queryClient.invalidateQueries({ queryKey: diagnosticVisitKey(diagnosticVisitId) })
+    void queryClient.invalidateQueries({ queryKey: ["meditrack", "opd-dx-worklist"] })
+    void queryClient.invalidateQueries({ queryKey: ["meditrack", "opd-dx-catalogue"] })
+  }
+
+  const openVoidOrder = (order: DiagnosticOrder) =>
     openModal({
       badge: badge("VOID"),
-      title: "Cancel Chest X-ray order?",
+      title: `Cancel ${order.testName || "this"} order?`,
       lines: ["Order will be cancelled before sample/scan collection. This reflects immediately on the Diagnostics screen.", "Payment already collected will be reversed via credit note — same mechanism as a fee void."],
       reasonField: true,
       reasonPlaceholder: "e.g. Clinically no longer indicated after review",
       confirmLabel: "Cancel order",
-      onConfirm: doConfirm("Chest X-ray order cancelled.", { cxrCancelled: true }),
+      onConfirm: async (reason) => {
+        try {
+          await voidDxOrder.mutateAsync({ orderId: order.id, reason: reason.trim() || "No longer indicated" })
+          refreshDx()
+          patch({ bannerText: `${order.testName || "Order"} cancelled.` })
+          closeModal()
+        } catch (err) {
+          toast({
+            title: "Could not void order",
+            description: getToastErrorMessage(err, "Void failed"),
+            variant: "destructive",
+          })
+        }
+      },
     })
 
-  const openEcgEdit = () => openDrawer({ badge: badge("LIVE EDIT"), title: "Edit ECG order", saveLabel: "Save", onSave: doSave("Order updated."), fields: [field("note", "Order note", "text")] })
-  const openEcgAmend = () =>
-    openDrawer({
-      badge: badge("AMENDMENT"),
-      title: "Correct ECG result",
-      saveLabel: "Apply correction",
-      consequenceNote: "Dr. Anjali Nair already reviewed the original result — she will be notified of this correction.",
-      onSave: doSave("Result corrected. Original preserved as superseded.", { ecgAmended: true }),
-      fields: [field("reason", "Reason", "text", { placeholder: "e.g. Transcription error caught on recheck" })],
-    })
+  const openOrderEdit = (order: DiagnosticOrder) =>
+    openDrawer(
+      {
+        badge: badge("LIVE EDIT"),
+        title: `Edit ${order.testName || "order"}`,
+        saveLabel: "Save",
+        onSave: async () => {
+          try {
+            await updateDxOrder.mutateAsync({ orderId: order.id, orderNote: tmpRef.current.note || "" })
+            refreshDx()
+            patch({ bannerText: "Order updated." })
+            closeDrawer()
+          } catch (err) {
+            toast({
+              title: "Could not update order",
+              description: getToastErrorMessage(err, "Update failed"),
+              variant: "destructive",
+            })
+          }
+        },
+        fields: [field("note", "Order note", "text")],
+      },
+      { note: order.orderNote || "" }
+    )
+
+  const openResultAmend = (order: DiagnosticOrder) => {
+    const result = order.result
+    if (!result) return
+    openDrawer(
+      {
+        badge: badge("AMENDMENT"),
+        title: `Correct ${order.testName || "result"}`,
+        saveLabel: "Apply correction",
+        consequenceNote: `${order.orderedByName || "The ordering doctor"} already reviewed the original result — they will be notified of this correction.`,
+        onSave: async () => {
+          try {
+            const next = tmpRef.current.value?.trim()
+            const numeric = next ? Number(next) : NaN
+            await amendDxResult.mutateAsync({
+              resultId: result.id,
+              reason: tmpRef.current.reason?.trim() || "Correction",
+              valueText: Number.isNaN(numeric) ? next || result.valueText : undefined,
+              valueNumeric: Number.isNaN(numeric) ? undefined : numeric,
+              unit: result.unit,
+            })
+            refreshDx()
+            patch({ bannerText: "Result corrected. Original preserved as superseded." })
+            closeDrawer()
+          } catch (err) {
+            toast({
+              title: "Could not amend result",
+              description: getToastErrorMessage(err, "Amendment failed"),
+              variant: "destructive",
+            })
+          }
+        },
+        fields: [
+          field("value", "Corrected result", "text"),
+          field("reason", "Reason", "text", { placeholder: "e.g. Transcription error caught on recheck" }),
+        ],
+      },
+      { value: result.valueNumeric != null ? String(result.valueNumeric) : result.valueText || "", reason: "" }
+    )
+  }
 
   const openReturn = () =>
     openDrawer({
@@ -1233,6 +1990,55 @@ export function OpdVisitThreadPage() {
 
   const goNext = () => goToStage(s + 1)
 
+  const visitPicker = (
+    <Panel className="max-w-[720px]">
+      <SectionLabel>Today’s OPD visits</SectionLabel>
+      <p className="mb-3 text-xs text-adminreg-muted">
+        This screen needs a visit. Search by name or token, or pick from today’s queue.
+      </p>
+      <div className="flex gap-2">
+        <input
+          value={visitPickQuery}
+          onChange={(e) => setVisitPickQuery(e.target.value)}
+          placeholder="Search by name or token number"
+          className="w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo"
+        />
+        {visitPickQuery && (
+          <AdminButton type="button" variant="secondary" className="flex-shrink-0" onClick={() => setVisitPickQuery("")}>
+            Clear
+          </AdminButton>
+        )}
+      </div>
+      {!hasBranch && (
+        <p className="mt-3 border-t border-adminreg-divider py-2.5 text-sm text-adminreg-red">{noBranchMessage}</p>
+      )}
+      {hasBranch && liveQueueLoading && (
+        <p className="mt-3 border-t border-adminreg-divider py-2.5 text-sm text-adminreg-muted">Loading today’s visits…</p>
+      )}
+      {hasBranch && !liveQueueLoading && todayVisitOptions.length === 0 && (
+        <p className="mt-3 border-t border-adminreg-divider py-2.5 text-sm text-adminreg-muted">
+          {visitPickNeedle ? `No match for “${visitPickQuery.trim()}”.` : "No patients in today’s OPD queue yet."}
+        </p>
+      )}
+      {todayVisitOptions.map((token) => (
+        <div key={token.id} className="mt-0 flex items-center justify-between gap-3 border-t border-adminreg-divider py-2.5">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-adminreg-text">{token.patientName || "—"}</div>
+            <div className="font-plexmono text-[11px] text-adminreg-muted">
+              Token {token.tokenNumber}
+              {token.departmentName ? ` · ${token.departmentName}` : ""}
+              {token.userName ? ` · ${token.userName}` : ""}
+              {token.status ? ` · ${token.status}` : ""}
+            </div>
+          </div>
+          <AdminButton type="button" variant="secondary" className="flex-shrink-0" onClick={() => openVisitFromToken(token)}>
+            Select
+          </AdminButton>
+        </div>
+      ))}
+    </Panel>
+  )
+
   return (
     <div className="min-h-full">
       <div className="flex flex-shrink-0 flex-wrap items-end justify-between gap-4 border-b border-adminreg-border bg-adminreg-header px-4 py-4 font-archivo sm:px-6 md:px-8">
@@ -1241,6 +2047,16 @@ export function OpdVisitThreadPage() {
             OPD — STAGE {s + 1} OF 9
           </div>
           <h1 className="text-[21px] font-extrabold tracking-[-0.01em] text-adminreg-text">{activeStage.name}</h1>
+          {(dxPatientLabel || searchParams.get("name")) && (
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-adminreg-muted">
+              <span>{dxPatientLabel || searchParams.get("name")}</span>
+              {(s === 4 || s === 5) && isGuid(diagnosticVisitId) && (
+                <button type="button" onClick={clearVisitContext} className="text-[11px] text-adminreg-muted underline">
+                  Change patient
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <BranchSelect
           value={branchId}
@@ -1313,9 +2129,15 @@ export function OpdVisitThreadPage() {
                   <div className="mt-3.5 border border-adminreg-border bg-adminreg-bg p-3.5">
                     <div className="mb-3 flex items-center justify-between">
                       <span className="font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted">
-                        {newPatientOrigin === "search" ? `Reached from search · 0 records found` : "Direct entry · no search run"}
+                        {completingPatient
+                          ? `${completingPatient.uhid || "Existing record"} · fill any missing details`
+                          : newPatientOrigin === "search"
+                            ? `Reached from search · 0 records found`
+                            : "Direct entry · no search run"}
                       </span>
-                      <span className="font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted">New patient capture</span>
+                      <span className="font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted">
+                        {completingPatient ? "Complete patient details" : "New patient capture"}
+                      </span>
                     </div>
 
                     {newPatientTouched && Object.keys(newPatientErrors(newPatientForm)).length > 0 && (
@@ -1325,7 +2147,7 @@ export function OpdVisitThreadPage() {
                     )}
                     {pendingDuplicateConfirm && (
                       <div className="mb-3 border border-adminreg-amber bg-adminreg-amber-soft px-3 py-2 text-xs text-adminreg-amber-text">
-                        Similar patient(s) found. Click register again to confirm create anyway.
+                        Similar patient(s) found. Choose Yes to continue with this number, or No to stay on this form.
                       </div>
                     )}
 
@@ -1377,9 +2199,9 @@ export function OpdVisitThreadPage() {
                           )}
                         >
                           <option value="">Select gender</option>
-                          <option value="Female">Female</option>
-                          <option value="Male">Male</option>
-                          <option value="Other">Other</option>
+                          {GENDER_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
                         </select>
                         {newPatientTouched && newPatientErrors(newPatientForm).gender && <p className="mt-1 text-[11px] text-adminreg-red-text">{newPatientErrors(newPatientForm).gender}</p>}
                       </div>
@@ -1388,7 +2210,9 @@ export function OpdVisitThreadPage() {
                           <FieldLabel>Mobile</FieldLabel>
                           <span className="flex items-center gap-1.5">
                             {newPatientOrigin === "search" && newPatientForm.mobile && (
-                              <span className="border border-adminreg-border bg-adminreg-card px-1.5 py-0.5 font-plexmono text-[8.5px] uppercase text-adminreg-muted">Prefilled from search</span>
+                              <span className="border border-adminreg-border bg-adminreg-card px-1.5 py-0.5 font-plexmono text-[8.5px] uppercase text-adminreg-muted">
+                                {completingPatient ? "From selected record" : "Prefilled from search"}
+                              </span>
                             )}
                             <span className="font-plexmono text-[9px] uppercase text-adminreg-amber-text">Required</span>
                           </span>
@@ -1407,23 +2231,50 @@ export function OpdVisitThreadPage() {
                     </div>
 
                     <div className="mt-3.5 flex flex-wrap gap-2">
-                      <AdminButton type="button" accent="indigo" onClick={() => void submitNewPatient(true)} disabled={createPatient.isPending}>
-                        {createPatient.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                        {pendingDuplicateConfirm ? "Confirm duplicate & open visit" : "Register and open visit"}
+                      <AdminButton
+                        type="button"
+                        accent="indigo"
+                        onClick={() => void submitNewPatient(true)}
+                        disabled={createPatient.isPending || updatePatient.isPending}
+                      >
+                        {(createPatient.isPending || updatePatient.isPending) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        {completingPatient
+                          ? "Confirm and open visit"
+                          : "Register and open visit"}
                       </AdminButton>
-                      <AdminButton type="button" variant="secondary" onClick={() => void submitNewPatient(false)} disabled={createPatient.isPending}>
+                      <AdminButton
+                        type="button"
+                        variant="secondary"
+                        onClick={() => void submitNewPatient(false)}
+                        disabled={createPatient.isPending || updatePatient.isPending}
+                      >
                         Save without opening a visit
                       </AdminButton>
                       <button
                         type="button"
-                        onClick={clearRegistrationSearch}
-                        disabled={createPatient.isPending}
+                        onClick={() => {
+                          if (completingPatient) {
+                            setShowNewPatientForm(false)
+                            setCompletingPatient(null)
+                            completingPrefillId.current = null
+                            setNewPatientForm(EMPTY_NEW_PATIENT)
+                            setNewPatientTouched(false)
+                            setPendingDuplicateConfirm(false)
+                            return
+                          }
+                          clearRegistrationSearch()
+                        }}
+                        disabled={createPatient.isPending || updatePatient.isPending}
                         className="self-center text-[11px] text-adminreg-muted underline disabled:opacity-50"
                       >
                         Cancel
                       </button>
                     </div>
-                    <p className="mt-2.5 text-[11px] text-adminreg-muted">Name, date of birth, gender and mobile number are required before either action will save.</p>
+                    <p className="mt-2.5 text-[11px] text-adminreg-muted">
+                      {completingPatient
+                        ? "Name, date of birth, gender and mobile are required. Empty fields on this record can be filled here before the visit opens."
+                        : "Name, date of birth, gender and mobile number are required before either action will save."}
+                    </p>
                   </div>
                 ) : regOutcome === "idle" ? (
                   <div className="mt-3.5 border border-dashed border-adminreg-border bg-adminreg-bg p-5 text-center">
@@ -1474,9 +2325,9 @@ export function OpdVisitThreadPage() {
                             <AdminButton
                               type="button"
                               accent="indigo"
-                              onClick={() => activatePatient(mapSearchResult(candidate), `Visit opened for ${candidate.name}.`)}
+                              onClick={() => openExistingPatientForm(candidate)}
                             >
-                              Confirm &amp; open visit
+                              Continue to details
                             </AdminButton>
                             <span
                               onClick={() => {
@@ -1505,7 +2356,7 @@ export function OpdVisitThreadPage() {
                             <div className="text-[11px] text-adminreg-muted">{formatAgeSex(c.age, c.gender)} · last visit {formatLastVisit(c.lastVisitDate)}</div>
                             <div className="text-[11px] italic text-adminreg-muted">Matched on {(c.matchedOn || []).join(", ") || "query"}</div>
                           </div>
-                          {editable && <AdminButton type="button" variant="secondary" className="flex-shrink-0" onClick={() => setSelectedCandidate(i)}>Select</AdminButton>}
+                          {editable && <AdminButton type="button" variant="secondary" className="flex-shrink-0" onClick={() => openExistingPatientForm(c)}>Select</AdminButton>}
                         </div>
                       ))}
                     </div>
@@ -1778,65 +2629,209 @@ export function OpdVisitThreadPage() {
                 <h2 className="font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted2">Vitals</h2>
                 {editable && (
                   <div className="flex gap-2.5">
-                    <LinkAction tone="edit" onClick={openVitalsEdit}>Edit</LinkAction>
+                    <LinkAction tone="edit" onClick={openVitalsEdit}>Edit all</LinkAction>
                     <LinkAction tone="amend" onClick={openVitalsAmend}>Correct (already reviewed)</LinkAction>
-                    <AdminButton type="button" variant="danger" onClick={retriageAction}>Re-assess — condition changed</AdminButton>
+                    <AdminButton type="button" variant="danger" onClick={() => void retriageAction()} disabled={saveOpdVitals.isPending}>Re-assess — condition changed</AdminButton>
                   </div>
                 )}
               </div>
               <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
-                {vitalsRaw.map((v) => (
-                  <div key={v.label} className={cn("p-3.5 text-center", v.crit ? "border-2 border-adminreg-red bg-adminreg-red-soft" : "border border-adminreg-border bg-adminreg-card")}>
-                    <div className={cn("font-plexmono text-[10px] tracking-[0.04em]", v.crit ? "text-adminreg-red-text" : "text-adminreg-muted2")}>{v.label}</div>
-                    <div className={cn("mt-1.5 font-plexmono text-[28px] font-bold", v.crit ? "text-adminreg-red-text" : "text-adminreg-text")}>{v.value}</div>
-                    <div className={cn("mt-0.5 text-[11px]", v.crit ? "text-adminreg-red-text" : "text-adminreg-muted2")}>{v.unit}</div>
-                  </div>
-                ))}
+                {vitalsRaw.map((v) => {
+                  const editing = editingVitalKey === v.key
+                  return (
+                    <div key={v.key} className={cn("relative p-3.5 text-center", v.crit ? "border-2 border-adminreg-red bg-adminreg-red-soft" : "border border-adminreg-border bg-adminreg-card")}>
+                      {editable && (
+                        <div className="absolute right-2 top-2">
+                          <LinkAction tone="edit" onClick={() => startVitalBoxEdit(v.key)}>Edit</LinkAction>
+                        </div>
+                      )}
+                      <div className={cn("font-plexmono text-[10px] tracking-[0.04em]", v.crit ? "text-adminreg-red-text" : "text-adminreg-muted2")}>{v.label}</div>
+                      {editing ? (
+                        <input
+                          autoFocus
+                          value={vitalsDraft[v.key as keyof typeof vitalsDraft]}
+                          onChange={(e) => setVitalsDraft((prev) => ({ ...prev, [v.key]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === "Escape") {
+                              e.preventDefault()
+                              setEditingVitalKey(null)
+                            }
+                          }}
+                          placeholder={v.placeholder}
+                          className="mt-1.5 w-full border border-adminreg-indigo bg-adminreg-card px-1 py-1 text-center font-plexmono text-[22px] font-bold text-adminreg-text focus:outline-none focus:ring-1 focus:ring-adminreg-indigo"
+                        />
+                      ) : (
+                        <div className={cn("mt-1.5 font-plexmono text-[28px] font-bold", v.crit ? "text-adminreg-red-text" : "text-adminreg-text")}>{v.value}</div>
+                      )}
+                      <div className={cn("mt-0.5 text-[11px]", v.crit ? "text-adminreg-red-text" : "text-adminreg-muted2")}>{v.unit}</div>
+                    </div>
+                  )
+                })}
               </div>
-              {state.vitalsAmended && (
+              {state.vitalsAmended && vitals && (
                 <div className="mb-3.5">
-                  <AddendumNote header="AMENDMENT · K. Rao (Nurse) · Reason: Re-checked with second device — first reading likely faulty probe">
-                    SpO2 <span className={SUPERSEDED_CLASS}>91%</span>
-                    <SupersededTag /> — corrected to <strong>96%</strong>. Dr. Anjali Nair has been notified of this correction.
+                  <AddendumNote header={`AMENDMENT · ${ROLE_LABEL[role] ?? "Nurse"}${vitals.notes ? ` · Reason: ${vitals.notes}` : ""}`}>
+                    SpO2 corrected to <strong>{vitals.spo2 != null ? `${vitals.spo2}%` : "—"}</strong>. The doctor will see the updated reading.
                   </AddendumNote>
                 </div>
               )}
-              {state.retriaged && <div className="mb-3.5"><InlineInfo>Re-assessment logged — patient moved back to nurse queue for fresh vitals before doctor review.</InlineInfo></div>}
-              <CriticalBanner title="CRITICAL: SpO2 91% — below safe threshold" description="Escalate to doctor immediately." action={editable ? <AdminButton type="button" variant="danger" className="ml-auto">Escalate now</AdminButton> : undefined} />
+              {(state.retriaged || vitals?.isRetriage) && (
+                <div className="mb-3.5">
+                  <InlineInfo>Re-assessment logged — patient moved back to nurse queue for fresh vitals before doctor review.</InlineInfo>
+                </div>
+              )}
+              {criticalBanner && (
+                <CriticalBanner
+                  title={criticalBanner.title}
+                  description={criticalBanner.description}
+                  action={
+                    editable ? (
+                      <AdminButton
+                        type="button"
+                        variant="danger"
+                        className="ml-auto"
+                        onClick={() =>
+                          toast({
+                            title: "Escalated",
+                            description: "This visit is flagged for the doctor from the vitals thresholds.",
+                          })
+                        }
+                      >
+                        Escalate now
+                      </AdminButton>
+                    ) : undefined
+                  }
+                />
+              )}
               <Panel className="max-w-[640px]">
                 <SectionLabel>Chief complaint</SectionLabel>
-                <textarea rows={3} disabled={!editable} defaultValue="Breathlessness on exertion since 2 days, mild chest tightness." className="w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-70" />
+                {vitalsQuery.isLoading && !vitals && (
+                  <p className="mb-2 text-[11px] text-adminreg-muted">Loading vitals…</p>
+                )}
+                {!isGuid(diagnosticVisitId) && (
+                  <p className="mb-2 text-[11px] text-adminreg-amber-text">Collect the consultation fee first — vitals attach to that visit.</p>
+                )}
+                <textarea
+                  rows={3}
+                  disabled={!editable}
+                  value={chiefComplaint}
+                  onChange={(e) => setChiefComplaint(e.target.value)}
+                  placeholder="Why the patient is here today"
+                  className="w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-70"
+                />
               </Panel>
-              {editable && <AdminButton type="button" accent="indigo" className="mt-4" onClick={goNext}>Send to doctor → Consultation</AdminButton>}
+              {editable && (
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  {vitalsReadyToSave && (
+                    <AdminButton
+                      type="button"
+                      variant="secondary"
+                      onClick={() => void saveDraftVitals(false)}
+                      disabled={saveOpdVitals.isPending}
+                    >
+                      {saveOpdVitals.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Save vitals
+                    </AdminButton>
+                  )}
+                  <AdminButton
+                    type="button"
+                    accent="indigo"
+                    onClick={() => void sendToDoctor()}
+                    disabled={saveOpdVitals.isPending}
+                  >
+                    {saveOpdVitals.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Send to doctor → Consultation
+                  </AdminButton>
+                </div>
+              )}
             </div>
           )}
 
-          {s === 4 && (
+          {s === 4 && awaitingVisitContext && (
+            <Panel className="max-w-[720px]">
+              <p className="text-sm text-adminreg-muted">Loading this visit…</p>
+            </Panel>
+          )}
+          {s === 4 && needsVisitPick && visitPicker}
+          {s === 4 && !needsVisitPick && !awaitingVisitContext && (
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1.3fr]">
               <div>
                 <Panel className="mb-3.5">
                   <SectionLabel>Visit history thread</SectionLabel>
-                  {history.map((h) => (
-                    <div key={h.time + h.what} className="border-t border-adminreg-divider py-2.5">
+                  {consultContextQuery.isLoading && visitHistory.length === 0 && (
+                    <div className="border-t border-adminreg-divider py-2.5 text-xs text-adminreg-muted">Loading visit history…</div>
+                  )}
+                  {visitHistory.map((h) => (
+                    <div key={h.key} className="border-t border-adminreg-divider py-2.5">
                       <div className="font-plexmono text-[11px] text-adminreg-muted">{h.time} · {h.by}</div>
                       <div className="mt-0.5 text-xs text-adminreg-text">{h.what}</div>
                     </div>
                   ))}
+                  {!consultContextQuery.isLoading && visitHistory.length === 0 && (
+                    <div className="border-t border-adminreg-divider py-2.5 text-xs text-adminreg-muted">No prior visits on file.</div>
+                  )}
                 </Panel>
-                <div className="border border-adminreg-red bg-adminreg-red-soft px-4 py-3.5 text-xs text-adminreg-red-text">Nurse escalation: SpO2 91% flagged at triage.</div>
+                {vitals?.isEmergencyEscalation && (
+                  <div className="border border-adminreg-red bg-adminreg-red-soft px-4 py-3.5 text-xs text-adminreg-red-text">
+                    Nurse escalation: {criticalBanner?.title || "Vitals flagged at triage."}
+                  </div>
+                )}
               </div>
               <Panel>
                 <div className="flex justify-between">
-                  <h2 className="font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted2">Clinical notes — signed</h2>
-                  <span className="font-plexmono text-[10px] text-adminreg-muted">Dr. Anjali Nair · 12 Aug, 09:58</span>
+                  <h2 className="font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted2">
+                    {consultNote ? "Clinical notes — signed" : "Clinical notes"}
+                  </h2>
+                  <span className="font-plexmono text-[10px] text-adminreg-muted">
+                    {consultNote
+                      ? [signedNoteDoctor, signedNoteWhen].filter(Boolean).join(" · ")
+                      : consultNoteQuery.isLoading
+                        ? "Loading…"
+                        : ""}
+                  </span>
                 </div>
-                <div className="border-b border-adminreg-divider py-2.5 text-sm leading-relaxed">Mild wheeze on auscultation. Suspected early bronchospasm. Advise ECG and chest X-ray to rule out cardiac cause given SpO2 flag.</div>
+                {consultNote ? (
+                  <div className="border-b border-adminreg-divider py-2.5 text-sm leading-relaxed">
+                    {signedNoteBody || "—"}
+                  </div>
+                ) : editable ? (
+                  <textarea
+                    rows={4}
+                    value={clinicalNotesDraft}
+                    onChange={(e) => setClinicalNotesDraft(e.target.value)}
+                    placeholder="Findings, impression, and plan"
+                    className="mt-2 w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm leading-relaxed text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo"
+                  />
+                ) : (
+                  <div className="border-b border-adminreg-divider py-2.5 text-sm leading-relaxed text-adminreg-muted">
+                    No notes signed for this visit yet.
+                  </div>
+                )}
                 <div className="space-y-2.5 pt-2.5">
-                  {state.addendums.map((a, i) => (
-                    <AddendumNote key={i} header={`ADDENDUM · ${a.by} · ${a.time} · Reason: ${a.reason}`}>{a.text}</AddendumNote>
+                  {consultAddendums.map((a) => (
+                    <AddendumNote
+                      key={a.id}
+                      header={`ADDENDUM · ${a.amendedByName || "Doctor"} · ${formatConsultWhen(a.amendedAt, true)} · Reason: ${a.reason || "Clarification"}`}
+                    >
+                      {a.amendmentText}
+                    </AddendumNote>
                   ))}
                 </div>
-                {/* {editable && <AdminButton type="button" variant="secondary" className="mt-3" onClick={openAddendum}>+ Add addendum</AdminButton>} */}
+                {editable && consultNote && (
+                  <AdminButton type="button" variant="secondary" className="mt-3" onClick={openAddendum}>+ Add addendum</AdminButton>
+                )}
+                {editable && !consultNote && (
+                  <AdminButton
+                    type="button"
+                    accent="indigo"
+                    className="mt-3"
+                    onClick={() => void signClinicalNotes()}
+                    disabled={createConsultationNote.isPending || !clinicalNotesDraft.trim()}
+                  >
+                    {createConsultationNote.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Sign notes
+                  </AdminButton>
+                )}
 
                 {editable && (
                   <>
@@ -1844,7 +2839,7 @@ export function OpdVisitThreadPage() {
                     <div className="mb-3.5 flex flex-wrap gap-2">
                       <AdminButton type="button" accent="indigo" onClick={() => setInlineDxOpen((v) => !v)}>{inlineDxOpen ? "Close diagnostics order" : "Order diagnostics"}</AdminButton>
                       <AdminButton type="button" variant="secondary" onClick={() => { patch({ diagnosticsSkipped: true }); goToStage(6) }}>Skip — prescribe directly</AdminButton>
-                      <AdminButton type="button" variant="secondary">Refer to specialist</AdminButton>
+                      <AdminButton type="button" variant="secondary" onClick={openReferSpecialist}>Refer to specialist</AdminButton>
                       {demoReferralState === "not-referred" && (
                         <AdminButton type="button" variant="secondary" className="border-adminreg-ipd text-adminreg-ipd hover:bg-adminreg-ipd/10" onClick={() => setDemoReferralState("confirming")}>
                           Admission needed (→ IPD)
@@ -1863,16 +2858,28 @@ export function OpdVisitThreadPage() {
                     <DxOrderPanel
                       editable={editable}
                       compact
-                      visitId={PATIENT.visitId}
-                      patientLabel={`${PATIENT.name} · ${PATIENT.ageSex}`}
-                      orderingDoctor="Dr. Anjali Nair · Cardiology"
+                      visitId={diagnosticVisitId || PATIENT.visitId}
+                      patientLabel={dxPatientLabel}
+                      orderingDoctor={dxOrderingDoctor}
+                      clinicId={clinicId}
+                      paymentMethod={collection?.paymentMethod}
+                      existingOrders={dxOrders.map((o) => ({
+                        id: o.id,
+                        name: o.testName || "Test",
+                        price: o.amount || 0,
+                        statusLabel: o.statusLabel,
+                        isVoid: o.isVoid,
+                      }))}
+                      onConfirm={refreshDx}
                     />
                   </div>
                 )}
-                <div className="flex items-center justify-between bg-adminreg-header px-3.5 py-2.5">
-                  <span className="text-xs">Chest X-ray — ordered</span>
-                  {!state.cxrCancelled ? (editable && <LinkAction tone="void" onClick={openCancelOrder}>Cancel before collection</LinkAction>) : <SupersededTag />}
-                </div>
+                {dxOrders.filter((o) => !o.isVoid && o.canVoid).map((order) => (
+                  <div key={order.id} className="flex items-center justify-between bg-adminreg-header px-3.5 py-2.5">
+                    <span className="text-xs">{order.testName} — {order.statusLabel || "ordered"}</span>
+                    {editable && <LinkAction tone="void" onClick={() => openVoidOrder(order)}>Cancel before collection</LinkAction>}
+                  </div>
+                ))}
 
                 {editable && demoReferralState === "confirming" && (
                   <div className="mt-3.5 border-t-[3px] border-adminreg-ipd bg-adminreg-ipd/[0.06] p-3.5">
@@ -1899,23 +2906,32 @@ export function OpdVisitThreadPage() {
                       <div className="space-y-2 text-xs text-adminreg-text">
                         <div>
                           <div className="font-semibold">Working diagnosis</div>
-                          <div>Suspected early bronchospasm; cardiac cause not excluded</div>
-                          <div className="text-[10px] text-adminreg-muted">Clinical notes, signed 09:58</div>
+                          <div>{signedNoteBody || consultNote?.diagnosis || "—"}</div>
+                          <div className="text-[10px] text-adminreg-muted">
+                            {consultNote ? `Clinical notes, signed ${signedNoteWhen || ""}`.trim() : "Clinical notes not signed"}
+                          </div>
                         </div>
                         <div>
                           <div className="font-semibold">Vitals at referral</div>
-                          <div>BP 168/104 · HR 96 · SpO2 91% (flagged at triage)</div>
+                          <div>
+                            BP {vitals?.bloodPressure || "—"} · HR {vitals?.heartRateBpm ?? "—"} · SpO2 {vitals?.spo2 ?? "—"}
+                            {vitals?.isEmergencyEscalation ? " (flagged at triage)" : ""}
+                          </div>
                           <div className="text-[10px] text-adminreg-muted">Vitals &amp; Triage</div>
                         </div>
                         <div>
                           <div className="font-semibold">Diagnostics on file</div>
-                          <div>Chest X-ray ordered 09:58 — awaiting collection</div>
+                          <div>
+                            {dxOrders.filter((o) => !o.isVoid).length
+                              ? dxOrders.filter((o) => !o.isVoid).map((o) => `${o.testName || "Test"}${o.statusLabel ? ` — ${o.statusLabel}` : ""}`).join(", ")
+                              : "—"}
+                          </div>
                           <div className="text-[10px] text-adminreg-muted">Diagnostics, this visit</div>
                         </div>
                         <div>
                           <div className="font-semibold">Referring doctor</div>
-                          <div>Dr. Anjali Nair · Cardiology</div>
-                          <div className="text-[10px] text-adminreg-muted">OPD-20260812-0091</div>
+                          <div>{dxOrderingDoctor}</div>
+                          <div className="text-[10px] text-adminreg-muted">{diagnosticVisitId || PATIENT.visitId}</div>
                         </div>
                       </div>
                     </div>
@@ -2012,43 +3028,108 @@ export function OpdVisitThreadPage() {
                 This stage was skipped — Dr. Anjali Nair chose to prescribe directly.
                 {editable && <div className="mt-3"><AdminButton type="button" variant="secondary" onClick={() => patch({ diagnosticsSkipped: false })}>Undo — order diagnostics now</AdminButton></div>}
               </div>
+            ) : awaitingVisitContext ? (
+              <Panel className="max-w-[720px]">
+                <p className="text-sm text-adminreg-muted">Loading this visit…</p>
+              </Panel>
+            ) : needsVisitPick ? (
+              visitPicker
             ) : (
               <div className="space-y-6">
               <DxOrderPanel
                 editable={editable}
-                visitId={PATIENT.visitId}
-                patientLabel={`${PATIENT.name} · ${PATIENT.ageSex}`}
-                orderingDoctor="Dr. Anjali Nair · Cardiology"
+                visitId={diagnosticVisitId}
+                patientLabel={dxPatientLabel}
+                orderingDoctor={dxOrderingDoctor}
+                clinicId={clinicId}
+                paymentMethod={collection?.paymentMethod}
+                existingOrders={dxOrders.map((o) => ({
+                  id: o.id,
+                  name: o.testName || "Test",
+                  price: o.amount || 0,
+                  statusLabel: o.statusLabel,
+                  isVoid: o.isVoid,
+                }))}
+                onConfirm={refreshDx}
               />
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <Panel>
                   <SectionLabel>Ordered tests</SectionLabel>
-                  <div className="flex items-center justify-between border-t border-adminreg-divider py-2 text-sm"><span>ECG</span><span className="font-plexmono text-adminreg-muted">₹350</span>{editable && <LinkAction tone="edit" onClick={openEcgEdit}>Edit</LinkAction>}</div>
-                  <div className="flex items-center justify-between border-t border-adminreg-divider py-2 text-sm">
-                    <span className={state.cxrCancelled ? SUPERSEDED_CLASS : ""}>Chest X-ray</span>
-                    <span className={cn("font-plexmono text-adminreg-muted", state.cxrCancelled && SUPERSEDED_CLASS)}>₹600</span>
-                    {!state.cxrCancelled ? (editable && <LinkAction tone="void" onClick={openCancelOrder}>Void</LinkAction>) : <SupersededTag />}
-                  </div>
-                  {state.cxrCancelled && <p className="mt-2 text-[11px] text-adminreg-amber-text">Cancelled by Dr. Nair before sample collection. Same reversal mechanism as fee void — credit note CN-0093 issued.</p>}
-                  <div className="mt-3.5"><InlineInfo>Covered under Star Health TPA — pre-authorized.</InlineInfo></div>
+                  {dxVisitQuery.isLoading && dxOrders.length === 0 && (
+                    <div className="border-t border-adminreg-divider py-2 text-sm text-adminreg-muted">Loading orders…</div>
+                  )}
+                  {!dxVisitQuery.isLoading && dxOrders.length === 0 && (
+                    <div className="border-t border-adminreg-divider py-2 text-sm text-adminreg-muted">No tests ordered on this visit yet.</div>
+                  )}
+                  {dxOrders.map((order) => (
+                    <div key={order.id} className="flex items-center justify-between border-t border-adminreg-divider py-2 text-sm">
+                      <span className={order.isVoid ? SUPERSEDED_CLASS : ""}>{order.testName}</span>
+                      <span className={cn("font-plexmono text-adminreg-muted", order.isVoid && SUPERSEDED_CLASS)}>₹{(order.amount || 0).toLocaleString("en-IN")}</span>
+                      {order.isVoid ? (
+                        <SupersededTag />
+                      ) : editable && order.canEdit ? (
+                        <LinkAction tone="edit" onClick={() => openOrderEdit(order)}>Edit</LinkAction>
+                      ) : editable && order.canVoid ? (
+                        <LinkAction tone="void" onClick={() => openVoidOrder(order)}>Void</LinkAction>
+                      ) : null}
+                    </div>
+                  ))}
+                  {dxOrders.some((o) => o.isVoid) && (
+                    <p className="mt-2 text-[11px] text-adminreg-amber-text">
+                      {dxOrders.filter((o) => o.isVoid).map((o) => o.voidReason
+                        ? `${o.testName} cancelled. ${o.voidReason}`
+                        : `${o.testName} cancelled before sample collection.`).join(" ")}
+                    </p>
+                  )}
+                  {dxVisit?.tpaLabel && <div className="mt-3.5"><InlineInfo>{dxVisit.tpaLabel}</InlineInfo></div>}
+                  {dxOrders.some((o) => !o.isVoid && !o.sampleCollectedAt) && (
+                    <p className="mt-2 text-[11px] text-adminreg-muted">
+                      Confirmed lab tests go to{" "}
+                      <a href="/opd/diagnostics?screen=sample-collection" className="font-semibold underline">Sample Collection</a>
+                      . Scans go to{" "}
+                      <a href="/opd/diagnostics?screen=imaging-performed" className="font-semibold underline">Imaging Performed</a>
+                      . Continue this visit with Back to doctor → e-Prescription.
+                    </p>
+                  )}
                 </Panel>
                 <Panel>
                   <SectionLabel>Results</SectionLabel>
-                  <div className="border-t border-adminreg-divider py-2.5">
-                    <div className="flex items-center justify-between"><span className="text-sm">ECG</span><ResultTag tone={state.ecgAmended ? "amber" : "green"}>{state.ecgAmended ? "AMENDED" : "NORMAL"}</ResultTag></div>
-                    {state.ecgAmended ? (
-                      <div className="mt-2">
-                        <AddendumNote header="AMENDMENT · M. Pillai (Lab) · Reason: Transcription error caught on recheck">
-                          Result <span className={SUPERSEDED_CLASS}>Irregular rhythm noted</span>
-                          <SupersededTag /> — corrected to <strong>Normal sinus rhythm</strong>. Dr. Anjali Nair notified — original reading had already been reviewed.
-                        </AddendumNote>
+                  {dxOrders.filter((o) => !o.isVoid).map((order) => {
+                    const live = order.result
+                    const amended = (order.history?.length ?? 0) > 0 && !!live
+                    const pending = !live
+                    const tone: "green" | "amber" = pending || live?.abnormalFlag || live?.status === "PendingRadiologist" || amended ? "amber" : "green"
+                    const tag = live?.abnormalFlag === "CRITICAL"
+                      ? "CRITICAL"
+                      : live?.abnormalFlag === "ABNORMAL"
+                        ? "ABNORMAL"
+                        : live?.status === "PendingRadiologist"
+                          ? "PENDING RADIOLOGIST"
+                          : amended
+                            ? "AMENDED"
+                            : live?.display || order.statusLabel || "PENDING"
+                    const superseded = order.history?.[0]
+                    return (
+                      <div key={order.id} className="border-t border-adminreg-divider py-2.5">
+                        <div className="flex items-center justify-between"><span className="text-sm">{order.testName}</span><ResultTag tone={tone}>{tag}</ResultTag></div>
+                        {amended && live && (
+                          <div className="mt-2">
+                            <AddendumNote header={`AMENDMENT · ${live.enteredByName || "Lab"} · Reason: ${live.amendmentReason || "Correction"}`}>
+                              Result {superseded?.display ? <><span className={SUPERSEDED_CLASS}>{superseded.display}</span><SupersededTag /> — corrected to <strong>{live.display}</strong>.</> : <>Corrected to <strong>{live.display}</strong>.</>}
+                            </AddendumNote>
+                          </div>
+                        )}
+                        {editable && live?.canAmend && !amended && (
+                          <LinkAction tone="amend" onClick={() => openResultAmend(order)}>Correct result (already reviewed)</LinkAction>
+                        )}
                       </div>
-                    ) : (
-                      editable && <LinkAction tone="amend" onClick={openEcgAmend}>Correct result (already reviewed)</LinkAction>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between border-t border-adminreg-divider py-2.5"><span className="text-sm">Chest X-ray</span><ResultTag tone="amber">PENDING RADIOLOGIST</ResultTag></div>
-                  <div className="mt-3.5"><CriticalBanner title="⚠ CRITICAL RESULT — Serum Potassium 6.4 mmol/L" description="Auto-flagged and pushed to doctor." /></div>
+                    )
+                  })}
+                  {dxVisit?.criticalAlerts?.map((alert) => (
+                    <div key={alert.resultId} className="mt-3.5">
+                      <CriticalBanner title={`⚠ CRITICAL RESULT — ${alert.display || alert.testName}`} description={alert.notifiedDoctor ? "Auto-flagged and pushed to doctor." : "Auto-flagged."} />
+                    </div>
+                  ))}
                   {editable && <AdminButton type="button" accent="indigo" className="mt-2" onClick={goNext}>Back to doctor → e-Prescription</AdminButton>}
                 </Panel>
               </div>
@@ -2207,9 +3288,10 @@ export function OpdVisitThreadPage() {
           title={modal.title}
           lines={modal.lines}
           badge={modal.badge}
-          danger
+          danger={modal.danger !== false}
           accent="indigo"
           confirmLabel={modal.confirmLabel}
+          cancelLabel={modal.cancelLabel}
           onConfirm={() => modal.onConfirm(modalReason, modalAck)}
         >
           {modal.reasonField && (
