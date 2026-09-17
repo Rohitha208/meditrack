@@ -37,9 +37,23 @@ const getPatientFiles = async (patientId: string): Promise<PatientFilesResponse>
     throw new Error(msg)
   }
   const data = await response.json()
+  const items = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.items)
+      ? data.items
+      : Array.isArray(data?.Items)
+        ? data.Items
+        : []
 
-  // Normalize to { items: [...] } shape for table reuse
-  return Array.isArray(data) ? { items: data } : (data as PatientFilesResponse)
+  return {
+    items: items.map((item: any) => ({
+      ...item,
+      id: String(item.id ?? item.Id ?? ""),
+      name: String(item.name ?? item.Name ?? ""),
+      attachments: item.attachments ?? item.Attachments ?? [],
+    })),
+    totalCount: data?.totalCount ?? data?.TotalCount ?? items.length,
+  } as PatientFilesResponse
 }
 
 export const useGetPatientFiles = (patientId: string) => {
@@ -47,6 +61,7 @@ export const useGetPatientFiles = (patientId: string) => {
     queryKey: ["patient-files", patientId],
     queryFn: () => getPatientFiles(patientId),
     enabled: !!patientId,
+    retry: false,
   })
 }
 

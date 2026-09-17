@@ -20,6 +20,7 @@ import {
 import { useStaffRole } from "@/components/meditrack/layout/register/RoleProvider"
 import { ROLE_LABEL, isStageEditable } from "@/components/meditrack/layout/register/rbac"
 import { BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useGetDepartmentDoctors } from "@/queries/meditrack/opd-booking"
 import {
   useCollectFee,
@@ -30,7 +31,6 @@ import {
   useUpdateFeePaymentMethod,
   useUpdateTokenStatus,
   useVoidFeeItem,
-  useWaiveFee,
   type FeeItem,
   type OpdFeeCollection,
   type OpdToken as OpdQueueToken,
@@ -53,7 +53,18 @@ import {
   useUploadRegistrationCards,
   type RegistrationSearchResult,
 } from "@/queries/meditrack/patient-registration"
+import { useGetPatientFiles, type PatientFileItem } from "@/queries/patientFiles/get-patient-files"
 import { useOpdVitals, useSaveOpdVitals } from "@/queries/meditrack/opd-vitals"
+import {
+  usePrescriptionVisit,
+  useSendPrescriptionToPharmacy,
+} from "@/queries/meditrack/opd-prescription"
+import {
+  useDispenseAndBill,
+  usePharmacyVisitOrder,
+  useReturnPharmacyMedicine,
+  useVoidPharmacyBill,
+} from "@/queries/meditrack/opd-pharmacy"
 import {
   useAmendConsultationNote,
   useConsultationAmendments,
@@ -111,6 +122,21 @@ const REFERRAL_STATE_BADGE: Partial<Record<DemoReferralState, string>> = {
 
 const PATIENT = { name: "Meera Kulkarni", ageSex: "34 / Female", uhid: "UHID-0004821", visitId: "OPD-20260812-0091" }
 
+function formatPharmacyRupees(value: number, withPaise = false) {
+  return `₹${Number(value || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: withPaise ? 2 : 0,
+    maximumFractionDigits: withPaise ? 2 : 0,
+  })}`
+}
+
+function toPharmacyPaymentMethod(method?: string | null) {
+  const value = (method || "Cash").toLowerCase()
+  if (value.includes("upi")) return "UPI"
+  if (value.includes("card")) return "Card"
+  if (value.includes("tpa") || value.includes("cashless") || value.includes("insurance")) return "Insurance"
+  return "Cash"
+}
+
 // ---------------------------------------------------------------------------
 // Registration search — driven by api/patients/registration-search.
 // ---------------------------------------------------------------------------
@@ -140,7 +166,31 @@ interface PendingCard {
   file: File | null
 }
 
+interface SavedCardView {
+  id: string
+  name: string
+  fileName: string
+  filePath: string
+  fileType: string
+  file?: File | null
+}
+
 const EMPTY_NEW_PATIENT: NewPatientForm = { fullName: "", dob: "", gender: "", mobile: "" }
+
+function fileAttachments(file: PatientFileItem) {
+  const record = file as PatientFileItem & { Attachments?: PatientFileItem["attachments"] }
+  const raw = record.attachments ?? record.Attachments ?? []
+  return Array.isArray(raw) ? raw : []
+}
+
+function firstAttachmentMeta(file: PatientFileItem) {
+  const raw = fileAttachments(file)[0] as unknown as Record<string, string | undefined> | undefined
+  return {
+    fileName: raw?.fileName || raw?.FileName || "Card",
+    filePath: raw?.filePath || raw?.FilePath || "",
+    fileType: raw?.fileType || raw?.FileType || "",
+  }
+}
 
 const EMPTY_VITALS_DRAFT = {
   bloodPressure: "",
@@ -181,6 +231,23 @@ function formatAgeSex(age?: number | null, gender?: string | null) {
 function celsiusToFahrenheit(c?: number | null) {
   if (c == null || Number.isNaN(Number(c))) return ""
   return String(Math.round(((Number(c) * 9) / 5 + 32) * 10) / 10)
+}
+
+function formatVitalsHistorySummary(v: {
+  bloodPressure?: string | null
+  heartRateBpm?: number | null
+  temperatureC?: number | null
+  spo2?: number | null
+  weightKg?: number | null
+}) {
+  const parts: string[] = []
+  if (v.bloodPressure?.trim()) parts.push(`BP ${v.bloodPressure.trim()}`)
+  if (v.heartRateBpm != null) parts.push(`Pulse ${v.heartRateBpm} bpm`)
+  const tempF = celsiusToFahrenheit(v.temperatureC)
+  if (tempF) parts.push(`Temp ${tempF}°F`)
+  if (v.spo2 != null) parts.push(`SpO2 ${v.spo2}%`)
+  if (v.weightKg != null) parts.push(`Weight ${v.weightKg} kg`)
+  return parts.join(" · ")
 }
 
 function fahrenheitToCelsius(value: string): number | null {
@@ -425,7 +492,6 @@ export function OpdVisitThreadPage() {
   const updatePatient = useUpdatePatientRegistration()
   const uploadCards = useUploadRegistrationCards()
   const collectFee = useCollectFee()
-  const waiveFee = useWaiveFee()
   const voidFeeItem = useVoidFeeItem()
   const updateFeePaymentMethod = useUpdateFeePaymentMethod()
   const updateTokenStatus = useUpdateTokenStatus()
@@ -450,7 +516,7 @@ export function OpdVisitThreadPage() {
   const [modalReason, setModalReason] = useState("")
   const [modalAck, setModalAck] = useState(false)
 
-  // Registration (Stage 0) — backend-backed search / register / update.
+  // Registration (Stage 0) — backend-backed search / register / update 
   const [regOutcome, setRegOutcome] = useState<RegOutcome>("idle")
   const [regQuery, setRegQuery] = useState("")
   const [regResults, setRegResults] = useState<RegistrationSearchResult[]>([])
@@ -470,11 +536,12 @@ export function OpdVisitThreadPage() {
   // attach a file.
   const [abhaNumber, setAbhaNumber] = useState("")
   const [pendingCards, setPendingCards] = useState<PendingCard[]>([])
+  const [justSavedCards, setJustSavedCards] = useState<SavedCardView[]>([])
+  const [cardPreview, setCardPreview] = useState<{ name: string; url: string; type: string } | null>(null)
 
   // Fee collection (Stage 1) and token / queue (Stage 2) — backend-backed.
   const [paymentMethod, setPaymentMethod] = useState("Cash")
   const [collection, setCollection] = useState<OpdFeeCollection | null>(null)
-  const [pendingWaiverReason, setPendingWaiverReason] = useState<string | null>(null)
   const [locallyVoided, setLocallyVoided] = useState<number[]>([])
   const [activeToken, setActiveToken] = useState<OpdQueueToken | null>(null)
   const [reassignNote, setReassignNote] = useState<{ header: string; body: string } | null>(null)
@@ -482,6 +549,25 @@ export function OpdVisitThreadPage() {
   // Full record for Edit after the visit is open, and to prefill DOB/gender
   // on the capture form after Select.
   const patientDetail = usePatientDetail(completingPatient?.id || activePatient?.id)
+  const patientFilesQuery = useGetPatientFiles(activePatient?.id || "")
+  const apiSavedCards: SavedCardView[] = (patientFilesQuery.data?.items ?? []).map((file) => ({
+    id: file.id,
+    name: file.name || "Card",
+    ...firstAttachmentMeta(file),
+  }))
+  const savedCards: SavedCardView[] = [
+    ...apiSavedCards,
+    ...justSavedCards.filter(
+      (local) =>
+        !apiSavedCards.some(
+          (api) => api.name.trim().toLowerCase() === local.name.trim().toLowerCase()
+        )
+    ),
+  ]
+
+  useEffect(() => {
+    setJustSavedCards([])
+  }, [activePatient?.id])
 
   useEffect(() => {
     const detail = patientDetail.data
@@ -587,8 +673,8 @@ export function OpdVisitThreadPage() {
   const feeCharges: FeeItem[] = collection?.charges ?? feeEstimate?.charges ?? []
   const payableCharges = feeCharges.filter((c, i) => !c.isVoid && !locallyVoided.includes(i))
   const anyChargeVoided = feeCharges.some((c) => c.isVoid) || locallyVoided.length > 0
-  const feeWaived = collection?.isWaived || !!pendingWaiverReason
-  const waiverReason = collection?.waiverReason || pendingWaiverReason
+  const feeWaived = !!collection?.isWaived
+  const waiverReason = collection?.waiverReason
   const totalPayable = feeWaived ? 0 : payableCharges.reduce((sum, c) => sum + (c.amount || 0), 0)
   const feeDoctorId = collection?.userId || feeEstimate?.userId || ""
   const feeDepartmentId = collection?.departmentId || feeEstimate?.departmentId || ""
@@ -633,6 +719,13 @@ export function OpdVisitThreadPage() {
   }, [vitals?.id, vitals?.updatedAt, vitals?.chiefComplaint])
 
   const dxVisitQuery = useDiagnosticVisit(diagnosticVisitId, (s === 4 || s === 5 || s === 8) && !!diagnosticVisitId)
+  const rxVisitQuery = usePrescriptionVisit(diagnosticVisitId, (s === 6 || s === 7) && !!diagnosticVisitId)
+  const pharmacyOrderQuery = usePharmacyVisitOrder(diagnosticVisitId, s === 7 && !!diagnosticVisitId)
+  const sendRxToPharmacy = useSendPrescriptionToPharmacy()
+  const dispenseAndBill = useDispenseAndBill()
+  const voidPharmacyBill = useVoidPharmacyBill()
+  const returnPharmacyMedicine = useReturnPharmacyMedicine()
+  const [pharmacyVoidedProductIds, setPharmacyVoidedProductIds] = useState<string[]>([])
   const voidDxOrder = useVoidDiagnosticOrder()
   const updateDxOrder = useUpdateDiagnosticOrder()
   const amendDxResult = useAmendDiagnosticResult()
@@ -652,6 +745,29 @@ export function OpdVisitThreadPage() {
         ? `${dxVisit.patient.providerName}${dxVisit.patient.departmentName ? ` · ${dxVisit.patient.departmentName}` : ""}`
         : "Dr. Anjali Nair · Cardiology"
 
+  const rxVisit = rxVisitQuery.data
+  const rxLines = rxVisit?.lines ?? []
+  const rxInteractions = rxVisit?.interactions ?? []
+  const rxCanEdit = editable && (rxVisit?.canEdit ?? true)
+  const rxPrescriberName = rxVisit?.prescribedByName || (feeDoctorName !== "—" ? feeDoctorName : "Dr. Anjali Nair")
+  const rxPrescriberReg = rxVisit?.prescriberRegistrationNumber || "MCI/KA-2011-44821"
+  const pharmacyOrder = pharmacyOrderQuery.data
+  const pharmacyExisting = pharmacyOrder?.existingDispensing ?? null
+  const pharmacyIsDispensed = Boolean(pharmacyOrder?.isDispensed || pharmacyExisting)
+  const pharmacyItems = pharmacyOrder?.items ?? []
+  const pharmacyCreditNote = pharmacyExisting?.creditNote ?? null
+  const pharmacyBillableItems = pharmacyItems.filter((item) => !pharmacyVoidedProductIds.includes(item.productId))
+  const pharmacyLiveSubtotal = pharmacyBillableItems.reduce((sum, item) => sum + item.unitPrice * item.quantityToDispense, 0)
+  const pharmacyLiveGst = pharmacyBillableItems.reduce((sum, item) => sum + item.gstAmount, 0)
+  const pharmacySubtotal = pharmacyExisting?.subtotal ?? pharmacyLiveSubtotal
+  const pharmacyGst = pharmacyExisting?.gstAmount ?? pharmacyLiveGst
+  const pharmacyTotal = pharmacyExisting?.totalAmount ?? pharmacyLiveSubtotal + pharmacyLiveGst
+  const pharmacyGstRate = pharmacyExisting?.gstRate ?? pharmacyOrder?.gstRate ?? 12
+
+  useEffect(() => {
+    setPharmacyVoidedProductIds([])
+  }, [diagnosticVisitId])
+
   const tokenCancelled = activeToken?.status === "Cancelled"
   const queueDate = activeToken?.tokenDate
     ? activeToken.tokenDate.slice(0, 10)
@@ -662,19 +778,22 @@ export function OpdVisitThreadPage() {
       companyId: companyId || undefined,
       date: queueDate,
     },
-    s === 2 && !!clinicId || ((s === 4 || s === 5) && !!clinicId && !isGuid(diagnosticVisitId))
+    (s === 2 || s >= 3) && !!clinicId
   )
   const missedTokens = liveQueue?.missedTokens ?? []
   const visitPickNeedle = visitPickQuery.trim().toLowerCase()
-  const todayVisitOptions = [...(liveQueue?.activeQueue ?? []), ...(liveQueue?.missedTokens ?? [])]
+  const todayPatientOptions = [...(liveQueue?.activeQueue ?? []), ...(liveQueue?.missedTokens ?? [])]
     .filter((token, index, all) => all.findIndex((t) => t.id === token.id) === index)
     .filter((token) => token.status !== "Cancelled")
-    .filter((token) => {
-      if (!visitPickNeedle) return true
-      return [token.patientName, token.tokenNumber, token.userName, token.departmentName]
-        .filter(Boolean)
-        .some((part) => String(part).toLowerCase().includes(visitPickNeedle))
-    })
+    .filter((token) => Boolean(token.appointmentId || token.id))
+  const todayVisitOptions = todayPatientOptions.filter((token) => {
+    if (!visitPickNeedle) return true
+    return [token.patientName, token.tokenNumber, token.userName, token.departmentName]
+      .filter(Boolean)
+      .some((part) => String(part).toLowerCase().includes(visitPickNeedle))
+  })
+  const visitTokenKey = (token: OpdQueueToken) => token.appointmentId || token.id
+  const selectedPatientKey = appointmentId || activeToken?.appointmentId || ""
   const awaitingVisitContext = Boolean(appointmentId) && collectionLoading
   const needsVisitPick = (s === 4 || s === 5) && !isGuid(diagnosticVisitId) && !awaitingVisitContext
 
@@ -692,6 +811,12 @@ export function OpdVisitThreadPage() {
   const invalidateQueue = () =>
     void queryClient.invalidateQueries({ queryKey: ["meditrack", "opd-live-queue"] })
 
+  useEffect(() => {
+    return () => {
+      if (cardPreview?.url?.startsWith("blob:")) URL.revokeObjectURL(cardPreview.url)
+    }
+  }, [cardPreview?.url])
+
   function addPendingCard() {
     setPendingCards((list) => [...list, { key: `card-${Date.now()}-${list.length}`, name: "", file: null }])
   }
@@ -702,6 +827,35 @@ export function OpdVisitThreadPage() {
 
   function removePendingCard(key: string) {
     setPendingCards((list) => list.filter((item) => item.key !== key))
+  }
+
+  function openCardPreview(file: File) {
+    const url = URL.createObjectURL(file)
+    setCardPreview((prev) => {
+      if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url)
+      return { name: file.name, url, type: file.type || "" }
+    })
+  }
+
+  function openSavedCardPreview(card: SavedCardView) {
+    if (card.file) {
+      openCardPreview(card.file)
+      return
+    }
+    if (!card.filePath && !card.fileName) return
+    const fileKey = (card.filePath.split("/").pop() || card.fileName).trim()
+    const url = `/api/get-file/${encodeURIComponent(fileKey)}`
+    setCardPreview((prev) => {
+      if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url)
+      return { name: card.name || card.fileName, url, type: card.fileType || "" }
+    })
+  }
+
+  function closeCardPreview() {
+    setCardPreview((prev) => {
+      if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url)
+      return null
+    })
   }
 
   // Day-of check-in hands the appointment's patient over on the URL. Look the
@@ -830,6 +984,7 @@ export function OpdVisitThreadPage() {
     setActivePatient(patient)
     setAbhaNumber(patient.abha && patient.abha !== "Not linked" ? patient.abha : "")
     setPendingCards([])
+    setJustSavedCards([])
     patch({ bannerText: banner })
   }
 
@@ -955,7 +1110,22 @@ export function OpdVisitThreadPage() {
             file: c.file as File,
           })),
         })
+        setJustSavedCards(
+          readyCards.map((c) => ({
+            id: `local-${c.key}`,
+            name: c.name.trim(),
+            fileName: (c.file as File).name,
+            filePath: "",
+            fileType: (c.file as File).type || "",
+            file: c.file,
+          }))
+        )
         setPendingCards([])
+        try {
+          await queryClient.refetchQueries({ queryKey: ["patient-files", activePatient.id] })
+        } catch {
+          // Upload already succeeded — keep the cards visible from justSavedCards.
+        }
       }
       setActivePatient((prev) =>
         prev
@@ -1174,14 +1344,14 @@ export function OpdVisitThreadPage() {
       })
     }
     if (vitals) {
-      const spo2Bit = vitals.spo2 != null ? ` SpO2 ${vitals.spo2}%` : ""
+      const vitalsSummary = formatVitalsHistorySummary(vitals)
       rows.push({
         key: `vitals-${vitals.id}`,
         time: formatConsultWhen(vitals.updatedAt || vitals.createdAt) || "Today",
         by: "Nurse",
         what: vitals.isEmergencyEscalation
-          ? `Vitals recorded.${spo2Bit || ""} — flagged critical.`
-          : `Vitals recorded.${spo2Bit ? `${spo2Bit}.` : ""}`,
+          ? `Vitals recorded${vitalsSummary ? `. ${vitalsSummary}` : ""} — flagged critical.`
+          : `Vitals recorded${vitalsSummary ? `. ${vitalsSummary}.` : "."}`,
       })
     }
     if (activeToken) {
@@ -1196,18 +1366,18 @@ export function OpdVisitThreadPage() {
     return rows
   })()
 
-  const rx = [
-    { drug: "Salbutamol Inhaler", dose: "2 puffs QID", duration: "5 days", schedule: null as string | null, note: null as string | null, superseded: false },
-    {
-      drug: "Amoxicillin 500mg",
-      dose: "1 cap TDS",
-      duration: "5 days",
-      schedule: "SCHEDULE H",
-      note: "Dispensed only against this prescription — logged to the statutory H register.",
-      superseded: state.rxAmended,
-    },
-    { drug: "Atenolol 50mg", dose: "1 tab OD", duration: "Continue", schedule: null, note: null, superseded: false },
-  ]
+  const rx = rxLines.map((line) => {
+    const schedule = (line.schedule || "").toUpperCase()
+    return {
+      id: line.id,
+      drug: line.brand || line.generic || "—",
+      dose: [line.doseAmount != null ? String(line.doseAmount) : null, line.doseUnit, line.frequency].filter(Boolean).join(" ") || line.sig || "—",
+      duration: line.durationLabel || (line.durationUnit === "continue" ? "Continue" : line.duration != null ? `${line.duration} ${line.durationUnit || "days"}` : "—"),
+      schedule: schedule === "H" ? "SCHEDULE H" : schedule === "H1" ? "SCHEDULE H1" : schedule === "X" ? "SCHEDULE X" : (line.schedule || null),
+      note: line.scheduleNote || line.overrideReason || line.directions || null,
+      superseded: false,
+    }
+  })
 
   const summaryLines = [
     { k: "Visit ID", v: diagnosticVisitId || PATIENT.visitId },
@@ -1389,36 +1559,6 @@ export function OpdVisitThreadPage() {
       },
     })
 
-  const openWaiver = () =>
-    openDrawer({
-      badge: badge("OVERRIDE"),
-      title: "Waive consultation fee",
-      saveLabel: "Apply waiver",
-      onSave: async () => {
-        const reason = tmpRef.current.reason?.trim()
-        if (!reason) {
-          toast({ title: "Reason required", description: "A waiver bypasses a system rule and must be justified.", variant: "destructive" })
-          return
-        }
-        if (!collection) {
-          setPendingWaiverReason(reason)
-          patch({ bannerText: "Fee waived — applies when payment is confirmed." })
-          closeDrawer()
-          return
-        }
-        try {
-          const updated = await waiveFee.mutateAsync({ id: collection.id, waiverReason: reason })
-          setCollection(updated)
-          setPaymentMethod(updated.paymentMethod || "Waived")
-          patch({ bannerText: "Fee waived." })
-          closeDrawer()
-        } catch (err) {
-          toast({ title: "Could not waive fee", description: getToastErrorMessage(err, "Waiver failed"), variant: "destructive" })
-        }
-      },
-      fields: [field("reason", "Reason (required — bypasses system rule)", "textarea", { placeholder: "e.g. Follow-up window expired 2 days ago, approved by shift supervisor" })],
-    })
-
   async function choosePaymentMethod(method: string) {
     setPaymentMethod(method)
     if (!collection) return
@@ -1451,8 +1591,8 @@ export function OpdVisitThreadPage() {
         departmentId: feeDepartmentId || null,
         clinicId: clinicId || feeEstimate?.clinicId || null,
         paymentMethod,
-        isWaived: !!pendingWaiverReason,
-        waiverReason: pendingWaiverReason,
+        isWaived: false,
+        waiverReason: null,
         visitType: feeEstimate?.visitType,
         charges: payableCharges.map((c) => ({ tariffId: c.tariffId, chargeName: c.chargeName, amount: c.amount })),
       })
@@ -1949,28 +2089,103 @@ export function OpdVisitThreadPage() {
     )
   }
 
-  const openReturn = () =>
+  const openReturn = () => {
+    const returnable = (pharmacyExisting?.items ?? []).filter((item) => !item.isVoid && item.quantityDispensed > 0)
+    if (!pharmacyExisting || returnable.length === 0) {
+      toast({ title: "Nothing to return", description: "Dispense the prescription before logging a return.", variant: "destructive" })
+      return
+    }
     openDrawer({
       badge: badge("RETURN"),
       title: "Process medicine return",
-      saveLabel: "Log return",
-      onSave: doSave("Return logged. Original dispense entry retained.", { returnProcessed: true }),
+      saveLabel: returnPharmacyMedicine.isPending ? "Logging…" : "Log return",
+      onSave: async () => {
+        const values = tmpRef.current
+        const itemId = values.item
+        const qty = Number(values.qty)
+        const reason = values.reason?.trim()
+        if (!itemId || !qty || qty <= 0 || !reason) {
+          toast({ title: "Return details required", description: "Choose an item, quantity and reason.", variant: "destructive" })
+          return
+        }
+        try {
+          const returned = await returnPharmacyMedicine.mutateAsync({
+            dispensingId: pharmacyExisting.id,
+            visitId: diagnosticVisitId,
+            itemId,
+            quantityReturned: qty,
+            reason,
+            restockInventory: true,
+          })
+          patch({
+            returnProcessed: true,
+            bannerText: `Return logged. Original dispense entry retained${returned.drugName ? ` for ${returned.drugName}` : ""}.`,
+          })
+          closeDrawer()
+        } catch (err) {
+          toast({
+            title: "Could not log return",
+            description: getToastErrorMessage(err, "Return failed"),
+            variant: "destructive",
+          })
+        }
+      },
       fields: [
-        field("item", "Item", "select", { options: ["Amoxicillin 500mg", "Salbutamol Inhaler"] }),
+        field("item", "Item", "select", {
+          options: returnable.map((item) => ({ value: item.id, label: item.drugName })),
+        }),
         field("qty", "Quantity", "text", { placeholder: "e.g. 1" }),
         field("reason", "Reason", "text", { placeholder: "e.g. Patient reaction, pack unopened" }),
       ],
     })
-  const voidBillLine = () => patch({ billLineVoided: true })
+  }
+  const voidBillLine = (productId: string) => {
+    setPharmacyVoidedProductIds((prev) => (prev.includes(productId) ? prev : [...prev, productId]))
+    patch({ billLineVoided: true })
+  }
   const openBillVoid = () =>
     openModal({
       badge: badge("VOID"),
       title: "Void entire bill?",
-      lines: ["A GST credit note will be generated; invoice INV-00845 stays on file, marked voided, not deleted."],
+      lines: [
+        pharmacyExisting?.receiptNumber
+          ? `A GST credit note will be generated; invoice ${pharmacyExisting.receiptNumber} stays on file, marked voided, not deleted.`
+          : "A GST credit note will be generated; the original invoice stays on file, marked voided, not deleted.",
+      ],
       reasonField: true,
       reasonPlaceholder: "e.g. Bill raised against wrong visit",
       confirmLabel: "Void bill",
-      onConfirm: doConfirm("Bill voided. Credit note CN-0094 generated.", { pharmBillVoided: true }),
+      onConfirm: (reason) => {
+        void (async () => {
+          if (!pharmacyExisting) {
+            toast({ title: "No bill yet", description: "Collect payment before voiding a pharmacy bill.", variant: "destructive" })
+            return
+          }
+          if (!reason.trim()) {
+            toast({ title: "Reason required", description: "Enter a reason to void this bill.", variant: "destructive" })
+            return
+          }
+          try {
+            const note = await voidPharmacyBill.mutateAsync({
+              dispensingId: pharmacyExisting.id,
+              visitId: diagnosticVisitId,
+              reason: reason.trim(),
+              restockInventory: true,
+            })
+            patch({
+              pharmBillVoided: true,
+              bannerText: `Bill voided. Credit note ${note.creditNoteNumber} generated.`,
+            })
+            closeModal()
+          } catch (err) {
+            toast({
+              title: "Could not void bill",
+              description: getToastErrorMessage(err, "Void failed"),
+              variant: "destructive",
+            })
+          }
+        })()
+      },
     })
 
   const openSummaryEdit = () =>
@@ -2058,12 +2273,50 @@ export function OpdVisitThreadPage() {
             </div>
           )}
         </div>
-        <BranchSelect
-          value={branchId}
-          onValueChange={setBranchId}
-          branches={branches}
-          isLoading={isLoadingBranches}
-        />
+        {s >= 3 ? (
+          <div className="flex items-center gap-2">
+            <span className="hidden text-[11px] font-semibold uppercase tracking-wide text-adminreg-muted sm:inline">
+              Patient
+            </span>
+            <Select
+              value={selectedPatientKey || undefined}
+              onValueChange={(id) => {
+                const token = todayPatientOptions.find((t) => visitTokenKey(t) === id)
+                if (token) openVisitFromToken(token)
+              }}
+              disabled={liveQueueLoading || todayPatientOptions.length === 0}
+            >
+              <SelectTrigger
+                className={cn(
+                  "h-10 w-[220px] border-adminreg-border bg-adminreg-border/30 text-sm font-medium text-adminreg-text shadow-none",
+                  "hover:bg-adminreg-border/40 focus:ring-adminreg-olive"
+                )}
+              >
+                <SelectValue placeholder={liveQueueLoading ? "Loading…" : "Select patient"} />
+              </SelectTrigger>
+              <SelectContent>
+                {selectedPatientKey &&
+                  !todayPatientOptions.some((t) => visitTokenKey(t) === selectedPatientKey) && (
+                    <SelectItem value={selectedPatientKey}>
+                      {dxPatientLabel || searchParams.get("name") || "Current patient"}
+                    </SelectItem>
+                  )}
+                {todayPatientOptions.map((token) => (
+                  <SelectItem key={token.id} value={visitTokenKey(token)}>
+                    {token.patientName || "—"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : (
+          <BranchSelect
+            value={branchId}
+            onValueChange={setBranchId}
+            branches={branches}
+            isLoading={isLoadingBranches}
+          />
+        )}
       </div>
 
       {!editable && <ViewOnlyBanner role={ROLE_LABEL[role]} />}
@@ -2414,12 +2667,36 @@ export function OpdVisitThreadPage() {
                         )}
                       </div>
 
-                      {pendingCards.length === 0 ? (
+                      {savedCards.length === 0 && pendingCards.length === 0 ? (
                         <p className="mt-2 text-[11px] text-adminreg-muted">
                           No cards attached yet. Use Add card to attach an ABHA or insurance card.
                         </p>
                       ) : (
                         <div className="mt-2 space-y-2">
+                          {savedCards.map((card) => (
+                            <div key={card.id} className="border border-adminreg-border bg-adminreg-bg p-2.5">
+                              <div className="flex items-end gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <FieldLabel>Card name</FieldLabel>
+                                  <div className="mt-1 border border-adminreg-border bg-adminreg-card px-2.5 py-2 text-sm text-adminreg-text">
+                                    {card.name || "Card"}
+                                  </div>
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <FieldLabel>Upload</FieldLabel>
+                                  <button
+                                    type="button"
+                                    onClick={() => openSavedCardPreview(card)}
+                                    className="mt-1 flex h-[38px] w-full cursor-pointer items-center gap-2 border border-dashed border-adminreg-border bg-adminreg-card px-2.5 text-left text-sm text-adminreg-text hover:border-adminreg-indigo"
+                                    title="Click to preview"
+                                  >
+                                    <Upload className="h-4 w-4 flex-shrink-0" />
+                                    <span className="truncate underline">{card.fileName}</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
                           {pendingCards.map((card) => (
                             <div key={card.key} className="border border-adminreg-border bg-adminreg-bg p-2.5">
                               <div className="flex items-end gap-2">
@@ -2435,22 +2712,34 @@ export function OpdVisitThreadPage() {
                                 </div>
                                 <div className="min-w-0 flex-1">
                                   <FieldLabel>Upload</FieldLabel>
-                                  <label
-                                    className={cn(
-                                      "mt-1 flex h-[38px] cursor-pointer items-center gap-2 border border-dashed border-adminreg-border bg-adminreg-card px-2.5 text-sm text-adminreg-muted hover:text-adminreg-text",
-                                      !editable && "pointer-events-none opacity-60"
-                                    )}
-                                  >
-                                    <Upload className="h-4 w-4 flex-shrink-0" />
-                                    <span className="truncate">{card.file ? card.file.name : "Choose PDF or image…"}</span>
-                                    <input
-                                      type="file"
-                                      accept="image/*,.pdf"
-                                      disabled={!editable}
-                                      className="hidden"
-                                      onChange={(e) => updatePendingCard(card.key, { file: e.target.files?.[0] ?? null })}
-                                    />
-                                  </label>
+                                  {card.file ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => openCardPreview(card.file as File)}
+                                      className="mt-1 flex h-[38px] w-full cursor-pointer items-center gap-2 border border-dashed border-adminreg-border bg-adminreg-card px-2.5 text-left text-sm text-adminreg-text hover:border-adminreg-indigo"
+                                      title="Click to preview"
+                                    >
+                                      <Upload className="h-4 w-4 flex-shrink-0" />
+                                      <span className="truncate underline">{card.file.name}</span>
+                                    </button>
+                                  ) : (
+                                    <label
+                                      className={cn(
+                                        "mt-1 flex h-[38px] cursor-pointer items-center gap-2 border border-dashed border-adminreg-border bg-adminreg-card px-2.5 text-sm text-adminreg-muted hover:text-adminreg-text",
+                                        !editable && "pointer-events-none opacity-60"
+                                      )}
+                                    >
+                                      <Upload className="h-4 w-4 flex-shrink-0" />
+                                      <span className="truncate">Choose PDF or image…</span>
+                                      <input
+                                        type="file"
+                                        accept="image/*,.pdf"
+                                        disabled={!editable}
+                                        className="hidden"
+                                        onChange={(e) => updatePendingCard(card.key, { file: e.target.files?.[0] ?? null })}
+                                      />
+                                    </label>
+                                  )}
                                 </div>
                                 {editable && (
                                   <button
@@ -2537,7 +2826,6 @@ export function OpdVisitThreadPage() {
                 </div>
                 <p className="mb-3.5 text-[11px] text-adminreg-muted">Switching method before the visit proceeds is a live edit — no reason required.</p>
                 {paymentMethod === "Cashless / TPA" && <div className="mb-3.5"><InlineWarning>Cashless pre-authorization pending. Confirm approval or collect out-of-pocket before issuing the token.</InlineWarning></div>}
-                {editable && <AdminButton type="button" variant="secondary" className="mb-3.5" onClick={openWaiver} disabled={waiveFee.isPending}>Override — waive fee</AdminButton>}
                 {feeWaived && (
                   <AddendumNote header={`OVERRIDE · ${ROLE_LABEL[role] ?? "Front desk"}${waiverReason ? ` · Reason: ${waiverReason}` : ""}`}>Fee waived — nothing to collect for this visit.</AddendumNote>
                 )}
@@ -3140,15 +3428,18 @@ export function OpdVisitThreadPage() {
           {s === 6 && (
             <div className="space-y-4">
               <RxAddPanel
-                editable={editable}
-                prescriberReg="MCI/KA-2011-44821"
-                prescriberName="Dr. Anjali Nair"
+                editable={rxCanEdit}
+                visitId={diagnosticVisitId}
+                clinicId={clinicId}
+                statusLabel={rxVisit?.statusLabel || "Not yet sent to pharmacy"}
+                prescriberReg={rxPrescriberReg}
+                prescriberName={rxPrescriberName}
                 existingDrugs={rx.map((r) => r.drug)}
               />
               <div className="border border-adminreg-border bg-adminreg-card">
                 <div className="grid grid-cols-[1.2fr_1fr_80px_90px_1fr] bg-adminreg-header px-4 py-2.5 text-[11px] font-bold text-adminreg-muted"><span>Drug</span><span>Dosage</span><span>Duration</span><span>Schedule</span><span /></div>
                 {rx.map((r) => (
-                  <div key={r.drug} className={cn("border-t border-adminreg-divider px-4 py-2.5", r.schedule && "bg-adminreg-red-soft/40")}>
+                  <div key={r.id} className={cn("border-t border-adminreg-divider px-4 py-2.5", r.schedule && "bg-adminreg-red-soft/40")}>
                     <div className="grid grid-cols-[1.2fr_1fr_80px_90px_1fr] items-center">
                       <span className={cn("text-sm font-semibold", r.superseded && SUPERSEDED_CLASS)}>{r.drug}</span>
                       <span className={cn("text-sm", r.superseded && SUPERSEDED_CLASS)}>{r.dose}</span>
@@ -3167,8 +3458,39 @@ export function OpdVisitThreadPage() {
                   </AddendumNote>
                 </div>
               )}
-              <div className="mt-3.5 max-w-[640px]"><InlineWarning>⚠ Interaction check: Salbutamol with existing Atenolol may reduce bronchodilator effect.</InlineWarning></div>
-              {editable && <AdminButton type="button" accent="indigo" className="mt-4" onClick={goNext}>Send to pharmacy → Dispensing</AdminButton>}
+              {rxInteractions.map((interaction, index) => (
+                <div key={`${interaction.genericA}-${interaction.genericB}-${index}`} className="mt-3.5 max-w-[640px]">
+                  <InlineWarning>⚠ Interaction check: {interaction.message || `${interaction.genericA} with ${interaction.genericB}.`}</InlineWarning>
+                </div>
+              ))}
+              {editable && (
+                <AdminButton
+                  type="button"
+                  accent="indigo"
+                  className="mt-4"
+                  disabled={sendRxToPharmacy.isPending}
+                  onClick={() => {
+                    void (async () => {
+                      if (!isGuid(diagnosticVisitId)) {
+                        toast({ title: "No visit yet", description: "Collect the consultation fee first — the prescription attaches to that visit.", variant: "destructive" })
+                        return
+                      }
+                      try {
+                        await sendRxToPharmacy.mutateAsync(diagnosticVisitId)
+                        goNext()
+                      } catch (err) {
+                        toast({
+                          title: "Could not send to pharmacy",
+                          description: err instanceof Error ? err.message : "Try again.",
+                          variant: "destructive",
+                        })
+                      }
+                    })()
+                  }}
+                >
+                  {sendRxToPharmacy.isPending ? "Sending…" : "Send to pharmacy → Dispensing"}
+                </AdminButton>
+              )}
             </div>
           )}
 
@@ -3176,38 +3498,129 @@ export function OpdVisitThreadPage() {
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.3fr_1fr]">
               <div className="border border-adminreg-border bg-adminreg-card">
                 <div className="grid grid-cols-[1.3fr_1fr_70px_80px_1fr] bg-adminreg-header px-4 py-2.5 text-[11px] font-bold text-adminreg-muted"><span>Drug</span><span>Stock</span><span>Qty</span><span>Amount</span><span /></div>
-                <div className={cn("grid grid-cols-[1.3fr_1fr_70px_80px_1fr] items-center border-t border-adminreg-divider px-4 py-2.5 text-sm", state.billLineVoided && "bg-adminreg-red-soft/40")}>
-                  <span className={state.billLineVoided ? SUPERSEDED_CLASS : ""}>Amoxicillin 500mg</span>
-                  <span className={state.billLineVoided ? SUPERSEDED_CLASS : "text-adminreg-olive-dark"}>In stock</span>
-                  <span className={cn("font-plexmono", state.billLineVoided && SUPERSEDED_CLASS)}>10</span>
-                  <span className={cn("font-plexmono", state.billLineVoided && SUPERSEDED_CLASS)}>₹120</span>
-                  {!state.billLineVoided ? (editable && <LinkAction tone="void" onClick={voidBillLine}>Void</LinkAction>) : <SupersededTag />}
-                </div>
-                <div className="grid grid-cols-[1.3fr_1fr_70px_80px_1fr] items-center border-t border-adminreg-divider bg-adminreg-red-soft px-4 py-2.5 text-sm">
-                  <span>Salbutamol Inhaler</span><span className="font-bold text-adminreg-red-text">Only 2 left</span><span className="font-plexmono">1</span><span className="font-plexmono">₹180</span><span />
-                </div>
-                <div className="border-t border-adminreg-divider px-4 py-2.5 text-[11px] text-adminreg-red-text">Stock shortage — dispensing 1 of 1 available; reorder flagged.</div>
+                {pharmacyOrderQuery.isLoading && (
+                  <div className="border-t border-adminreg-divider px-4 py-8 text-sm text-adminreg-muted">Loading pharmacy order…</div>
+                )}
+                {pharmacyOrderQuery.isError && (
+                  <div className="border-t border-adminreg-divider px-4 py-8 text-sm text-adminreg-red">
+                    {getToastErrorMessage(pharmacyOrderQuery.error, "Failed to load pharmacy order")}
+                  </div>
+                )}
+                {!pharmacyOrderQuery.isLoading && !pharmacyOrderQuery.isError && pharmacyItems.length === 0 && (
+                  <div className="border-t border-adminreg-divider px-4 py-8 text-sm text-adminreg-muted">
+                    {isGuid(diagnosticVisitId) ? "No prescription items to dispense." : "Select a patient to load the prescription."}
+                  </div>
+                )}
+                {pharmacyItems.map((item) => {
+                  const lineVoided = pharmacyVoidedProductIds.includes(item.productId)
+                  const lowStock = /only |shortage|out of stock/i.test(item.stockStatus)
+                  const qty = item.quantityToDispense
+                  const amount = item.unitPrice * qty
+                  return (
+                    <div key={item.productId}>
+                      <div className={cn(
+                        "grid grid-cols-[1.3fr_1fr_70px_80px_1fr] items-center border-t border-adminreg-divider px-4 py-2.5 text-sm",
+                        lineVoided && "bg-adminreg-red-soft/40",
+                        !lineVoided && lowStock && "bg-adminreg-red-soft"
+                      )}>
+                        <span className={lineVoided ? SUPERSEDED_CLASS : ""}>{item.drugName}{item.strength ? ` ${item.strength}` : ""}</span>
+                        <span className={lineVoided ? SUPERSEDED_CLASS : lowStock ? "font-bold text-adminreg-red-text" : "text-adminreg-olive-dark"}>{item.stockStatus || "—"}</span>
+                        <span className={cn("font-plexmono", lineVoided && SUPERSEDED_CLASS)}>{qty}</span>
+                        <span className={cn("font-plexmono", lineVoided && SUPERSEDED_CLASS)}>{formatPharmacyRupees(amount)}</span>
+                        {!lineVoided ? (editable && !pharmacyIsDispensed && <LinkAction tone="void" onClick={() => voidBillLine(item.productId)}>Void</LinkAction>) : <SupersededTag />}
+                      </div>
+                      {item.quantityShortfall > 0 && !lineVoided && (
+                        <div className="border-t border-adminreg-divider px-4 py-2.5 text-[11px] text-adminreg-red-text">
+                          {item.shortfallReason || item.stockStatus}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
                 <div className="flex items-center justify-between gap-3 border-t border-adminreg-amber bg-adminreg-amber-soft px-4 py-3">
                   <div>
                     <div className="text-[11px] font-bold text-adminreg-amber-text">SCHEDULE H1 REGISTER</div>
-                    <div className="mt-0.5 text-[11px] text-adminreg-amber-text">Register clean for this visit — no H1-class items dispensed.</div>
+                    <div className="mt-0.5 text-[11px] text-adminreg-amber-text">
+                      {pharmacyOrder?.hasControlledSubstances
+                        ? `H1/X items on this visit: ${pharmacyItems.filter((i) => i.isControlledSubstance).map((i) => i.drugName).join(", ") || "controlled substances present"}.`
+                        : "Register clean for this visit — no H1-class items dispensed."}
+                    </div>
                   </div>
                   {editable && <AdminButton type="button" variant="secondary" onClick={openReturn}>Process return</AdminButton>}
                 </div>
                 {state.returnProcessed && (
                   <div className="m-4">
-                    <AddendumNote header="RETURN · S. Verma (Pharmacist) · Reason: Patient reaction, pack unopened">1× Amoxicillin 500mg returned. Original dispense entry retained on record, cross-referenced to return RET-00071.</AddendumNote>
+                    <AddendumNote header="RETURN · Pharmacist · Reason: logged from dispensing">Original dispense entry retained on record, cross-referenced to the return.</AddendumNote>
                   </div>
                 )}
               </div>
               <Panel>
                 <SectionLabel>Bill summary</SectionLabel>
-                <div className="flex justify-between py-1.5 text-sm"><span>Subtotal</span><span className="font-plexmono">₹300.00</span></div>
-                <div className="flex justify-between py-1.5 text-sm"><span>GST (12%)</span><span className="font-plexmono">₹36.00</span></div>
-                <div className="mt-1.5 flex justify-between border-t border-adminreg-divider py-2 text-sm font-bold"><span>Total</span><span className="font-plexmono">₹336.00</span></div>
+                <div className="flex justify-between py-1.5 text-sm"><span>Subtotal</span><span className="font-plexmono">{formatPharmacyRupees(pharmacySubtotal, true)}</span></div>
+                <div className="flex justify-between py-1.5 text-sm"><span>GST ({Math.round(pharmacyGstRate)}%)</span><span className="font-plexmono">{formatPharmacyRupees(pharmacyGst, true)}</span></div>
+                <div className="mt-1.5 flex justify-between border-t border-adminreg-divider py-2 text-sm font-bold"><span>Total</span><span className="font-plexmono">{formatPharmacyRupees(pharmacyTotal, true)}</span></div>
                 {editable && <button type="button" onClick={openBillVoid} className="my-2.5 block text-[11px] text-adminreg-amber-text underline">Void entire bill</button>}
-                {state.pharmBillVoided && <p className="mb-2.5 text-[11px] text-adminreg-amber-text">Invoice INV-00845 voided. GST credit note CN-0094 generated; original invoice remains on file.</p>}
-                {editable && <AdminButton type="button" accent="indigo" className="mt-1.5" onClick={goNext}>Collect payment → Close visit</AdminButton>}
+                {(state.pharmBillVoided || pharmacyCreditNote) && (
+                  <p className="mb-2.5 text-[11px] text-adminreg-amber-text">
+                    Invoice {pharmacyExisting?.receiptNumber || "pharmacy bill"} voided. GST credit note {pharmacyCreditNote?.creditNoteNumber || ""} generated; original invoice remains on file.
+                  </p>
+                )}
+                {editable && (
+                  <AdminButton
+                    type="button"
+                    accent="indigo"
+                    className="mt-1.5"
+                    disabled={dispenseAndBill.isPending || pharmacyOrderQuery.isLoading || pharmacyItems.length === 0}
+                    onClick={() => {
+                      void (async () => {
+                        if (pharmacyIsDispensed || pharmacyCreditNote) {
+                          goNext()
+                          return
+                        }
+                        const items = pharmacyBillableItems
+                          .map((item) => ({
+                            productId: item.productId,
+                            inventoryId: item.inventoryId || null,
+                            drugName: item.drugName,
+                            batchNumber: item.batchNumber || null,
+                            lotNumber: item.lotNumber || null,
+                            quantityPrescribed: item.quantityPrescribed,
+                            quantityDispensed: item.quantityToDispense,
+                            quantityShortfall: item.quantityShortfall,
+                            dispenseAction: item.dispenseAction,
+                            shortfallReason: item.shortfallReason || null,
+                            unitPrice: item.unitPrice,
+                            gstRate: item.gstRate,
+                            isControlledSubstance: item.isControlledSubstance,
+                            controlledSchedule: item.controlledSchedule || null,
+                          }))
+                        if (items.length === 0) {
+                          toast({ title: "Nothing to dispense", description: "All lines were voided.", variant: "destructive" })
+                          return
+                        }
+                        try {
+                          await dispenseAndBill.mutateAsync({
+                            visitId: diagnosticVisitId,
+                            patientId: pharmacyOrder?.patientId || collection?.patientId || null,
+                            prescribedBy: pharmacyOrder?.doctorId || collection?.userId || null,
+                            paymentMethod: toPharmacyPaymentMethod(collection?.paymentMethod),
+                            paymentStatus: "Paid",
+                            items,
+                          })
+                          goNext()
+                        } catch (err) {
+                          toast({
+                            title: "Could not collect pharmacy payment",
+                            description: getToastErrorMessage(err, "Dispense failed"),
+                            variant: "destructive",
+                          })
+                        }
+                      })()
+                    }}
+                  >
+                    {dispenseAndBill.isPending ? "Collecting…" : "Collect payment → Close visit"}
+                  </AdminButton>
+                )}
               </Panel>
             </div>
           )}
@@ -3251,6 +3664,43 @@ export function OpdVisitThreadPage() {
           )}
         </div>
       </div>
+
+      {/* Card file preview */}
+      {cardPreview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={closeCardPreview}
+        >
+          <div
+            className="flex max-h-[90vh] w-full max-w-3xl flex-col border border-adminreg-border bg-adminreg-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-adminreg-divider px-4 py-2.5">
+              <span className="truncate text-sm font-semibold text-adminreg-text">{cardPreview.name}</span>
+              <button
+                type="button"
+                onClick={closeCardPreview}
+                className="flex-shrink-0 text-adminreg-muted hover:text-adminreg-text"
+                aria-label="Close preview"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto bg-adminreg-bg p-3">
+              {cardPreview.type.startsWith("image/") ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={cardPreview.url} alt={cardPreview.name} className="mx-auto max-h-[78vh] max-w-full object-contain" />
+              ) : (
+                <iframe
+                  src={cardPreview.url}
+                  title={cardPreview.name}
+                  className="h-[78vh] w-full border-0 bg-adminreg-card"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Generic drawer */}
       {drawer && (

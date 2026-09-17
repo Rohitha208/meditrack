@@ -1,8 +1,17 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { cn } from "@/lib/utils"
 import { AdminButton } from "@/components/meditrack/admin/register"
+import {
+  isGuid,
+  prescriptionVisitKey,
+  useDrugCatalogue,
+  usePrescribeDrug,
+  useRemovePrescribedDrug,
+  type DrugCatalogueItem,
+} from "@/queries/meditrack/opd-prescription"
 import { SectionLabel } from "./ui"
 
 /**
@@ -11,9 +20,6 @@ import { SectionLabel } from "./ui"
  * into the prescription list. Brand and composition both match; the Schedule
  * badge renders in the results before selection; Schedule H1 / X open their
  * statutory fields in the same step, never bolted on afterwards.
- *
- * Demo/UI only: the catalogue stands in for Admin → Drug Master. All state
- * is local.
  */
 
 type Schedule = "" | "H" | "H1" | "X"
@@ -22,35 +28,38 @@ interface DrugDef {
   id: string
   brand: string
   generic: string
-  cls: "Respiratory" | "Cardiovascular" | "Antibiotics" | "Analgesics" | "Anxiolytics" | "Gastro"
+  cls: string
   form: string
   schedule: Schedule
   unit: string
   /** Max units per prescription (Schedule H1 / X ceiling). */
   limitQty: number
   limitLabel: string
-  frequentlyUsed?: boolean
-  recentByMe?: boolean
+  alreadyOnPrescription: boolean
+  requiresDeclaration: boolean
 }
 
-const DRUG_MASTER: DrugDef[] = [
-  { id: "DOLO650", brand: "Dolo 650", generic: "Paracetamol 650 mg", cls: "Analgesics", form: "Tablet", schedule: "", unit: "tab", limitQty: 0, limitLabel: "", frequentlyUsed: true },
-  { id: "PANTOP40", brand: "Pantop 40", generic: "Pantoprazole 40 mg", cls: "Gastro", form: "Tablet", schedule: "", unit: "tab", limitQty: 0, limitLabel: "", frequentlyUsed: true, recentByMe: true },
-  { id: "MOX500", brand: "Mox 500", generic: "Amoxicillin 500 mg", cls: "Antibiotics", form: "Capsule", schedule: "H", unit: "cap", limitQty: 0, limitLabel: "", frequentlyUsed: true },
-  { id: "ASTHALIN", brand: "Asthalin Inhaler", generic: "Salbutamol 100 mcg", cls: "Respiratory", form: "MDI inhaler", schedule: "", unit: "puff", limitQty: 0, limitLabel: "", frequentlyUsed: true },
-  { id: "ALZOLAM025", brand: "Alzolam 0.25", generic: "Alprazolam 0.25 mg", cls: "Anxiolytics", form: "Tablet", schedule: "H1", unit: "tab", limitQty: 10, limitLabel: "10 tablets per prescription", recentByMe: true },
-  { id: "ATENOLOL50", brand: "Aten 50", generic: "Atenolol 50 mg", cls: "Cardiovascular", form: "Tablet", schedule: "", unit: "tab", limitQty: 0, limitLabel: "", recentByMe: true },
-  { id: "AMLONG5", brand: "Amlong 5", generic: "Amlodipine 5 mg", cls: "Cardiovascular", form: "Tablet", schedule: "", unit: "tab", limitQty: 0, limitLabel: "" },
-  { id: "AUGMENTIN625", brand: "Augmentin 625", generic: "Amoxicillin + Clavulanate 625 mg", cls: "Antibiotics", form: "Tablet", schedule: "H", unit: "tab", limitQty: 0, limitLabel: "" },
-  { id: "AZITHRAL500", brand: "Azithral 500", generic: "Azithromycin 500 mg", cls: "Antibiotics", form: "Tablet", schedule: "H", unit: "tab", limitQty: 0, limitLabel: "" },
-  { id: "MONTAIRLC", brand: "Montair-LC", generic: "Montelukast + Levocetirizine", cls: "Respiratory", form: "Tablet", schedule: "", unit: "tab", limitQty: 0, limitLabel: "" },
-  { id: "FORACORT", brand: "Foracort Inhaler", generic: "Budesonide + Formoterol", cls: "Respiratory", form: "MDI inhaler", schedule: "", unit: "puff", limitQty: 0, limitLabel: "" },
-  { id: "ULTRACET", brand: "Ultracet", generic: "Tramadol + Paracetamol", cls: "Analgesics", form: "Tablet", schedule: "H1", unit: "tab", limitQty: 20, limitLabel: "20 tablets per prescription" },
-  { id: "ZERODOL", brand: "Zerodol-SP", generic: "Aceclofenac + Serratiopeptidase", cls: "Analgesics", form: "Tablet", schedule: "", unit: "tab", limitQty: 0, limitLabel: "" },
-  { id: "CLOPILET", brand: "Clopilet 75", generic: "Clopidogrel 75 mg", cls: "Cardiovascular", form: "Tablet", schedule: "", unit: "tab", limitQty: 0, limitLabel: "" },
-  { id: "ECOSPRIN75", brand: "Ecosprin 75", generic: "Aspirin 75 mg", cls: "Cardiovascular", form: "Tablet", schedule: "", unit: "tab", limitQty: 0, limitLabel: "" },
-  { id: "MORPHINE10", brand: "Morphine Sulphate 10", generic: "Morphine 10 mg", cls: "Analgesics", form: "Tablet", schedule: "X", unit: "tab", limitQty: 7, limitLabel: "7 tablets per prescription" },
-]
+function toSchedule(value?: string | null): Schedule {
+  const v = (value || "").replace(/schedule/gi, "").trim().toUpperCase()
+  if (v === "H" || v === "H1" || v === "X") return v
+  return ""
+}
+
+function toDrugDef(item: DrugCatalogueItem): DrugDef {
+  return {
+    id: item.productId,
+    brand: item.brand || "—",
+    generic: item.compositionLabel || item.generic || "",
+    cls: item.category || "",
+    form: item.dosageForm || "",
+    schedule: toSchedule(item.schedule),
+    unit: item.doseUnit || "tab",
+    limitQty: item.maxQuantityPerPrescription || 0,
+    limitLabel: item.quantityLimitLabel || "",
+    alreadyOnPrescription: item.alreadyOnPrescription,
+    requiresDeclaration: item.requiresDeclaration,
+  }
+}
 
 const CLASS_CHIPS = ["Frequently used", "Recent by me", "Respiratory", "Cardiovascular", "Antibiotics", "Analgesics", "Anxiolytics"] as const
 type ClassChip = (typeof CLASS_CHIPS)[number]
@@ -93,13 +102,27 @@ interface AddedLine {
 
 interface RxAddPanelProps {
   editable: boolean
+  visitId?: string
+  clinicId?: string
+  statusLabel?: string
   prescriberReg: string
   prescriberName: string
   /** Generic/brand strings already on the prescription — drives duplicate + interaction flags. */
   existingDrugs: string[]
 }
 
-export function RxAddPanel({ editable, prescriberReg, prescriberName, existingDrugs }: RxAddPanelProps) {
+export function RxAddPanel({
+  editable,
+  visitId,
+  clinicId,
+  statusLabel,
+  prescriberReg,
+  prescriberName,
+  existingDrugs,
+}: RxAddPanelProps) {
+  const queryClient = useQueryClient()
+  const prescribe = usePrescribeDrug()
+  const removeDrug = useRemovePrescribedDrug()
   const [query, setQuery] = useState("")
   const [chip, setChip] = useState<ClassChip>("Frequently used")
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -110,30 +133,37 @@ export function RxAddPanel({ editable, prescriberReg, prescriberName, existingDr
   const [h1Ack, setH1Ack] = useState(false)
   const [added, setAdded] = useState<AddedLine[]>([])
   const [flag, setFlag] = useState<{ kind: "duplicate" | "interaction"; label: string; detail: string } | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
-  const q = query.trim().toLowerCase()
+  const q = query.trim()
+  const catalogue = useDrugCatalogue({
+    visitId: isGuid(visitId) ? visitId : undefined,
+    clinicId,
+    search: q || undefined,
+    limit: 100,
+  })
+  const drugs = useMemo(() => (catalogue.data ?? []).map(toDrugDef), [catalogue.data])
   const existingLower = existingDrugs.map((d) => d.toLowerCase())
 
   const results = useMemo(() => {
-    let list = DRUG_MASTER
-    if (chip === "Frequently used") list = list.filter((d) => d.frequentlyUsed)
-    else if (chip === "Recent by me") list = list.filter((d) => d.recentByMe)
-    else list = list.filter((d) => d.cls === chip)
-    if (!q) return list
-    return DRUG_MASTER.filter((d) => d.brand.toLowerCase().includes(q) || d.generic.toLowerCase().includes(q))
-  }, [q, chip])
+    if (q) return drugs
+    if (chip === "Frequently used" || chip === "Recent by me") return drugs
+    const needle = chip.toLowerCase()
+    return drugs.filter((d) => d.cls.toLowerCase() === needle || d.cls.toLowerCase().includes(needle))
+  }, [q, chip, drugs])
 
-  const selected = selectedId ? DRUG_MASTER.find((d) => d.id === selectedId)! : null
+  const selected = selectedId ? drugs.find((d) => d.id === selectedId) ?? null : null
 
   const durationDays = durationUnit === "weeks" ? Number(durationValue || 0) * 7 : durationUnit === "Continue" ? 0 : Number(durationValue || 0)
   const qty = Math.round(Number(dose || 0) * FREQ_PER_DAY[freq] * (durationDays || 0))
   const overLimit = !!selected && (selected.schedule === "H1" || selected.schedule === "X") && selected.limitQty > 0 && durationUnit !== "Continue" && qty > selected.limitQty
-  const needsStatutory = !!selected && (selected.schedule === "H1" || selected.schedule === "X")
+  const needsStatutory = !!selected && (selected.requiresDeclaration || selected.schedule === "H1" || selected.schedule === "X")
 
   const sig = `${dose || "0"} ${selected?.unit ?? "unit"} ${freq}${durationUnit === "Continue" ? " · Continue" : ` · ${durationValue || "0"} ${durationUnit}`}`
 
   function isDuplicate(d: DrugDef) {
-    return existingLower.some((e) => e.includes(d.generic.split(" ")[0].toLowerCase()) || e.includes(d.brand.toLowerCase())) ||
+    return d.alreadyOnPrescription ||
+      existingLower.some((e) => e.includes(d.generic.split(" ")[0].toLowerCase()) || e.includes(d.brand.toLowerCase())) ||
       added.some((a) => a.label.toLowerCase().includes(d.brand.toLowerCase()))
   }
 
@@ -167,34 +197,72 @@ export function RxAddPanel({ editable, prescriberReg, prescriberName, existingDr
     setDurationValue("5")
     setDurationUnit("days")
     setH1Ack(false)
+    setSaveError(null)
   }
 
   function cancelSelection() {
     setSelectedId(null)
     setFlag(null)
+    setSaveError(null)
   }
 
-  function addLine() {
+  async function addLine() {
     if (!selected || !editable) return
     if (needsStatutory && (overLimit || !h1Ack)) return
+    if (!isGuid(visitId)) {
+      setSaveError("Collect the consultation fee first — the prescription attaches to that visit.")
+      return
+    }
     const note = flag?.kind === "interaction"
       ? `Interaction reviewed — ${flag.detail}`
-      : null
-    setAdded((a) => [
-      ...a,
-      {
-        id: `${selected.id}-${a.length}`,
-        label: `${selected.brand} — ${selected.generic}`,
-        sig,
-        schedule: selected.schedule,
-        note,
-      },
-    ])
-    setSelectedId(null)
-    setFlag(null)
+      : flag?.kind === "duplicate"
+        ? "Duplicate reviewed — prescribed anyway."
+        : null
+    setSaveError(null)
+    try {
+      const view = await prescribe.mutateAsync({
+        visitId,
+        productId: selected.id,
+        doseAmount: Number(dose) || undefined,
+        doseUnit: selected.unit,
+        frequency: freq,
+        duration: durationUnit === "Continue" ? undefined : Number(durationValue) || undefined,
+        durationUnit: durationUnit === "Continue" ? "continue" : durationUnit,
+        directions: note || undefined,
+        declarationSigned: needsStatutory ? h1Ack : false,
+        overrideReason: note,
+      })
+      const line = [...(view.lines ?? [])].reverse().find((l) => l.productId === selected.id)
+      setAdded((a) => [
+        ...a,
+        {
+          id: line?.id || `${selected.id}-${a.length}`,
+          label: `${selected.brand} — ${selected.generic}`,
+          sig: line?.sig || sig,
+          schedule: selected.schedule,
+          note,
+        },
+      ])
+      setSelectedId(null)
+      setFlag(null)
+      void queryClient.invalidateQueries({ queryKey: prescriptionVisitKey(visitId) })
+      void queryClient.invalidateQueries({ queryKey: ["meditrack", "opd-rx-catalogue"] })
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Could not add this drug.")
+    }
   }
 
-  function removeAdded(id: string) {
+  async function removeAdded(id: string) {
+    if (isGuid(visitId) && isGuid(id)) {
+      try {
+        await removeDrug.mutateAsync({ visitId, prescribedDrugId: id })
+        void queryClient.invalidateQueries({ queryKey: prescriptionVisitKey(visitId) })
+        void queryClient.invalidateQueries({ queryKey: ["meditrack", "opd-rx-catalogue"] })
+      } catch (err) {
+        setSaveError(err instanceof Error ? err.message : "Could not remove this drug.")
+        return
+      }
+    }
     setAdded((a) => a.filter((x) => x.id !== id))
   }
 
@@ -203,7 +271,7 @@ export function RxAddPanel({ editable, prescriberReg, prescriberName, existingDr
       <div className="border-b border-adminreg-divider bg-adminreg-header px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <SectionLabel>Search and add a drug</SectionLabel>
-          <span className="font-plexmono text-[9.5px] uppercase tracking-[0.04em] text-adminreg-muted2">Not yet sent to pharmacy</span>
+          <span className="font-plexmono text-[9.5px] uppercase tracking-[0.04em] text-adminreg-muted2">{statusLabel || "Not yet sent to pharmacy"}</span>
         </div>
         <p className="text-xs text-adminreg-muted">
           Same shape as the diagnostics order panel — search, select, configure, confirm into the list below. Brand and composition are both searchable, and Schedule status shows in the results before you pick.
@@ -242,13 +310,15 @@ export function RxAddPanel({ editable, prescriberReg, prescriberName, existingDr
         <p className="mt-3 font-plexmono text-[9.5px] uppercase tracking-[0.04em] text-adminreg-muted2">
           {q
             ? `${results.length} match${results.length === 1 ? "" : "es"} for "${query.trim()}" · brand and composition`
-            : `${chip} · ${results.length} of ${DRUG_MASTER.length} in Drug Master`}
+            : `${chip} · ${results.length} of ${drugs.length} in Drug Master`}
         </p>
 
         <div className="mt-1.5 max-h-[260px] overflow-y-auto border border-adminreg-divider">
-          {results.length === 0 ? (
+          {catalogue.isLoading && results.length === 0 ? (
+            <p className="px-3.5 py-8 text-center text-xs text-adminreg-muted">Loading Drug Master…</p>
+          ) : results.length === 0 ? (
             <p className="px-3.5 py-8 text-center text-xs text-adminreg-muted">
-              Nothing in Drug Master matches that. New drugs are an Admin action — they cannot be created here.
+              {catalogue.error instanceof Error ? catalogue.error.message : "Nothing in Drug Master matches that. New drugs are an Admin action — they cannot be created here."}
             </p>
           ) : (
             results.map((d) => {
@@ -275,32 +345,36 @@ export function RxAddPanel({ editable, prescriberReg, prescriberName, existingDr
         </div>
 
         {/* Flag (duplicate / interaction) */}
-        {flag && (
+        {(flag || saveError) && (
           <div className="mt-3 border-l-[3px] border-adminreg-amber bg-adminreg-amber-soft px-3.5 py-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-plexmono text-[10px] font-bold uppercase tracking-[0.04em] text-adminreg-amber-text">
-                {flag.kind === "duplicate" ? `Already on this prescription — ${flag.label}` : `⚠ Interaction — ${flag.label}`}
+                {saveError
+                  ? saveError
+                  : flag?.kind === "duplicate" ? `Already on this prescription — ${flag.label}` : `⚠ Interaction — ${flag?.label}`}
               </span>
-              <span className="font-plexmono text-[9.5px] uppercase tracking-[0.03em] text-adminreg-amber-text">{flag.kind === "duplicate" ? "Duplicate" : "Cautioned pair"}</span>
+              {!saveError && (
+                <span className="font-plexmono text-[9.5px] uppercase tracking-[0.03em] text-adminreg-amber-text">{flag?.kind === "duplicate" ? "Duplicate" : "Cautioned pair"}</span>
+              )}
             </div>
-            <p className="mt-1.5 text-xs text-adminreg-amber-text">{flag.detail}</p>
-            {flag.kind === "duplicate" ? (
+            {flag && !saveError && <p className="mt-1.5 text-xs text-adminreg-amber-text">{flag.detail}</p>}
+            {flag?.kind === "duplicate" ? (
               <div className="mt-2 flex flex-wrap gap-3">
-                <button type="button" onClick={() => setFlag(null)} className="text-[11px] font-bold text-adminreg-amber-text underline">Drop this drug</button>
+                <button type="button" onClick={() => { setFlag(null); setSaveError(null) }} className="text-[11px] font-bold text-adminreg-amber-text underline">Drop this drug</button>
                 <button
                   type="button"
                   onClick={() => {
-                    const d = DRUG_MASTER.find((x) => x.brand === flag.label)
-                    if (d) { setFlag(null); setSelectedId(d.id) }
+                    const d = drugs.find((x) => x.brand === flag.label)
+                    if (d) { setFlag(null); setSaveError(null); setSelectedId(d.id) }
                   }}
                   className="text-[11px] font-bold text-adminreg-amber-text underline"
                 >
                   Prescribe anyway — reviewed
                 </button>
               </div>
-            ) : (
+            ) : !saveError ? (
               <p className="mt-1.5 text-[11px] text-adminreg-amber-text">Reviewed — the decision is written into the line&apos;s note so pharmacy sees it.</p>
-            )}
+            ) : null}
           </div>
         )}
 
@@ -387,10 +461,10 @@ export function RxAddPanel({ editable, prescriberReg, prescriberName, existingDr
               <AdminButton
                 type="button"
                 accent="indigo"
-                disabled={needsStatutory && (overLimit || !h1Ack)}
-                onClick={addLine}
+                disabled={needsStatutory && (overLimit || !h1Ack) || prescribe.isPending}
+                onClick={() => void addLine()}
               >
-                {overLimit ? "Quantity exceeds the statutory limit" : "Add to prescription"}
+                {overLimit ? "Quantity exceeds the statutory limit" : prescribe.isPending ? "Adding…" : "Add to prescription"}
               </AdminButton>
               <AdminButton type="button" variant="secondary" onClick={cancelSelection}>Back to search</AdminButton>
             </div>
@@ -408,7 +482,7 @@ export function RxAddPanel({ editable, prescriberReg, prescriberName, existingDr
                     <span className="text-sm font-semibold text-adminreg-text">{a.label}</span>
                     <span className="flex items-center gap-3">
                       <ScheduleBadge schedule={a.schedule} />
-                      {editable && <button type="button" onClick={() => removeAdded(a.id)} className="text-[11px] text-adminreg-amber-text underline">Remove</button>}
+                      {editable && <button type="button" onClick={() => void removeAdded(a.id)} className="text-[11px] text-adminreg-amber-text underline">Remove</button>}
                     </span>
                   </div>
                   <div className="mt-0.5 font-plexmono text-xs text-adminreg-muted">{a.sig}</div>

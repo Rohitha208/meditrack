@@ -3,6 +3,7 @@ import {
   Boxes,
   Building2,
   Database,
+  DoorOpen,
   IdCard,
   LayoutDashboard,
   Receipt,
@@ -58,6 +59,7 @@ export const ADMIN_REGISTER_NAV: AdminRegisterNavItem[] = [
   { code: "01", label: "Hospital Profile", href: "/admin/hospital-profile", icon: Building2, group: "Clinical Configuration" },
   { code: "02", label: "Departments", href: "/admin/departments", icon: Boxes, group: "Clinical Configuration" },
   { code: "03", label: "Doctors", href: "/admin/providers", icon: UserRound, group: "Clinical Configuration" },
+  { code: "03b", label: "Rooms", href: "/admin/rooms", icon: DoorOpen, group: "Clinical Configuration" },
   { code: "04", label: "Master Data", href: "/admin/masters", icon: Database, group: "Clinical Configuration" },
   { code: "05", label: "Wards & Beds", href: "/admin/wards-beds", icon: BedDouble, group: "Operations" },
   {
