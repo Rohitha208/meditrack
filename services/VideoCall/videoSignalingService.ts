@@ -1,5 +1,6 @@
 import Cookies from "js-cookie"
 import * as signalR from "@microsoft/signalr"
+import { isAuthSessionInvalid, redirectToLoginAfterWsSessionEnd } from "@/utils/websocket-session"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
 const LOG_PREFIX = "[VideoSignaling]"
@@ -40,6 +41,7 @@ type SignalingCallback = (...args: any[]) => void
 let connection: signalR.HubConnection | null = null
 let isConnecting = false
 let reconnectAttempts = 0
+let stoppedByClient = false
 const MAX_RECONNECT_ATTEMPTS = 5
 
 const pendingHandlers: { event: string; callback: SignalingCallback }[] = []
@@ -77,6 +79,7 @@ export const videoSignalingService = {
     }
 
     isConnecting = true
+    stoppedByClient = false
 
     const hubBaseUrl = resolveHubBaseUrl()
     const hubUrl = `${hubBaseUrl}/videoHub`
@@ -101,20 +104,30 @@ export const videoSignalingService = {
       })
       .withAutomaticReconnect({
         nextRetryDelayInMilliseconds: (ctx) => {
-          if (ctx.previousRetryCount >= MAX_RECONNECT_ATTEMPTS) return null
+          if (isAuthSessionInvalid() || ctx.previousRetryCount >= MAX_RECONNECT_ATTEMPTS) return null
           return Math.min(1000 * Math.pow(2, ctx.previousRetryCount), 30000)
         },
       })
-      .configureLogging(signalR.LogLevel.Warning)
+      .configureLogging({
+        log: (logLevel, message) => {
+          if (String(message).includes("Connection disconnected")) return
+          if (logLevel >= signalR.LogLevel.Error) {
+            console.warn(`${LOG_PREFIX} ${message}`)
+          }
+        },
+      })
       .build()
 
     connection.onclose((error) => {
-      console.error(`${LOG_PREFIX} Connection closed`, {
+      console.warn(`${LOG_PREFIX} Connection closed`, {
         error: toErrorInfo(error),
         finalState: connection?.state,
       })
       isConnecting = false
       reconnectAttempts = 0
+      if (!stoppedByClient && isAuthSessionInvalid()) {
+        redirectToLoginAfterWsSessionEnd()
+      }
     })
 
     connection.onreconnecting((error) => {
@@ -238,6 +251,7 @@ export const videoSignalingService = {
 
   async stop() {
     if (connection) {
+      stoppedByClient = true
       try {
         await connection.stop()
       } catch {

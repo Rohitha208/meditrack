@@ -37,6 +37,7 @@ import {
 } from "@/queries/meditrack/users"
 import { useGetMediTrackRoles } from "@/queries/meditrack/roles"
 import { useGetDepartments } from "@/queries/departments"
+import { useGetRooms } from "@/queries/meditrack/rooms"
 import {
   datesToApi,
   formatSessionDate,
@@ -150,6 +151,14 @@ export function AdminProvidersPage() {
     companyId || undefined,
     clinicId,
     !!companyId && hasBranch
+  )
+  const { data: rooms = [], isLoading: isLoadingRooms } = useGetRooms(
+    { clinicId, pageSize: 100 },
+    hasBranch && !!clinicId
+  )
+  const sessionRooms = useMemo(
+    () => rooms.filter((room) => room.isActive !== false && room.name.trim()),
+    [rooms]
   )
   const departmentNameById = useMemo(() => {
     const map = new Map<string, string>()
@@ -427,7 +436,12 @@ export function AdminProvidersPage() {
     }
 
     if (!form.location.trim()) {
-      toast({ title: "Location required", description: "Enter a location for this session.", variant: "destructive" })
+      toast({ title: "Room required", description: "Select a room for this session.", variant: "destructive" })
+      return
+    }
+    const selectedRoom = sessionRooms.find((room) => room.id === form.location)
+    if (!selectedRoom) {
+      toast({ title: "Room required", description: "Select a room for this session.", variant: "destructive" })
       return
     }
 
@@ -454,7 +468,7 @@ export function AdminProvidersPage() {
         startTime: timeToApi(start),
         endTime: timeToApi(end),
         sessionType: sessionTypeToApi(form.type),
-        location: form.location.trim(),
+        location: selectedRoom.name,
         slotDurationMinutes: slotDuration,
       })
       const dateCount = form.dates.length
@@ -601,57 +615,59 @@ export function AdminProvidersPage() {
               <h2 className="text-xl font-bold text-adminreg-text">Availability</h2>
               <p className="mt-1 text-sm text-adminreg-muted">OPD and ward-round sessions by date. Overlaps are blocked at save.</p>
 
-              <AdminCard noPadding className="mt-5">
+              <AdminCard noPadding className="mt-5" contentClassName="overflow-hidden">
                 {isLoadingAvailability ? (
-                  <TableSkeleton rows={4} columns={5} />
+                  <TableSkeleton rows={10} columns={7} />
                 ) : isAvailabilityError ? (
                   <p className="px-5 py-8 text-sm text-adminreg-red">
                     {getToastErrorMessage(availabilityError, "Failed to load availability")}
                   </p>
                 ) : (
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-adminreg-border bg-adminreg-border/30 text-left text-[11px] font-semibold uppercase tracking-wide text-adminreg-muted">
-                        <th className="px-5 py-3">Date</th>
-                        <th className="px-5 py-3">Start</th>
-                        <th className="px-5 py-3">End</th>
-                        <th className="px-5 py-3">Type</th>
-                        <th className="px-5 py-3">Slot</th>
-                        <th className="px-5 py-3">Location</th>
-                        <th className="px-5 py-3 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sessions.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="px-5 py-8 text-sm text-adminreg-muted">
-                            No sessions yet. Add a session below.
-                          </td>
+                  <div className="adminreg-scroll max-h-[484px] overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 z-10">
+                        <tr className="border-b border-adminreg-border bg-adminreg-header text-left text-[11px] font-semibold uppercase tracking-wide text-adminreg-muted">
+                          <th className="px-5 py-3">Date</th>
+                          <th className="px-5 py-3">Start</th>
+                          <th className="px-5 py-3">End</th>
+                          <th className="px-5 py-3">Type</th>
+                          <th className="px-5 py-3">Slot</th>
+                          <th className="px-5 py-3">Location</th>
+                          <th className="px-5 py-3 text-right">Action</th>
                         </tr>
-                      ) : (
-                        sessions.map((s) => (
-                          <tr key={s.id} className="border-b border-adminreg-border/70 last:border-0">
-                            <td className="px-5 py-3 font-semibold text-adminreg-text">{s.date}</td>
-                            <td className="px-5 py-3">{s.start}</td>
-                            <td className="px-5 py-3">{s.end}</td>
-                            <td className="px-5 py-3">{s.type}</td>
-                            <td className="px-5 py-3">{s.slotDuration}</td>
-                            <td className="px-5 py-3">{s.location}</td>
-                            <td className="px-5 py-3 text-right">
-                              <button
-                                type="button"
-                                onClick={() => removeSession(s.id)}
-                                disabled={deleteAvailability.isPending}
-                                className="text-sm font-medium text-adminreg-red hover:underline disabled:opacity-50"
-                              >
-                                {deleteAvailability.isPending ? "Removing…" : "Remove"}
-                              </button>
+                      </thead>
+                      <tbody>
+                        {sessions.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="px-5 py-8 text-sm text-adminreg-muted">
+                              No sessions yet. Add a session below.
                             </td>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                        ) : (
+                          sessions.map((s) => (
+                            <tr key={s.id} className="border-b border-adminreg-border/70 last:border-0">
+                              <td className="px-5 py-3 font-semibold text-adminreg-text">{s.date}</td>
+                              <td className="px-5 py-3">{s.start}</td>
+                              <td className="px-5 py-3">{s.end}</td>
+                              <td className="px-5 py-3">{s.type}</td>
+                              <td className="px-5 py-3">{s.slotDuration}</td>
+                              <td className="px-5 py-3">{s.location}</td>
+                              <td className="px-5 py-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => removeSession(s.id)}
+                                  disabled={deleteAvailability.isPending}
+                                  className="text-sm font-medium text-adminreg-red hover:underline disabled:opacity-50"
+                                >
+                                  {deleteAvailability.isPending ? "Removing…" : "Remove"}
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </AdminCard>
 
@@ -725,13 +741,30 @@ export function AdminProvidersPage() {
                     </div>
                     <div className="min-w-0 space-y-1">
                       <Label className="text-[10px] font-semibold uppercase tracking-wide text-adminreg-muted">Location</Label>
-                      <Input
-                        value={form.location}
-                        onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
-                        placeholder="e.g. OPD Room 4"
-                        className="h-9 w-full text-sm"
-                        required
-                      />
+                      <Select
+                        value={form.location || undefined}
+                        onValueChange={(v) => setForm((f) => ({ ...f, location: v }))}
+                        disabled={isLoadingRooms || sessionRooms.length === 0}
+                      >
+                        <SelectTrigger className="h-9 w-full text-sm">
+                          <SelectValue
+                            placeholder={
+                              isLoadingRooms
+                                ? "Loading rooms…"
+                                : sessionRooms.length === 0
+                                  ? "No rooms yet"
+                                  : "Select room"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {sessionRooms.map((room) => (
+                            <SelectItem key={room.id} value={room.id}>
+                              {room.floor ? `${room.name} · Floor ${room.floor}` : room.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                   {sessionDurationLabel ? (

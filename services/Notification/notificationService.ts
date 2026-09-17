@@ -1,12 +1,20 @@
 import Cookies from "js-cookie";
 import * as signalR from "@microsoft/signalr";
+import { isAuthSessionInvalid, redirectToLoginAfterWsSessionEnd } from "@/utils/websocket-session";
 
 let connection: signalR.HubConnection | null = null;
 let pendingCallbacks: ((n: any) => void)[] = [];
 let pendingEventHandlers: { event: string; callback: (...args: any[]) => void }[] = [];
 let isConnecting = false;
 let reconnectAttempts = 0;
+let stoppedByClient = false;
 const MAX_RECONNECT_ATTEMPTS = 5;
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    stoppedByClient = true;
+  });
+}
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 const LOG_PREFIX = "[NotificationService]";
@@ -93,6 +101,7 @@ export const notificationService = {
       tokenPresent: !!token,
     });
     isConnecting = true;
+    stoppedByClient = false;
 
     connection = new signalR.HubConnectionBuilder()
       .withUrl(hubUrl, {
@@ -106,10 +115,8 @@ export const notificationService = {
       })
       .withAutomaticReconnect({
         nextRetryDelayInMilliseconds: (retryContext) => {
-          // Custom reconnection delay strategy
-          if (retryContext.previousRetryCount >= MAX_RECONNECT_ATTEMPTS) {
-            console.error(`${LOG_PREFIX} Max reconnection attempts reached`);
-            return null; // Stop reconnecting
+          if (isAuthSessionInvalid() || retryContext.previousRetryCount >= MAX_RECONNECT_ATTEMPTS) {
+            return null;
           }
           const delay = Math.min(1000 * Math.pow(2, retryContext.previousRetryCount), 30000);
           console.log(`${LOG_PREFIX} Reconnecting scheduled`, {
@@ -121,17 +128,27 @@ export const notificationService = {
           return delay;
         }
       })
-      .configureLogging(signalR.LogLevel.Information)
+      .configureLogging({
+        log: (logLevel, message) => {
+          if (String(message).includes("Connection disconnected")) return;
+          if (logLevel >= signalR.LogLevel.Error) {
+            console.warn(`${LOG_PREFIX} ${message}`);
+          }
+        },
+      })
       .build();
 
     // Connection event handlers
     connection.onclose((error) => {
-      console.error(`${LOG_PREFIX} Connection closed`, {
+      console.warn(`${LOG_PREFIX} Connection closed`, {
         error: toErrorInfo(error),
         finalState: connection?.state,
       });
       isConnecting = false;
       reconnectAttempts = 0;
+      if (!stoppedByClient) {
+        redirectToLoginAfterWsSessionEnd();
+      }
     });
 
     connection.onreconnecting((error) => {
@@ -165,7 +182,12 @@ export const notificationService = {
       });
       isConnecting = false;
       connection = null;
-      
+      const message = err instanceof Error ? err.message : String(err);
+      if (isAuthSessionInvalid() || /401|unauthor/i.test(message)) {
+        redirectToLoginAfterWsSessionEnd();
+        return;
+      }
+
       // Retry connection after a delay
       if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         const retryDelay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
@@ -242,6 +264,7 @@ export const notificationService = {
   stop() {
     if (connection) {
       console.log("[NotificationService] Stopping connection...");
+      stoppedByClient = true;
       connection.stop().then(() => {
         console.log("[NotificationService] Connection stopped");
         connection = null;
