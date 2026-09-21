@@ -105,6 +105,22 @@ const EMPTY_FORM = {
   password: "",
   departmentId: NO_DEPARTMENT,
   branchId: "",
+  medicalRegistrationNumber: "",
+  consultationFee: "",
+}
+
+function parseConsultationFee(value: string): number | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const n = Number(trimmed)
+  if (Number.isNaN(n) || n < 0) return null
+  return n
+}
+
+function formatConsultationFee(value?: number | null) {
+  if (value == null || Number.isNaN(Number(value))) return "—"
+  const n = Number(value)
+  return `₹${Number.isInteger(n) ? n : n.toFixed(2)}`
 }
 
 export function AdminProvidersPage() {
@@ -207,6 +223,7 @@ export function AdminProvidersPage() {
   )
 
   const [addOpen, setAddOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
   const [doctorForm, setDoctorForm] = useState(EMPTY_FORM)
 
   const [leaveTarget, setLeaveTarget] = useState<MediTrackUser | null>(null)
@@ -286,6 +303,8 @@ export function AdminProvidersPage() {
         specialtyId: deactivateTarget.specialtyId || null,
         clinicIds: clinicId ? [clinicId] : null,
         isActive: nextActive,
+        medicalRegistrationNumber: deactivateTarget.medicalRegistrationNumber || null,
+        rate: deactivateTarget.rate ?? null,
       })
       toast({
         title: nextActive ? "Doctor reactivated" : "Doctor deactivated",
@@ -304,6 +323,19 @@ export function AdminProvidersPage() {
   function openAdd() {
     setDoctorForm({ ...EMPTY_FORM, branchId })
     setAddOpen(true)
+  }
+
+  function openEdit(doctor: MediTrackUser) {
+    setDoctorForm({
+      fullName: displayName(doctor.firstName, doctor.lastName, ""),
+      email: doctor.email || "",
+      password: "",
+      departmentId: doctor.departmentId || NO_DEPARTMENT,
+      branchId,
+      medicalRegistrationNumber: doctor.medicalRegistrationNumber || "",
+      consultationFee: doctor.rate != null ? String(doctor.rate) : "",
+    })
+    setEditOpen(true)
   }
 
   async function handleAddDoctor(e: FormEvent<HTMLFormElement>) {
@@ -327,6 +359,12 @@ export function AdminProvidersPage() {
       return
     }
 
+    const rate = parseConsultationFee(doctorForm.consultationFee)
+    if (rate == null) {
+      toast({ title: "Consultation fee required", description: "Enter the doctor's consultation fee.", variant: "destructive" })
+      return
+    }
+
     try {
       const created = await createUser.mutateAsync({
         firstName,
@@ -337,6 +375,8 @@ export function AdminProvidersPage() {
         companyId,
         departmentId: doctorForm.departmentId === NO_DEPARTMENT ? null : doctorForm.departmentId,
         clinicIds: [doctorForm.branchId],
+        medicalRegistrationNumber: doctorForm.medicalRegistrationNumber.trim() || null,
+        rate,
       })
       setAddOpen(false)
       setDoctorForm(EMPTY_FORM)
@@ -348,6 +388,50 @@ export function AdminProvidersPage() {
       toast({
         title: "Could not add doctor",
         description: getToastErrorMessage(err, "Failed to create doctor"),
+        variant: "destructive",
+      })
+    }
+  }
+
+  async function handleEditDoctor(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!selected || !doctorRoleId) return
+    const { firstName, lastName } = splitFullName(doctorForm.fullName)
+    if (!firstName) {
+      toast({ title: "Full name required", description: "Enter the doctor's full name.", variant: "destructive" })
+      return
+    }
+    const rate = parseConsultationFee(doctorForm.consultationFee)
+    if (rate == null) {
+      toast({ title: "Consultation fee required", description: "Enter the doctor's consultation fee.", variant: "destructive" })
+      return
+    }
+    try {
+      const updated = await updateUser.mutateAsync({
+        id: selected.id,
+        email: doctorForm.email.trim(),
+        firstName,
+        lastName: lastName || null,
+        roleId: selected.roleId || doctorRoleId,
+        companyId: selected.companyId || companyId || null,
+        departmentId: doctorForm.departmentId === NO_DEPARTMENT ? null : doctorForm.departmentId,
+        specialtyId: selected.specialtyId || null,
+        clinicIds: clinicId ? [clinicId] : null,
+        isActive: selected.isActive,
+        medicalRegistrationNumber: doctorForm.medicalRegistrationNumber.trim() || null,
+        rate,
+      })
+      setSelected(updated)
+      setEditOpen(false)
+      setDoctorForm(EMPTY_FORM)
+      toast({
+        title: "Doctor updated",
+        description: `${displayName(updated.firstName, updated.lastName, updated.email)} was saved.`,
+      })
+    } catch (err) {
+      toast({
+        title: "Could not update doctor",
+        description: getToastErrorMessage(err, "Failed to update doctor"),
         variant: "destructive",
       })
     }
@@ -435,6 +519,18 @@ export function AdminProvidersPage() {
       return
     }
 
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const sessionDates = form.dates.filter((d) => {
+      const day = new Date(d)
+      day.setHours(0, 0, 0, 0)
+      return day >= today
+    })
+    if (!sessionDates.length) {
+      toast({ title: "Past dates are not allowed", description: "Pick today or a future date for availability.", variant: "destructive" })
+      return
+    }
+
     if (!form.location.trim()) {
       toast({ title: "Room required", description: "Select a room for this session.", variant: "destructive" })
       return
@@ -464,14 +560,14 @@ export function AdminProvidersPage() {
       await createAvailability.mutateAsync({
         providerId: selected.id,
         clinicId: clinicId || null,
-        dates: datesToApi(form.dates),
+        dates: datesToApi(sessionDates),
         startTime: timeToApi(start),
         endTime: timeToApi(end),
         sessionType: sessionTypeToApi(form.type),
         location: selectedRoom.name,
         slotDurationMinutes: slotDuration,
       })
-      const dateCount = form.dates.length
+      const dateCount = sessionDates.length
       setForm(EMPTY_SESSION_FORM)
       toast({
         title: "Session added",
@@ -535,6 +631,18 @@ export function AdminProvidersPage() {
       sortValue: (r) => deptLabel(r),
     },
     {
+      key: "registration",
+      header: "Reg. no.",
+      render: (r) => r.medicalRegistrationNumber || "—",
+      sortValue: (r) => r.medicalRegistrationNumber || "",
+    },
+    {
+      key: "fee",
+      header: "Consult. fee",
+      render: (r) => formatConsultationFee(r.rate),
+      sortValue: (r) => r.rate ?? -1,
+    },
+    {
       key: "sessions",
       header: "Sessions / week",
       render: () => "—",
@@ -595,11 +703,21 @@ export function AdminProvidersPage() {
           </button>
 
           {showProfile ? (
-            <AdminCard title="Doctor profile" className="mb-5">
+            <AdminCard
+              title="Doctor profile"
+              className="mb-5"
+              action={
+                <MtButton type="button" variant="ghost" onClick={() => openEdit(selected)}>
+                  Edit
+                </MtButton>
+              }
+            >
               <div className="divide-y divide-adminreg-border">
                 <InfoRow label="Name" value={selectedName} />
                 <InfoRow label="Email" value={selected.email || "—"} />
                 <InfoRow label="Department" value={deptLabel(selected)} />
+                <InfoRow label="Medical registration no." value={selected.medicalRegistrationNumber || "—"} />
+                <InfoRow label="Consultation fee" value={formatConsultationFee(selected.rate)} />
                 <InfoRow label="Role" value={selected.roleName || selected.role || "Doctor"} />
                 <InfoRow label="Branch" value={branchNameById.get(branchId) || "—"} />
                 <InfoRow label="Status" value={selected.isActive ? "Active" : "Inactive"} />
@@ -931,6 +1049,94 @@ export function AdminProvidersPage() {
               ))}
             </SelectContent>
           </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Medical registration no.</Label>
+          <Input
+            value={doctorForm.medicalRegistrationNumber}
+            onChange={(e) => setDoctorForm((f) => ({ ...f, medicalRegistrationNumber: e.target.value }))}
+            placeholder="e.g. MCI/KA-2011-44821"
+          />
+          <p className="text-[11px] text-adminreg-muted">Stamped on Schedule H1 / X prescriptions.</p>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Consultation fee (₹)</Label>
+          <Input
+            type="number"
+            min={0}
+            step="0.01"
+            value={doctorForm.consultationFee}
+            onChange={(e) => setDoctorForm((f) => ({ ...f, consultationFee: e.target.value }))}
+            placeholder="e.g. 700"
+            required
+          />
+        </div>
+      </FormDialog>
+
+      <FormDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        title="Edit doctor"
+        onSubmit={handleEditDoctor}
+        footer={
+          <>
+            <MtButton type="button" variant="ghost" onClick={() => setEditOpen(false)}>Cancel</MtButton>
+            <MtButton type="submit" disabled={updateUser.isPending}>
+              {updateUser.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Save
+            </MtButton>
+          </>
+        }
+      >
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Full Name</Label>
+          <Input
+            value={doctorForm.fullName}
+            onChange={(e) => setDoctorForm((f) => ({ ...f, fullName: e.target.value }))}
+            placeholder="e.g. Dr. Kabir Sethi"
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Email</Label>
+          <Input
+            type="email"
+            value={doctorForm.email}
+            onChange={(e) => setDoctorForm((f) => ({ ...f, email: e.target.value }))}
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Department</Label>
+          <Select value={doctorForm.departmentId} onValueChange={(v) => setDoctorForm((f) => ({ ...f, departmentId: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_DEPARTMENT}>Unassigned</SelectItem>
+              {departments.map((d) => (
+                <SelectItem key={d.departmentId} value={d.departmentId}>{d.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Medical registration no.</Label>
+          <Input
+            value={doctorForm.medicalRegistrationNumber}
+            onChange={(e) => setDoctorForm((f) => ({ ...f, medicalRegistrationNumber: e.target.value }))}
+            placeholder="e.g. MCI/KA-2011-44821"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Consultation fee (₹)</Label>
+          <Input
+            type="number"
+            min={0}
+            step="0.01"
+            value={doctorForm.consultationFee}
+            onChange={(e) => setDoctorForm((f) => ({ ...f, consultationFee: e.target.value }))}
+            placeholder="e.g. 700"
+            required
+          />
         </div>
       </FormDialog>
 

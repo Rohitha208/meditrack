@@ -434,8 +434,8 @@ export function RxAddPanel({
                 <div className="mt-2.5 grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <div className="mb-1 font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-red-text">Prescriber registration no.</div>
-                    <input readOnly value={`${prescriberReg} · ${prescriberName}`} className="w-full border border-adminreg-border bg-adminreg-card px-2.5 py-1.5 text-xs text-adminreg-text" />
-                    <p className="mt-1 text-[10px] text-adminreg-red-text">Pulled from the signed-in prescriber&apos;s Admin record and stamped onto the line.</p>
+                    <input readOnly value={prescriberReg ? `${prescriberReg} · ${prescriberName}` : `Not on file · ${prescriberName}`} className="w-full border border-adminreg-border bg-adminreg-card px-2.5 py-1.5 text-xs text-adminreg-text" />
+                    <p className="mt-1 text-[10px] text-adminreg-red-text">Pulled from the doctor&apos;s medical registration number on Admin → Doctors.</p>
                   </div>
                   <div>
                     <div className="mb-1 font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-red-text">Quantity limit check</div>

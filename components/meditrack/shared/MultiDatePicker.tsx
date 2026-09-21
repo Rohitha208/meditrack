@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { CalendarIcon, X } from "lucide-react"
-import { format } from "date-fns"
+import { format, startOfDay } from "date-fns"
 
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -17,6 +17,10 @@ interface MultiDatePickerProps {
   compact?: boolean
 }
 
+function isNotPast(date: Date) {
+  return startOfDay(date) >= startOfDay(new Date())
+}
+
 export function MultiDatePicker({
   value,
   onChange,
@@ -25,7 +29,8 @@ export function MultiDatePicker({
   compact = false,
 }: MultiDatePickerProps) {
   const [open, setOpen] = useState(false)
-  const sorted = [...value].sort((a, b) => a.getTime() - b.getTime())
+  const today = startOfDay(new Date())
+  const sorted = [...value].filter(isNotPast).sort((a, b) => a.getTime() - b.getTime())
 
   function removeDate(target: Date) {
     onChange(value.filter((d) => d.toDateString() !== target.toDateString()))
@@ -54,7 +59,9 @@ export function MultiDatePicker({
           <Calendar
             mode="multiple"
             selected={value}
-            onSelect={(dates) => onChange(dates ?? [])}
+            onSelect={(dates) => onChange((dates ?? []).filter(isNotPast))}
+            disabled={{ before: today }}
+            fromDate={today}
             initialFocus
           />
         </PopoverContent>

@@ -16,7 +16,17 @@ const getDepartmentDoctors = async (
   if (!response.ok) {
     throw new Error(getMessageFromErrorBody(result, "Failed to fetch doctors"));
   }
-  return Array.isArray(result) ? result : [];
+  const rows = Array.isArray(result) ? result : [];
+  return rows.map((item) => {
+    const o = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+    const rateRaw = o.rate ?? o.Rate;
+    const rate = rateRaw == null || rateRaw === "" ? null : Number(rateRaw);
+    return {
+      ...(item as OpdProviderSummary),
+      providerId: String(o.providerId ?? o.ProviderId ?? ""),
+      rate: Number.isFinite(rate as number) ? (rate as number) : null,
+    };
+  });
 };
 
 export const useGetDepartmentDoctors = (

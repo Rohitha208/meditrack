@@ -12,6 +12,8 @@ export interface CreateMediTrackUserRequest {
   departmentId?: string | null;
   specialtyId?: string | null;
   clinicIds?: string[] | null;
+  medicalRegistrationNumber?: string | null;
+  rate?: number | null;
 }
 
 const createUser = async (data: CreateMediTrackUserRequest): Promise<MediTrackUser> => {

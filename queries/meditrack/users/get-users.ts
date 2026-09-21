@@ -12,6 +12,8 @@ export interface MediTrackUser {
   companyId?: string;
   departmentId?: string | null;
   specialtyId?: string | null;
+  medicalRegistrationNumber?: string | null;
+  rate?: number | null;
   isActive: boolean;
   lastLogin: string | null;
   createdAt: string | null;

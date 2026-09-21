@@ -14,6 +14,8 @@ export interface UpdateMediTrackUserRequest {
   clinicIds?: string[] | null;
   isActive?: boolean | null;
   passwordHash?: string | null;
+  medicalRegistrationNumber?: string | null;
+  rate?: number | null;
 }
 
 const updateUser = async (data: UpdateMediTrackUserRequest): Promise<MediTrackUser> => {
