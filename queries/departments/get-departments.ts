@@ -26,7 +26,7 @@ export interface Department {
   bedIds?: string[];
 }
 
-function normalizeDepartment(raw: Record<string, unknown>): Department {
+export function normalizeDepartment(raw: Record<string, unknown>): Department {
   const doctors = (Array.isArray(raw.doctors) ? raw.doctors : Array.isArray(raw.providers) ? raw.providers : []) as DepartmentProvider[];
   const doctorCount = Number(raw.doctorCount ?? raw.providerCount ?? doctors.length);
   return {

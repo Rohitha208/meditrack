@@ -6,6 +6,8 @@ export interface OpdProviderSummary {
   departmentName?: string | null;
   roleValue?: string | null;
   roleName?: string | null;
+  medicalRegistrationNumber?: string | null;
+  rate?: number | null;
 }
 
 export interface OpdPatientLookup {
@@ -89,6 +91,18 @@ export function minutesToTimeApi(total: number): string {
   const h = Math.floor(total / 60);
   const m = total % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+}
+
+/** True when this slot's start is before now (local). Today-only; future dates stay bookable. */
+export function isPastSlot(dateIso?: string | null, startTime?: string | null): boolean {
+  const day = (dateIso || "").slice(0, 10);
+  const start = timeToMinutes(startTime);
+  if (!day || start === null) return false;
+  const now = new Date();
+  const today = toApiDateOnly(now);
+  if (day < today) return true;
+  if (day > today) return false;
+  return start <= now.getHours() * 60 + now.getMinutes();
 }
 
 export function formatSlotLabel(value?: string | null): string {

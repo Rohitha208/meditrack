@@ -24,9 +24,9 @@ import { useGetProviderAvailability } from "@/queries/meditrack/provider-availab
 import { BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
 import {
   buildCalendarDays,
-  expandSessionsToDiscreteSlots,
   formatAppointmentDate,
   formatSlotLabel,
+  isPastSlot,
   timeToMinutes,
   toApiDateOnly,
   useBookOpdAppointment,
@@ -162,41 +162,11 @@ export function OpdAppointmentsBookingPage() {
   )
 
   const discreteSlots = useMemo(() => {
-    // Slice using backend availability slotDurationMinutes only (no frontend default).
-    const dayName = FULL_WEEKDAYS[new Date(`${selectedDate}T00:00:00`).getDay()]
-    const daySessions = availability.filter((s) => {
-      if (!s.isActive) return false
-      if (!/^OPD$/i.test(s.sessionType || "")) return false
-      if (s.specificDate) return s.specificDate.slice(0, 10) === selectedDate
-      return s.dayOfWeek === dayName
-    })
-
-    const slots = expandSessionsToDiscreteSlots(
-      daySessions.map((s) => ({
-        startTime: s.startTime,
-        endTime: s.endTime,
-        sessionType: s.sessionType,
-        location: s.location,
-        slotDurationMinutes: s.slotDurationMinutes > 0 ? s.slotDurationMinutes : undefined,
-        status: "Available",
-      }))
-    )
-
-    if (!rawSlots.length) return slots
-
-    return slots.map((slot) => {
-      const start = timeToMinutes(slot.startTime)
-      const end = timeToMinutes(slot.endTime)
-      const booked = rawSlots.some((rs) => {
-        if (!/^booked$/i.test(rs.status)) return false
-        const rsStart = timeToMinutes(rs.startTime)
-        const rsEnd = timeToMinutes(rs.endTime)
-        if (start === null || end === null || rsStart === null || rsEnd === null) return false
-        return start < rsEnd && rsStart < end
-      })
-      return booked ? { ...slot, status: "Booked" } : slot
-    })
-  }, [rawSlots, availability, selectedDate])
+    return [...rawSlots]
+      .filter((slot) => !slot.sessionType || /^OPD$/i.test(slot.sessionType))
+      .filter((slot) => !isPastSlot(selectedDate, slot.startTime))
+      .sort((a, b) => (timeToMinutes(a.startTime) ?? 0) - (timeToMinutes(b.startTime) ?? 0))
+  }, [rawSlots, selectedDate])
 
   const dayMeta = useMemo(() => {
     return calendarDays.map((day) => {
@@ -234,11 +204,6 @@ export function OpdAppointmentsBookingPage() {
   const rescheduleMutation = useRescheduleOpdAppointment()
   const cancelMutation = useCancelOpdAppointment()
 
-  const { data: rescheduleAvailability = [] } = useGetProviderAvailability(
-    selectedFound?.providerId || undefined,
-    tab === 2 && !!selectedFound?.providerId
-  )
-
   const rescheduleSlots = useGetBookableSlots(
     selectedFound?.providerId || undefined,
     rescheduleSlot?.date || selectedFound?.date?.slice(0, 10) || selectedDate,
@@ -248,43 +213,14 @@ export function OpdAppointmentsBookingPage() {
 
   const rescheduleDiscrete = useMemo(() => {
     const date = rescheduleSlot?.date || selectedFound?.date?.slice(0, 10) || selectedDate
-    const dayName = FULL_WEEKDAYS[new Date(`${date}T00:00:00`).getDay()]
-    const daySessions = rescheduleAvailability.filter((s) => {
-      if (!s.isActive) return false
-      if (!/^OPD$/i.test(s.sessionType || "")) return false
-      if (s.specificDate) return s.specificDate.slice(0, 10) === date
-      return s.dayOfWeek === dayName
-    })
-
-    const slots = expandSessionsToDiscreteSlots(
-      daySessions.map((s) => ({
-        startTime: s.startTime,
-        endTime: s.endTime,
-        sessionType: s.sessionType,
-        location: s.location,
-        slotDurationMinutes: s.slotDurationMinutes > 0 ? s.slotDurationMinutes : undefined,
-        status: "Available",
-      }))
-    ).map((s) => ({ ...s, date }))
-
     const raw = rescheduleSlots.data ?? []
-    if (!raw.length) return slots
-
-    return slots.map((slot) => {
-      const start = timeToMinutes(slot.startTime)
-      const end = timeToMinutes(slot.endTime)
-      const booked = raw.some((rs) => {
-        if (!/^booked$/i.test(rs.status)) return false
-        const rsStart = timeToMinutes(rs.startTime)
-        const rsEnd = timeToMinutes(rs.endTime)
-        if (start === null || end === null || rsStart === null || rsEnd === null) return false
-        return start < rsEnd && rsStart < end
-      })
-      return booked ? { ...slot, status: "Booked" } : slot
-    })
+    return [...raw]
+      .filter((slot) => !slot.sessionType || /^OPD$/i.test(slot.sessionType))
+      .filter((slot) => !isPastSlot(date, slot.startTime))
+      .sort((a, b) => (timeToMinutes(a.startTime) ?? 0) - (timeToMinutes(b.startTime) ?? 0))
+      .map((slot) => ({ ...slot, date }))
   }, [
     rescheduleSlots.data,
-    rescheduleAvailability,
     rescheduleSlot?.date,
     selectedFound?.date,
     selectedDate,
@@ -323,6 +259,13 @@ export function OpdAppointmentsBookingPage() {
   useEffect(() => {
     setSelectedSlot(null)
   }, [selectedDate, selectedDoctor?.providerId])
+
+  useEffect(() => {
+    if (!selectedSlot) return
+    if (isPastSlot(selectedDate, selectedSlot.startTime)) {
+      setSelectedSlot(null)
+    }
+  }, [selectedDate, selectedSlot])
 
   useEffect(() => {
     if (findResults.data?.length) {
@@ -1098,6 +1041,8 @@ export function OpdAppointmentsBookingPage() {
                         }
                         if (checkinFound.patientPhone) params.set("phone", checkinFound.patientPhone)
                         if (checkinFound.patientName) params.set("name", checkinFound.patientName)
+                        if (checkinFound.providerId) params.set("userId", checkinFound.providerId)
+                        if (checkinFound.departmentId) params.set("departmentId", checkinFound.departmentId)
                         router.push(`/opd/visit-thread?${params}`)
                       }}
                     >

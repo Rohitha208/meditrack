@@ -22,6 +22,7 @@ import { ROLE_LABEL, isStageEditable } from "@/components/meditrack/layout/regis
 import { BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useGetDepartmentDoctors } from "@/queries/meditrack/opd-booking"
+import { useGetMediTrackUserById } from "@/queries/meditrack/users"
 import {
   useCollectFee,
   useFeeCollectionByAppointment,
@@ -665,21 +666,71 @@ export function OpdVisitThreadPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collection?.visitId, collection?.appointmentId, collection?.patientName, collection?.patientUhid, collection?.patientPhone, router])
 
+  const urlUserId = searchParams.get("userId") || searchParams.get("providerId") || ""
+  const urlDepartmentId = searchParams.get("departmentId") || ""
+
   const { data: feeEstimate } = useFeeEstimate(
-    { appointmentId: appointmentId || undefined, patientId: activePatient?.id, clinicId },
+    {
+      appointmentId: appointmentId || undefined,
+      patientId: activePatient?.id,
+      clinicId,
+      userId: urlUserId || undefined,
+      departmentId: urlDepartmentId || undefined,
+    },
     (s === 1 || s === 2) && !collection
   )
 
-  const feeCharges: FeeItem[] = collection?.charges ?? feeEstimate?.charges ?? []
+  const feeDoctorId = collection?.userId || feeEstimate?.userId || urlUserId || ""
+  const feeDepartmentId = collection?.departmentId || feeEstimate?.departmentId || urlDepartmentId || ""
+  const feeDepartmentName = collection?.departmentName || feeEstimate?.departmentName || "—"
+  const feeDoctorName = collection?.userName || feeEstimate?.userName || "—"
+
+  const { data: consultingDoctor } = useGetMediTrackUserById(
+    feeDoctorId,
+    (s === 1 || s === 2) && !collection && !!feeDoctorId
+  )
+  const { data: feeDoctors = [] } = useGetDepartmentDoctors(
+    feeDepartmentId || undefined,
+    clinicId,
+    (s === 1 || s === 2) && !collection && !!feeDepartmentId
+  )
+
+  const doctorConsultationFee = (() => {
+    const fromUser = Number(consultingDoctor?.rate)
+    if (Number.isFinite(fromUser) && fromUser > 0) return fromUser
+    const matched = feeDoctors.find((d) => d.providerId === feeDoctorId)
+    const fromProvider = Number(matched?.rate)
+    if (Number.isFinite(fromProvider) && fromProvider > 0) return fromProvider
+    return null
+  })()
+
+  const feeCharges: FeeItem[] = (() => {
+    const raw = collection?.charges ?? feeEstimate?.charges ?? []
+    if (collection || doctorConsultationFee == null) return raw
+    let applied = false
+    const next = raw.map((c) => {
+      if (c.isVoid || applied) return c
+      applied = true
+      return { ...c, amount: doctorConsultationFee }
+    })
+    if (next.length === 0) {
+      return [
+        {
+          id: "doctor-consultation",
+          tariffId: null,
+          chargeName: feeDoctorName !== "—" ? `Consultation — ${feeDoctorName}` : "Consultation",
+          amount: doctorConsultationFee,
+          isVoid: false,
+        },
+      ]
+    }
+    return next
+  })()
   const payableCharges = feeCharges.filter((c, i) => !c.isVoid && !locallyVoided.includes(i))
   const anyChargeVoided = feeCharges.some((c) => c.isVoid) || locallyVoided.length > 0
   const feeWaived = !!collection?.isWaived
   const waiverReason = collection?.waiverReason
   const totalPayable = feeWaived ? 0 : payableCharges.reduce((sum, c) => sum + (c.amount || 0), 0)
-  const feeDoctorId = collection?.userId || feeEstimate?.userId || ""
-  const feeDepartmentId = collection?.departmentId || feeEstimate?.departmentId || ""
-  const feeDepartmentName = collection?.departmentName || feeEstimate?.departmentName || "—"
-  const feeDoctorName = collection?.userName || feeEstimate?.userName || "—"
 
   const visitIdParam = searchParams.get("visitId") || ""
   const diagnosticVisitId = isGuid(collection?.visitId)
@@ -750,7 +801,7 @@ export function OpdVisitThreadPage() {
   const rxInteractions = rxVisit?.interactions ?? []
   const rxCanEdit = editable && (rxVisit?.canEdit ?? true)
   const rxPrescriberName = rxVisit?.prescribedByName || (feeDoctorName !== "—" ? feeDoctorName : "Dr. Anjali Nair")
-  const rxPrescriberReg = rxVisit?.prescriberRegistrationNumber || "MCI/KA-2011-44821"
+  const rxPrescriberReg = rxVisit?.prescriberRegistrationNumber || ""
   const pharmacyOrder = pharmacyOrderQuery.data
   const pharmacyExisting = pharmacyOrder?.existingDispensing ?? null
   const pharmacyIsDispensed = Boolean(pharmacyOrder?.isDispensed || pharmacyExisting)
@@ -1174,6 +1225,8 @@ export function OpdVisitThreadPage() {
     const params = new URLSearchParams(searchParams.toString())
     params.set("stage", String(s))
     params.set("appointmentId", token.appointmentId)
+    if (token.userId) params.set("userId", token.userId)
+    if (token.departmentId) params.set("departmentId", token.departmentId)
     if (token.patientName) params.set("name", token.patientName)
     router.push(`/opd/visit-thread?${params}`)
     setActiveToken(token)
