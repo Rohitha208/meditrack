@@ -73,6 +73,10 @@ import {
   useConsultationNote,
   useCreateConsultationNote,
 } from "@/queries/meditrack/opd-consultation"
+import {
+  useCreateAdmissionReferral,
+  useGetAdmissionReferralStatus,
+} from "@/queries/meditrack/opd-admission-referral"
 import { getUserId } from "@/utils/clientCookie"
 import {
   SectionLabel,
@@ -91,19 +95,8 @@ import {
 import { DxOrderPanel } from "@/components/meditrack/opd/shared/DxOrderPanel"
 import { RxAddPanel } from "@/components/meditrack/opd/shared/RxAddPanel"
 import { STAGE_DEFS, MODE_BADGE_TONE, SUPERSEDED_CLASS } from "./theme"
-// Admission referral (Stage 5) — reviewable via a 5-state chip row, same
-// convention as the Registration search-outcome chips.
-type DemoReferralState = "not-referred" | "confirming" | "pending" | "processing" | "admitted"
 
-const REFERRAL_STATE_CHIPS: { key: DemoReferralState; label: string }[] = [
-  { key: "not-referred", label: "Not referred" },
-  { key: "confirming", label: "Confirming" },
-  { key: "pending", label: "Pending" },
-  { key: "processing", label: "Processing" },
-  { key: "admitted", label: "Admitted" },
-]
-
-const REFERRAL_STATE_BADGE: Partial<Record<DemoReferralState, string>> = {
+const REFERRAL_STATE_BADGE: Record<string, string> = {
   confirming: "Not yet sent to admission desk",
   pending: "Pending pickup",
   processing: "Being processed by admission desk",
@@ -305,6 +298,50 @@ function formatConsultWhen(value?: string | null, withTime = false) {
   return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
 }
 
+function referralStatusLabel(status?: string | null) {
+  const key = (status || "pending").toLowerCase()
+  return REFERRAL_STATE_BADGE[key] || REFERRAL_STATE_BADGE.pending
+}
+
+function fallbackReferralTimeline(
+  status?: string | null,
+  createdAt?: string | null,
+  bedAssignment?: string | null
+) {
+  const s = (status || "pending").toLowerCase()
+  const picked = s === "processing" || s === "admitted"
+  const admitted = s === "admitted"
+  return [
+    {
+      step: "filed",
+      label: "Referral filed by doctor",
+      completed: true,
+      timestamp: createdAt || null,
+      detail: "Reason and carried-over context sent to the admission desk.",
+    },
+    {
+      step: "picked-up",
+      label: "Picked up by admission desk",
+      completed: picked,
+      timestamp: null as string | null,
+      detail: picked
+        ? "Admission desk opened the referral and is completing Stage 1."
+        : "Waiting. Sitting on the IPD referral worklist, unclaimed.",
+    },
+    {
+      step: "admitted",
+      label: "Admission order generated",
+      completed: admitted,
+      timestamp: null as string | null,
+      detail: admitted
+        ? bedAssignment
+          ? `Bed ${bedAssignment}. The stay is live in IPD.`
+          : "The stay is live in IPD."
+        : "Pending — no bed committed yet.",
+    },
+  ]
+}
+
 function consultationNoteBody(note?: {
   physicalExamFindings?: string | null
   diagnosis?: string | null
@@ -501,8 +538,6 @@ export function OpdVisitThreadPage() {
   const [chiefComplaint, setChiefComplaint] = useState("")
   const [vitalsDraft, setVitalsDraft] = useState(EMPTY_VITALS_DRAFT)
   const [editingVitalKey, setEditingVitalKey] = useState<string | null>(null)
-  const [visitPickQuery, setVisitPickQuery] = useState("")
-
   const [dismissedDeepLink, setDismissedDeepLink] = useState(false)
   const [state, setState] = useState<ThreadState>(INITIAL_STATE)
   const [tmp, setTmp] = useState<Record<string, string>>({})
@@ -756,6 +791,10 @@ export function OpdVisitThreadPage() {
   const createConsultationNote = useCreateConsultationNote()
   const amendConsultationNote = useAmendConsultationNote()
   const consultAddendums = consultAmendmentsQuery.data ?? []
+  const referralIdParam = searchParams.get("referralId") || ""
+  const referralId = isGuid(referralIdParam) ? referralIdParam : ""
+  const createAdmissionReferral = useCreateAdmissionReferral()
+  const referralStatusQuery = useGetAdmissionReferralStatus(referralId, s === 4 && !!referralId)
 
   useEffect(() => {
     if (vitals?.chiefComplaint != null) setChiefComplaint(vitals.chiefComplaint)
@@ -832,21 +871,13 @@ export function OpdVisitThreadPage() {
     (s === 2 || s >= 3) && !!clinicId
   )
   const missedTokens = liveQueue?.missedTokens ?? []
-  const visitPickNeedle = visitPickQuery.trim().toLowerCase()
   const todayPatientOptions = [...(liveQueue?.activeQueue ?? []), ...(liveQueue?.missedTokens ?? [])]
     .filter((token, index, all) => all.findIndex((t) => t.id === token.id) === index)
     .filter((token) => token.status !== "Cancelled")
     .filter((token) => Boolean(token.appointmentId || token.id))
-  const todayVisitOptions = todayPatientOptions.filter((token) => {
-    if (!visitPickNeedle) return true
-    return [token.patientName, token.tokenNumber, token.userName, token.departmentName]
-      .filter(Boolean)
-      .some((part) => String(part).toLowerCase().includes(visitPickNeedle))
-  })
   const visitTokenKey = (token: OpdQueueToken) => token.appointmentId || token.id
   const selectedPatientKey = appointmentId || activeToken?.appointmentId || ""
   const awaitingVisitContext = Boolean(appointmentId) && collectionLoading
-  const needsVisitPick = (s === 4 || s === 5) && !isGuid(diagnosticVisitId) && !awaitingVisitContext
 
   const { data: reassignDoctors = [] } = useGetDepartmentDoctors(
     activeToken?.departmentId || undefined,
@@ -927,25 +958,71 @@ export function OpdVisitThreadPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s, checkinPhone, checkinName])
 
-  // Admission referral (Stage 5 → IPD) — §3 of the handoff: "one record, two
-  // desks". See ipd-stay-page.tsx's worklist for the other side of this
-  // same story (independent demo state, not a live shared store).
-  //
-  // One state variable drives both the confirm panel and the referral card,
-  // switched via a review chip row — same convention as Registration's
-  // "search outcome" chips — rather than a forward-only progression, so any
-  // state can be inspected directly.
-  const [demoReferralState, setDemoReferralState] = useState<DemoReferralState>("not-referred")
+  // Admission referral (Consultation → IPD). Confirm panel is local until
+  // POST /api/AdmissionReferral; the status card then follows GET .../status.
+  const [referralConfirming, setReferralConfirming] = useState(false)
   const [admitReason, setAdmitReason] = useState("Unstable angina with a rising troponin — needs a monitored bed and inpatient workup today.")
+  const [filedReferral, setFiledReferral] = useState<{
+    id: string
+    referralCode: string
+    status: string
+    admissionReason: string
+    createdAt: string
+  } | null>(null)
+
+  const referralStatusView = referralStatusQuery.data
+  const referralStatus = (referralStatusView?.status || filedReferral?.status || "pending").toLowerCase()
+  const hasReferral = Boolean(referralId || filedReferral)
+  const referralCode = referralStatusView?.referralCode || filedReferral?.referralCode || ""
+  const referralReason = filedReferral?.admissionReason || admitReason
+  const referralTimeline = referralStatusView?.timeline?.length
+    ? referralStatusView.timeline
+    : fallbackReferralTimeline(referralStatus, filedReferral?.createdAt, referralStatusView?.bedAssignment)
 
   // Consultation (Stage 4) — "Order diagnostics" expands the same DxOrderPanel
   // in place rather than navigating, per the addendum spec.
   const [inlineDxOpen, setInlineDxOpen] = useState(false)
   const [clinicalNotesDraft, setClinicalNotesDraft] = useState("")
 
-  function fileAdmissionReferral() {
+  async function fileAdmissionReferral() {
     if (!admitReason.trim()) return
-    setDemoReferralState("pending")
+    if (!consultNote?.id || !isGuid(consultNote.id)) {
+      toast({
+        title: "Sign clinical notes first",
+        description: "The referral is attached to the signed consultation record.",
+        variant: "destructive",
+      })
+      return
+    }
+    const patientId =
+      consultNote.patientId || vitalsPatientId || collection?.patientId || consultContext?.patientId || activePatient?.id || ""
+    if (!isGuid(patientId)) {
+      toast({
+        title: "No patient on this visit",
+        description: "Select a patient from the top before filing the referral.",
+        variant: "destructive",
+      })
+      return
+    }
+    try {
+      const created = await createAdmissionReferral.mutateAsync({
+        patientId,
+        medicalRecordId: consultNote.id,
+        admissionReason: admitReason.trim(),
+      })
+      setFiledReferral(created)
+      setReferralConfirming(false)
+      const params = new URLSearchParams(searchParams.toString())
+      params.set("referralId", created.id)
+      router.replace(`/opd/visit-thread?${params.toString()}`)
+      patch({ bannerText: `Admission referral ${created.referralCode} filed.` })
+    } catch (err) {
+      toast({
+        title: "Could not file admission referral",
+        description: getToastErrorMessage(err, "Referral failed"),
+        variant: "destructive",
+      })
+    }
   }
 
   function resetRegSearchUi() {
@@ -1230,17 +1307,6 @@ export function OpdVisitThreadPage() {
     if (token.patientName) params.set("name", token.patientName)
     router.push(`/opd/visit-thread?${params}`)
     setActiveToken(token)
-    setVisitPickQuery("")
-  }
-
-  function clearVisitContext() {
-    const params = new URLSearchParams()
-    params.set("stage", String(s))
-    router.push(`/opd/visit-thread?${params}`)
-    setCollection(null)
-    setActiveToken(null)
-    setActivePatient(null)
-    setVisitPickQuery("")
   }
 
   function closeDrawer() {
@@ -2258,55 +2324,6 @@ export function OpdVisitThreadPage() {
 
   const goNext = () => goToStage(s + 1)
 
-  const visitPicker = (
-    <Panel className="max-w-[720px]">
-      <SectionLabel>Today’s OPD visits</SectionLabel>
-      <p className="mb-3 text-xs text-adminreg-muted">
-        This screen needs a visit. Search by name or token, or pick from today’s queue.
-      </p>
-      <div className="flex gap-2">
-        <input
-          value={visitPickQuery}
-          onChange={(e) => setVisitPickQuery(e.target.value)}
-          placeholder="Search by name or token number"
-          className="w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo"
-        />
-        {visitPickQuery && (
-          <AdminButton type="button" variant="secondary" className="flex-shrink-0" onClick={() => setVisitPickQuery("")}>
-            Clear
-          </AdminButton>
-        )}
-      </div>
-      {!hasBranch && (
-        <p className="mt-3 border-t border-adminreg-divider py-2.5 text-sm text-adminreg-red">{noBranchMessage}</p>
-      )}
-      {hasBranch && liveQueueLoading && (
-        <p className="mt-3 border-t border-adminreg-divider py-2.5 text-sm text-adminreg-muted">Loading today’s visits…</p>
-      )}
-      {hasBranch && !liveQueueLoading && todayVisitOptions.length === 0 && (
-        <p className="mt-3 border-t border-adminreg-divider py-2.5 text-sm text-adminreg-muted">
-          {visitPickNeedle ? `No match for “${visitPickQuery.trim()}”.` : "No patients in today’s OPD queue yet."}
-        </p>
-      )}
-      {todayVisitOptions.map((token) => (
-        <div key={token.id} className="mt-0 flex items-center justify-between gap-3 border-t border-adminreg-divider py-2.5">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-adminreg-text">{token.patientName || "—"}</div>
-            <div className="font-plexmono text-[11px] text-adminreg-muted">
-              Token {token.tokenNumber}
-              {token.departmentName ? ` · ${token.departmentName}` : ""}
-              {token.userName ? ` · ${token.userName}` : ""}
-              {token.status ? ` · ${token.status}` : ""}
-            </div>
-          </div>
-          <AdminButton type="button" variant="secondary" className="flex-shrink-0" onClick={() => openVisitFromToken(token)}>
-            Select
-          </AdminButton>
-        </div>
-      ))}
-    </Panel>
-  )
-
   return (
     <div className="min-h-full">
       <div className="flex flex-shrink-0 flex-wrap items-end justify-between gap-4 border-b border-adminreg-border bg-adminreg-header px-4 py-4 font-archivo sm:px-6 md:px-8">
@@ -2318,11 +2335,6 @@ export function OpdVisitThreadPage() {
           {(dxPatientLabel || searchParams.get("name")) && (
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-adminreg-muted">
               <span>{dxPatientLabel || searchParams.get("name")}</span>
-              {(s === 4 || s === 5) && isGuid(diagnosticVisitId) && (
-                <button type="button" onClick={clearVisitContext} className="text-[11px] text-adminreg-muted underline">
-                  Change patient
-                </button>
-              )}
             </div>
           )}
         </div>
@@ -3093,8 +3105,7 @@ export function OpdVisitThreadPage() {
               <p className="text-sm text-adminreg-muted">Loading this visit…</p>
             </Panel>
           )}
-          {s === 4 && needsVisitPick && visitPicker}
-          {s === 4 && !needsVisitPick && !awaitingVisitContext && (
+          {s === 4 && !awaitingVisitContext && (
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1.3fr]">
               <div>
                 <Panel className="mb-3.5">
@@ -3181,12 +3192,12 @@ export function OpdVisitThreadPage() {
                       <AdminButton type="button" accent="indigo" onClick={() => setInlineDxOpen((v) => !v)}>{inlineDxOpen ? "Close diagnostics order" : "Order diagnostics"}</AdminButton>
                       <AdminButton type="button" variant="secondary" onClick={() => { patch({ diagnosticsSkipped: true }); goToStage(6) }}>Skip — prescribe directly</AdminButton>
                       <AdminButton type="button" variant="secondary" onClick={openReferSpecialist}>Refer to specialist</AdminButton>
-                      {demoReferralState === "not-referred" && (
-                        <AdminButton type="button" variant="secondary" className="border-adminreg-ipd text-adminreg-ipd hover:bg-adminreg-ipd/10" onClick={() => setDemoReferralState("confirming")}>
+                      {!hasReferral && !referralConfirming && (
+                        <AdminButton type="button" variant="secondary" className="border-adminreg-ipd text-adminreg-ipd hover:bg-adminreg-ipd/10" onClick={() => setReferralConfirming(true)}>
                           Admission needed (→ IPD)
                         </AdminButton>
                       )}
-                      {demoReferralState === "confirming" && (
+                      {referralConfirming && !hasReferral && (
                         <AdminButton type="button" className="border-adminreg-ipd bg-adminreg-ipd text-adminreg-card hover:bg-adminreg-ipd/90">
                           Admission needed (→ IPD)
                         </AdminButton>
@@ -3222,7 +3233,7 @@ export function OpdVisitThreadPage() {
                   </div>
                 ))}
 
-                {editable && demoReferralState === "confirming" && (
+                {editable && referralConfirming && !hasReferral && (
                   <div className="mt-3.5 border-t-[3px] border-adminreg-ipd bg-adminreg-ipd/[0.06] p-3.5">
                     <div className="mb-1.5 flex items-center justify-between">
                       <div>
@@ -3231,7 +3242,7 @@ export function OpdVisitThreadPage() {
                         </span>
                         <div className="font-plexmono text-[10px] font-bold uppercase tracking-[0.04em] text-adminreg-ipd">Confirm admission referral</div>
                       </div>
-                      <span onClick={() => setDemoReferralState("not-referred")} className="cursor-pointer text-[11px] text-adminreg-muted underline">Cancel</span>
+                      <span onClick={() => setReferralConfirming(false)} className="cursor-pointer text-[11px] text-adminreg-muted underline">Cancel</span>
                     </div>
                     <p className="mb-2.5 text-xs text-adminreg-muted">This does not cancel anything already ordered in this consultation — it just opens a referral for the admission desk to pick up.</p>
                     <FieldLabel>Admission reason</FieldLabel>
@@ -3276,85 +3287,57 @@ export function OpdVisitThreadPage() {
                         </div>
                       </div>
                     </div>
-                    <AdminButton type="button" className="mt-3 border-adminreg-ipd bg-adminreg-ipd text-adminreg-card hover:bg-adminreg-ipd/90" disabled={!admitReason.trim()} onClick={fileAdmissionReferral}>
+                    <AdminButton
+                      type="button"
+                      className="mt-3 border-adminreg-ipd bg-adminreg-ipd text-adminreg-card hover:bg-adminreg-ipd/90"
+                      disabled={!admitReason.trim() || createAdmissionReferral.isPending}
+                      onClick={() => void fileAdmissionReferral()}
+                    >
+                      {createAdmissionReferral.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                       Confirm admission — bed allocation (→ IPD)
                     </AdminButton>
                   </div>
                 )}
 
-                {(demoReferralState === "pending" || demoReferralState === "processing" || demoReferralState === "admitted") && (
+                {hasReferral && (
                   <div className="mt-3.5">
-                    <div className="mb-2.5 flex flex-wrap items-center gap-2">
-                      <span className="mr-1 self-center font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-muted2">Referral state</span>
-                      {REFERRAL_STATE_CHIPS.map((c) => (
-                        <button
-                          key={c.key}
-                          type="button"
-                          onClick={() => setDemoReferralState(c.key)}
-                          className={cn(
-                            "border px-2 py-1 font-plexmono text-[9.5px] font-bold uppercase tracking-[0.03em] transition-colors",
-                            demoReferralState === c.key ? "border-adminreg-ipd bg-adminreg-ipd text-adminreg-card" : "border-adminreg-border bg-adminreg-bg text-adminreg-muted hover:text-adminreg-text"
-                          )}
-                        >
-                          {c.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className={cn("border-t-[3px] p-3.5", demoReferralState === "admitted" ? "border-adminreg-olive bg-adminreg-olive-soft" : "border-adminreg-ipd bg-adminreg-ipd/[0.06]")}>
+                    <div className={cn("border-t-[3px] p-3.5", referralStatus === "admitted" ? "border-adminreg-olive bg-adminreg-olive-soft" : "border-adminreg-ipd bg-adminreg-ipd/[0.06]")}>
                       <div className="mb-2.5 flex items-center justify-between">
-                        <span className={cn("font-plexmono text-[10px] font-bold uppercase tracking-[0.04em]", demoReferralState === "admitted" ? "text-adminreg-olive-dark" : "text-adminreg-ipd")}>
-                          Admission referral · REF-20260812-0031
+                        <span className={cn("font-plexmono text-[10px] font-bold uppercase tracking-[0.04em]", referralStatus === "admitted" ? "text-adminreg-olive-dark" : "text-adminreg-ipd")}>
+                          Admission referral · {referralCode || "—"}
                         </span>
-                        <span className={cn("border px-2 py-0.5 font-plexmono text-[9.5px] font-bold uppercase", demoReferralState === "admitted" ? "border-adminreg-olive text-adminreg-olive-dark" : "border-adminreg-ipd text-adminreg-ipd")}>
-                          {REFERRAL_STATE_BADGE[demoReferralState]}
+                        <span className={cn("border px-2 py-0.5 font-plexmono text-[9.5px] font-bold uppercase", referralStatus === "admitted" ? "border-adminreg-olive text-adminreg-olive-dark" : "border-adminreg-ipd text-adminreg-ipd")}>
+                          {referralStatusLabel(referralStatus)}
                         </span>
                       </div>
 
                       <div className="space-y-2.5">
-                        <div className="flex gap-2.5">
-                          <span className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 border border-adminreg-ipd bg-adminreg-ipd" />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="text-xs font-semibold text-adminreg-text">Referral filed by doctor</span>
-                              <span className="flex-shrink-0 font-plexmono text-[10px] text-adminreg-muted">12 Aug, 09:58</span>
+                        {referralTimeline.map((step) => (
+                          <div key={step.step || step.label} className="flex gap-2.5">
+                            <span className={cn("mt-0.5 h-3.5 w-3.5 flex-shrink-0 border border-adminreg-ipd", step.completed && "bg-adminreg-ipd")} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-xs font-semibold text-adminreg-text">{step.label}</span>
+                                <span className="flex-shrink-0 font-plexmono text-[10px] text-adminreg-muted">
+                                  {formatConsultWhen(step.timestamp, true) || "—"}
+                                </span>
+                              </div>
+                              {step.detail && <p className="text-[11px] text-adminreg-muted">{step.detail}</p>}
                             </div>
-                            <p className="text-[11px] text-adminreg-muted">Reason and carried-over context sent to the admission desk.</p>
                           </div>
-                        </div>
-                        <div className="flex gap-2.5">
-                          <span className={cn("mt-0.5 h-3.5 w-3.5 flex-shrink-0 border border-adminreg-ipd", demoReferralState !== "pending" && "bg-adminreg-ipd")} />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="text-xs font-semibold text-adminreg-text">Picked up by admission desk</span>
-                              <span className="flex-shrink-0 font-plexmono text-[10px] text-adminreg-muted">{demoReferralState === "pending" ? "—" : "12 Aug, 10:04"}</span>
-                            </div>
-                            <p className="text-[11px] text-adminreg-muted">
-                              {demoReferralState === "pending" ? "Waiting. Sitting on the IPD referral worklist, unclaimed." : "A. Bhatt opened the referral and is completing Stage 1."}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex gap-2.5">
-                          <span className={cn("mt-0.5 h-3.5 w-3.5 flex-shrink-0 border border-adminreg-ipd", demoReferralState === "admitted" && "bg-adminreg-ipd")} />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="text-xs font-semibold text-adminreg-text">Admission order generated</span>
-                              <span className="flex-shrink-0 font-plexmono text-[10px] text-adminreg-muted">{demoReferralState === "admitted" ? "12 Aug, 10:11" : "—"}</span>
-                            </div>
-                            <p className="text-[11px] text-adminreg-muted">
-                              {demoReferralState === "admitted" ? "Bed GM-004, General Medicine. The stay is live in IPD." : "Pending — no bed committed yet."}
-                            </p>
-                          </div>
-                        </div>
+                        ))}
                       </div>
 
                       <p className="mt-3 border-t border-adminreg-divider pt-2.5 text-[11px] text-adminreg-muted">
-                        Reason filed: {admitReason}
-                        <br />
-                        Chest X-ray ordered 09:58 is unaffected and still awaiting collection.
+                        Reason filed: {referralReason}
                       </p>
-                      {demoReferralState === "admitted" && (
-                        <a href="/ipd/stay?stage=1" className="mt-2 inline-block text-[11px] font-semibold text-adminreg-olive-dark underline">Open IPD admission IPD-20260809-0042 →</a>
+                      {referralStatus === "admitted" && (
+                        <a
+                          href={referralStatusView?.ipdAdmissionId ? `/ipd/stay?stage=1&admissionId=${referralStatusView.ipdAdmissionId}` : "/ipd/stay?stage=1"}
+                          className="mt-2 inline-block text-[11px] font-semibold text-adminreg-olive-dark underline"
+                        >
+                          Open IPD admission{referralStatusView?.ipdAdmissionId ? ` ${referralStatusView.ipdAdmissionId}` : ""} →
+                        </a>
                       )}
                     </div>
                   </div>
@@ -3373,8 +3356,6 @@ export function OpdVisitThreadPage() {
               <Panel className="max-w-[720px]">
                 <p className="text-sm text-adminreg-muted">Loading this visit…</p>
               </Panel>
-            ) : needsVisitPick ? (
-              visitPicker
             ) : (
               <div className="space-y-6">
               <DxOrderPanel
