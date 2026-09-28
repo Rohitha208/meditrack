@@ -1,8 +1,7 @@
 export type AdmissionReferralStatusValue = "pending" | "processing" | "admitted" | string;
 
 export interface CreateAdmissionReferralRequest {
-  patientId: string;
-  medicalRecordId: string;
+  visitId: string;
   admissionReason: string;
 }
 

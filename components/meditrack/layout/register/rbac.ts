@@ -61,13 +61,13 @@ export function dxWorklistEditable(role: StaffRole): boolean {
  * the same explicit MAR-only restriction the spec states for IPD.
  *
  * Lab / Radiology Tech works from the three Diagnostics worklists (see
- * canAccessDxWorklist), not the visit thread — in the thread they only reach
- * the Diagnostics stage, which they own. Nurse is likewise narrowed. */
+ * canAccessDxWorklist) and owns the Diagnostics stage of the visit thread.
+ * Doctors order tests from Consultation — they do not re-order on Diagnostics. */
 export const OPD_STAGE_ACCESS: Record<StaffRole, { visible: number[]; editable: number[] }> = {
   frontdesk: { visible: [0, 1, 2, 3, 4, 5, 6, 7, 8], editable: [0, 1, 2, 8] },
-  doctor: { visible: [0, 1, 2, 3, 4, 5, 6, 7, 8], editable: [4, 5, 6] },
+  doctor: { visible: [0, 1, 2, 3, 4, 5, 6, 7, 8], editable: [4, 6] },
   nurse: { visible: [3], editable: [3] },
-  labtech: { visible: [5], editable: [] },
+  labtech: { visible: [5], editable: [5] },
   admin: { visible: [0, 1, 2, 3, 4, 5, 6, 7, 8], editable: [] },
 }
 

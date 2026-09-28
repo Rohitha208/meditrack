@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState, type FormEvent } from "react"
-import { Eye, Loader2, Pencil, Plus, Trash2 } from "lucide-react"
+import { Loader2, Pencil, Plus, Trash2 } from "lucide-react"
 
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -250,7 +250,6 @@ export function AdminDepartmentsPage() {
         ),
       sortValue: (r) => displayHead(r),
     },
-    { key: "tariffGroup", header: "Tariff Group", render: () => "—" },
     { key: "providers", header: "Doctors", render: (r) => doctorCount(r), sortValue: (r) => doctorCount(r) },
     {
       key: "action",
@@ -261,7 +260,6 @@ export function AdminDepartmentsPage() {
       render: (r) => (
         <RowActions
           actions={[
-            { icon: Eye, label: "View", onClick: () => setViewId(r.departmentId) },
             { icon: Pencil, label: "Edit", onClick: () => openEdit(r) },
             {
               icon: Trash2,
@@ -361,7 +359,7 @@ export function AdminDepartmentsPage() {
         {!hasBranch ? (
           <p className="px-5 py-8 text-sm text-adminreg-red">{noBranchMessage}</p>
         ) : isLoading ? (
-          <TableSkeleton rows={6} columns={4} />
+          <TableSkeleton rows={6} columns={3} />
         ) : isError ? (
           <p className="px-5 py-8 text-sm text-adminreg-red">{getToastErrorMessage(error, "Failed to load departments")}</p>
         ) : (
@@ -369,6 +367,8 @@ export function AdminDepartmentsPage() {
             columns={columns}
             rows={departments}
             keyExtractor={(r) => r.departmentId}
+            onRowClick={(r) => setViewId(r.departmentId)}
+            isRowActive={(r) => r.departmentId === viewId}
             emptyTitle="No departments yet"
             emptyDescription="Add a department to start mapping heads and doctors."
           />

@@ -9,6 +9,7 @@ import { AdminButton } from "@/components/meditrack/admin/register"
 import { useStaffRole } from "@/components/meditrack/layout/register/RoleProvider"
 import { ROLE_LABEL, dxWorklistEditable } from "@/components/meditrack/layout/register/rbac"
 import { useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
+import { useRootContext } from "@/context/RootContext"
 import { SectionLabel, Panel, InlineInfo, ViewOnlyBanner } from "@/components/meditrack/opd/shared/ui"
 import { DX_WORKLIST_DEFS, IMAGING_FAIL_REASONS, REJECTION_REASONS, type DxWorklistKey } from "./theme"
 import {
@@ -56,6 +57,19 @@ function atTimeToday(hhmm: string) {
   const d = new Date()
   d.setHours(h || 0, m || 0, 0, 0)
   return d.toISOString()
+}
+
+function collectorLabel(user: {
+  firstName?: string
+  lastName?: string
+  email?: string
+  roleName?: string
+  role?: string
+} | null | undefined) {
+  const name = `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || user?.email || ""
+  const role = (user?.roleName || user?.role || "").trim()
+  if (name && role) return `${name} (${role})`
+  return name || role || "—"
 }
 
 function isRejected(status?: string | null) {
@@ -165,6 +179,8 @@ function useKeepSelection(items: DiagnosticWorklistItem[], selectedId: string | 
 // =========================================================================
 
 function SampleCollectionScreen({ editable, clinicId }: { editable: boolean; clinicId?: string }) {
+  const { user } = useRootContext()
+  const collectedBy = collectorLabel(user)
   const queryClient = useQueryClient()
   const collect = useCollectDiagnosticSample()
   const reject = useRejectDiagnosticSpecimen()
@@ -294,7 +310,7 @@ function SampleCollectionScreen({ editable, clinicId }: { editable: boolean; cli
               <div className="mt-3 border-l-[3px] border-adminreg-olive bg-adminreg-olive-soft p-3">
                 <div className="font-plexmono text-[10px] font-bold uppercase tracking-[0.04em] text-adminreg-olive-dark">Collected — in the result-entry queue</div>
                 <p className="mt-0.5 font-plexmono text-[10px] text-adminreg-olive-dark">
-                  {hhMm(collected?.collectedAt || selectedOrder.sampleCollectedAt)} · {collected?.specimenNumber || selectedOrder.specimenBarcode || specNo} · {selectedOrder.collectedByName || collected?.collectedByName || "Phlebotomy"}
+                  {hhMm(collected?.collectedAt || selectedOrder.sampleCollectedAt)} · {collected?.specimenNumber || selectedOrder.specimenBarcode || specNo} · {selectedOrder.collectedByName || collected?.collectedByName || collectedBy}
                 </p>
                 <p className="mt-1.5 text-xs text-adminreg-olive-dark">
                   Chain of custody starts here. {selectedOrder.testName} is now visible on Result Entry; nothing before this point was.
@@ -314,12 +330,12 @@ function SampleCollectionScreen({ editable, clinicId }: { editable: boolean; cli
                   {selectedOrder.recollectionReason || `Specimen ${specNo} rejected at lab receipt — ${lastReject?.rejectionReason || "needs recollection"}. Order stays open; recollection required.`}
                 </p>
               </div>
-              <CollectForm editable={editable} barcode={barcode} setBarcode={setBarcode} specNo={specNo} onCollect={() => void markCollected()} time={collectTime} setTime={setCollectTime} dateLabel={todayLabel} busy={collect.isPending} />
+              <CollectForm editable={editable} barcode={barcode} setBarcode={setBarcode} specNo={specNo} onCollect={() => void markCollected()} time={collectTime} setTime={setCollectTime} dateLabel={todayLabel} busy={collect.isPending} collectedBy={collectedBy} />
             </div>
           ) : (
             <div className="mt-3">
               <div className="mb-2"><DashedTag>Awaiting collection — attempt {attempt}</DashedTag></div>
-              <CollectForm editable={editable} barcode={barcode} setBarcode={setBarcode} specNo={specNo} onCollect={() => void markCollected()} time={collectTime} setTime={setCollectTime} dateLabel={todayLabel} busy={collect.isPending} />
+              <CollectForm editable={editable} barcode={barcode} setBarcode={setBarcode} specNo={specNo} onCollect={() => void markCollected()} time={collectTime} setTime={setCollectTime} dateLabel={todayLabel} busy={collect.isPending} collectedBy={collectedBy} />
             </div>
           )}
 
@@ -351,7 +367,7 @@ function SampleCollectionScreen({ editable, clinicId }: { editable: boolean; cli
                       <span className="text-adminreg-text">
                         {e.line || (rejected
                           ? `Attempt ${e.attemptNo} — rejected by ${e.rejectedByName || "Lab"} — ${e.rejectionReason}.`
-                          : `Attempt ${e.attemptNo} — collected by ${e.collectedByName || "Phlebotomy"}. Specimen ${e.specimenNumber || e.barcode || specNo}.`)}
+                          : `Attempt ${e.attemptNo} — collected by ${e.collectedByName || collectedBy}. Specimen ${e.specimenNumber || e.barcode || specNo}.`)}
                       </span>
                       <Chip tone={rejected ? "recollection" : "collected"}>{rejected ? "Rejected" : "Collected"}</Chip>
                     </div>
@@ -368,7 +384,7 @@ function SampleCollectionScreen({ editable, clinicId }: { editable: boolean; cli
   )
 }
 
-function CollectForm({ editable, barcode, setBarcode, specNo, onCollect, time, setTime, dateLabel, busy }: { editable: boolean; barcode: string; setBarcode: (v: string) => void; specNo: string; onCollect: () => void; time: string; setTime: (v: string) => void; dateLabel: string; busy?: boolean }) {
+function CollectForm({ editable, barcode, setBarcode, specNo, onCollect, time, setTime, dateLabel, busy, collectedBy }: { editable: boolean; barcode: string; setBarcode: (v: string) => void; specNo: string; onCollect: () => void; time: string; setTime: (v: string) => void; dateLabel: string; busy?: boolean; collectedBy: string }) {
   return (
     <div className="mt-3">
       <div className="font-plexmono text-[9px] uppercase tracking-[0.04em] text-adminreg-muted2">Specimen barcode — optional</div>
@@ -400,7 +416,7 @@ function CollectForm({ editable, barcode, setBarcode, specNo, onCollect, time, s
           </div>
           <p className="mt-1 text-[10px] text-adminreg-muted">Defaults to now — adjust if the vial was drawn earlier.</p>
         </div>
-        <DetailBox label="Collected by">K. Rao (Phlebotomy)</DetailBox>
+        <DetailBox label="Collected by">{collectedBy}</DetailBox>
       </div>
       {editable && (
         <AdminButton type="button" accent="indigo" className="mt-3 w-full" disabled={!time || busy} onClick={onCollect}>
@@ -416,6 +432,8 @@ function CollectForm({ editable, barcode, setBarcode, specNo, onCollect, time, s
 // =========================================================================
 
 function ImagingPerformedScreen({ editable, clinicId }: { editable: boolean; clinicId?: string }) {
+  const { user } = useRootContext()
+  const performedBy = collectorLabel(user)
   const queryClient = useQueryClient()
   const collect = useCollectDiagnosticSample()
   const reject = useRejectDiagnosticSpecimen()
@@ -495,7 +513,7 @@ function ImagingPerformedScreen({ editable, clinicId }: { editable: boolean; cli
               <span className="font-plexmono text-[9.5px] uppercase tracking-[0.04em] text-adminreg-muted2">{awaitingCount} awaiting imaging</span>
             </div>
             <p className="text-xs text-adminreg-muted">
-              S. Fernandes (Radiographer). Radiology orders that are payment- or coverage-cleared and awaiting the scan. No specimen is involved — what is captured here is the equipment used and the time performed.
+              Radiology orders that are payment- or coverage-cleared and awaiting the scan. No specimen is involved — what is captured here is the equipment used and the time performed.
             </p>
           </div>
           {worklist.isLoading && orders.length === 0 && <EmptyWorklist message="Loading imaging worklist…" />}
@@ -538,7 +556,7 @@ function ImagingPerformedScreen({ editable, clinicId }: { editable: boolean; cli
             <div className="mt-3 border-l-[3px] border-adminreg-olive bg-adminreg-olive-soft p-3">
               <div className="font-plexmono text-[10px] font-bold uppercase tracking-[0.04em] text-adminreg-olive-dark">Imaging performed — in the result-entry queue</div>
               <p className="mt-0.5 font-plexmono text-[10px] text-adminreg-olive-dark">
-                {hhMm(performed?.collectedAt || selectedOrder.sampleCollectedAt)} · {selectedOrder.equipmentUsed || performed?.line || rooms[0]} · {selectedOrder.collectedByName || "Radiographer"}
+                {hhMm(performed?.collectedAt || selectedOrder.sampleCollectedAt)} · {selectedOrder.equipmentUsed || performed?.line || rooms[0]} · {selectedOrder.collectedByName || performedBy}
               </p>
               <p className="mt-1.5 text-xs text-adminreg-olive-dark">Images are with PACS and the order is now on Result Entry for the radiologist&apos;s report.</p>
               <div className="mt-2"><Link href="/opd/diagnostics?screen=result-entry" className="text-[11px] font-semibold text-adminreg-olive-dark underline">Open Result Entry →</Link></div>
@@ -572,7 +590,7 @@ function ImagingPerformedScreen({ editable, clinicId }: { editable: boolean; cli
               </div>
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <DetailBox label="Performed at">{todayLabel} · {doneTime}</DetailBox>
-                <DetailBox label="Radiographer">S. Fernandes</DetailBox>
+                <DetailBox label="Radiographer">{performedBy}</DetailBox>
               </div>
               {editable && (
                 <>
@@ -605,8 +623,8 @@ function ImagingPerformedScreen({ editable, clinicId }: { editable: boolean; cli
                     <div key={e.id} className="flex items-start justify-between gap-2 border border-adminreg-divider bg-adminreg-bg px-2.5 py-1.5 text-[11px]">
                       <span className="text-adminreg-text">
                         {e.line || (failed
-                          ? `Attempt ${e.attemptNo} — failed (${e.rejectionReason}), logged by ${e.rejectedByName || "Radiographer"}.`
-                          : `Attempt ${e.attemptNo} — performed on ${selectedOrder.equipmentUsed || "equipment"} by ${e.collectedByName || "Radiographer"}.`)}
+                          ? `Attempt ${e.attemptNo} — failed (${e.rejectionReason}), logged by ${e.rejectedByName || performedBy}.`
+                          : `Attempt ${e.attemptNo} — performed on ${selectedOrder.equipmentUsed || "equipment"} by ${e.collectedByName || performedBy}.`)}
                       </span>
                       <Chip tone={failed ? "repeat" : "performed"}>{failed ? "Failed" : "Performed"}</Chip>
                     </div>

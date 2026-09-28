@@ -382,6 +382,29 @@ export function AdminWardsBedsPage() {
     })
   }
 
+  async function cycleBedStatus(bed: Bed) {
+    const current = toUiBedStatus(bed.status)
+    const next = LEGEND[(LEGEND.indexOf(current) + 1) % LEGEND.length]
+    try {
+      await updateBed.mutateAsync({
+        id: bed.id,
+        wardId: bed.wardId,
+        categoryId: bed.categoryId ?? null,
+        bedNumber: bed.bedNumber,
+        status: toApiBedStatus(next),
+        patientId: bed.patientId ?? null,
+        isActive: bed.isActive,
+      })
+      toast({ title: "Bed status updated", description: `${bed.bedNumber} is now ${next}.` })
+    } catch (err) {
+      toast({
+        title: "Could not update bed",
+        description: getToastErrorMessage(err, "Failed to update bed"),
+        variant: "destructive",
+      })
+    }
+  }
+
   const wardColumns: MtColumn<MediTrackWard>[] = [
     { key: "code", header: "Code", render: (r) => <span className="font-mono text-xs text-adminreg-muted">{r.code || "—"}</span> },
     { key: "name", header: "Name", alwaysVisible: true, render: (r) => <span className="font-medium text-adminreg-text">{r.name}</span> },
@@ -778,7 +801,16 @@ export function AdminWardsBedsPage() {
                     return (
                       <div
                         key={bed.id}
-                        className={cn("border p-3 text-left text-sm", cls.border, cls.bg)}
+                        role="button"
+                        tabIndex={0}
+                        title="Double-click to change status"
+                        onDoubleClick={() => void cycleBedStatus(bed)}
+                        className={cn(
+                          "cursor-pointer select-none border p-3 text-left text-sm",
+                          cls.border,
+                          cls.bg,
+                          updateBed.isPending && "opacity-70"
+                        )}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
@@ -789,17 +821,19 @@ export function AdminWardsBedsPage() {
                             <p className={cn("mt-0.5 text-xs font-medium", cls.text)}>{uiStatus}</p>
                             {bed.patientName && <p className="mt-1 font-mono text-[10px] text-adminreg-muted">{bed.patientName}</p>}
                           </div>
-                          <RowActions
-                            actions={[
-                              { icon: Pencil, label: "Edit", onClick: () => openEditBed(bed) },
-                              {
-                                icon: Trash2,
-                                label: "Delete",
-                                destructive: true,
-                                onClick: () => setDeleteBedTarget({ id: bed.id, bedNumber: bed.bedNumber }),
-                              },
-                            ]}
-                          />
+                          <div onDoubleClick={(e) => e.stopPropagation()}>
+                            <RowActions
+                              actions={[
+                                { icon: Pencil, label: "Edit", onClick: () => openEditBed(bed) },
+                                {
+                                  icon: Trash2,
+                                  label: "Delete",
+                                  destructive: true,
+                                  onClick: () => setDeleteBedTarget({ id: bed.id, bedNumber: bed.bedNumber }),
+                                },
+                              ]}
+                            />
+                          </div>
                         </div>
                       </div>
                     )

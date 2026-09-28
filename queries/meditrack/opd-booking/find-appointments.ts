@@ -21,7 +21,14 @@ const findAppointments = async (params: FindOpdAppointmentsParams): Promise<OpdA
   if (!response.ok) {
     throw new Error(getMessageFromErrorBody(result, "Failed to find appointments"));
   }
-  return Array.isArray(result) ? result : [];
+  const items = Array.isArray(result) ? result : [];
+  return items.map((item) => {
+    const row = item as OpdAppointment & { ClinicId?: string | null };
+    return {
+      ...row,
+      clinicId: row.clinicId || row.ClinicId || null,
+    };
+  });
 };
 
 export const useFindOpdAppointments = (params: FindOpdAppointmentsParams, enabled = true) => {

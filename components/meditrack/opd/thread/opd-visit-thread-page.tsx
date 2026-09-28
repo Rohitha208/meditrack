@@ -32,6 +32,10 @@ import {
   useUpdateFeePaymentMethod,
   useUpdateTokenStatus,
   useVoidFeeItem,
+  createRazorpayOrder,
+  isRazorpayMethod,
+  openRazorpayCheckout,
+  verifyRazorpayPayment,
   type FeeItem,
   type OpdFeeCollection,
   type OpdToken as OpdQueueToken,
@@ -74,8 +78,9 @@ import {
   useCreateConsultationNote,
 } from "@/queries/meditrack/opd-consultation"
 import {
+  admissionReferralByVisitKey,
   useCreateAdmissionReferral,
-  useGetAdmissionReferralStatus,
+  useGetAdmissionReferralByVisit,
 } from "@/queries/meditrack/opd-admission-referral"
 import { getUserId } from "@/utils/clientCookie"
 import {
@@ -530,6 +535,7 @@ export function OpdVisitThreadPage() {
   const updatePatient = useUpdatePatientRegistration()
   const uploadCards = useUploadRegistrationCards()
   const collectFee = useCollectFee()
+  const [razorpayPending, setRazorpayPending] = useState(false)
   const voidFeeItem = useVoidFeeItem()
   const updateFeePaymentMethod = useUpdateFeePaymentMethod()
   const updateTokenStatus = useUpdateTokenStatus()
@@ -695,25 +701,59 @@ export function OpdVisitThreadPage() {
       params.set("phone", collection.patientPhone)
       changed = true
     }
+    const collectionClinicId = collection.clinicId || collection.token?.clinicId || ""
+    if (isGuid(collectionClinicId) && !params.get("clinicId")) {
+      params.set("clinicId", collectionClinicId)
+      changed = true
+    }
     if (!changed) return
     router.replace(`/opd/visit-thread?${params.toString()}`)
     // searchParams is read for current URL values; collection fields are the trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collection?.visitId, collection?.appointmentId, collection?.patientName, collection?.patientUhid, collection?.patientPhone, router])
+  }, [collection?.visitId, collection?.appointmentId, collection?.patientName, collection?.patientUhid, collection?.patientPhone, collection?.clinicId, collection?.token?.clinicId, router])
 
   const urlUserId = searchParams.get("userId") || searchParams.get("providerId") || ""
   const urlDepartmentId = searchParams.get("departmentId") || ""
+  const urlClinicId = searchParams.get("clinicId") || ""
 
   const { data: feeEstimate } = useFeeEstimate(
     {
       appointmentId: appointmentId || undefined,
       patientId: activePatient?.id,
-      clinicId,
+      clinicId: appointmentId ? undefined : clinicId,
       userId: urlUserId || undefined,
       departmentId: urlDepartmentId || undefined,
     },
-    (s === 1 || s === 2) && !collection
+    ((s === 0 && !!appointmentId) || s === 1 || s === 2) && !collection
   )
+
+  const visitClinicId =
+    (isGuid(feeEstimate?.clinicId) && feeEstimate.clinicId) ||
+    (isGuid(urlClinicId) && urlClinicId) ||
+    (isGuid(collection?.clinicId) && collection.clinicId) ||
+    (isGuid(collection?.token?.clinicId) && collection.token.clinicId) ||
+    clinicId ||
+    ""
+
+  useEffect(() => {
+    const knownClinic =
+      (isGuid(feeEstimate?.clinicId) && feeEstimate.clinicId) ||
+      (isGuid(urlClinicId) && urlClinicId) ||
+      (isGuid(collection?.clinicId) && collection.clinicId) ||
+      (isGuid(collection?.token?.clinicId) && collection.token.clinicId) ||
+      ""
+    if (!knownClinic || branchId === knownClinic) return
+    setBranchId(knownClinic)
+  }, [feeEstimate?.clinicId, urlClinicId, collection?.clinicId, collection?.token?.clinicId, branchId, setBranchId])
+
+  useEffect(() => {
+    if (!isGuid(feeEstimate?.clinicId)) return
+    const params = new URLSearchParams(searchParams.toString())
+    if (params.get("clinicId") === feeEstimate.clinicId) return
+    params.set("clinicId", feeEstimate.clinicId as string)
+    router.replace(`/opd/visit-thread?${params.toString()}`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feeEstimate?.clinicId, router])
 
   const feeDoctorId = collection?.userId || feeEstimate?.userId || urlUserId || ""
   const feeDepartmentId = collection?.departmentId || feeEstimate?.departmentId || urlDepartmentId || ""
@@ -791,10 +831,8 @@ export function OpdVisitThreadPage() {
   const createConsultationNote = useCreateConsultationNote()
   const amendConsultationNote = useAmendConsultationNote()
   const consultAddendums = consultAmendmentsQuery.data ?? []
-  const referralIdParam = searchParams.get("referralId") || ""
-  const referralId = isGuid(referralIdParam) ? referralIdParam : ""
   const createAdmissionReferral = useCreateAdmissionReferral()
-  const referralStatusQuery = useGetAdmissionReferralStatus(referralId, s === 4 && !!referralId)
+  const referralStatusQuery = useGetAdmissionReferralByVisit(diagnosticVisitId, s === 4 && !!diagnosticVisitId)
 
   useEffect(() => {
     if (vitals?.chiefComplaint != null) setChiefComplaint(vitals.chiefComplaint)
@@ -959,7 +997,7 @@ export function OpdVisitThreadPage() {
   }, [s, checkinPhone, checkinName])
 
   // Admission referral (Consultation → IPD). Confirm panel is local until
-  // POST /api/AdmissionReferral; the status card then follows GET .../status.
+  // POST /api/AdmissionReferral; the status card then follows GET .../visit/{visitId}.
   const [referralConfirming, setReferralConfirming] = useState(false)
   const [admitReason, setAdmitReason] = useState("Unstable angina with a rising troponin — needs a monitored bed and inpatient workup today.")
   const [filedReferral, setFiledReferral] = useState<{
@@ -970,11 +1008,11 @@ export function OpdVisitThreadPage() {
     createdAt: string
   } | null>(null)
 
-  const referralStatusView = referralStatusQuery.data
+  const referralStatusView = referralStatusQuery.data ?? null
   const referralStatus = (referralStatusView?.status || filedReferral?.status || "pending").toLowerCase()
-  const hasReferral = Boolean(referralId || filedReferral)
+  const hasReferral = Boolean(referralStatusView || filedReferral)
   const referralCode = referralStatusView?.referralCode || filedReferral?.referralCode || ""
-  const referralReason = filedReferral?.admissionReason || admitReason
+  const referralReason = filedReferral?.admissionReason || (referralStatusView ? "—" : admitReason)
   const referralTimeline = referralStatusView?.timeline?.length
     ? referralStatusView.timeline
     : fallbackReferralTimeline(referralStatus, filedReferral?.createdAt, referralStatusView?.bedAssignment)
@@ -986,40 +1024,31 @@ export function OpdVisitThreadPage() {
 
   async function fileAdmissionReferral() {
     if (!admitReason.trim()) return
-    if (!consultNote?.id || !isGuid(consultNote.id)) {
+    if (!isGuid(diagnosticVisitId)) {
       toast({
-        title: "Sign clinical notes first",
-        description: "The referral is attached to the signed consultation record.",
-        variant: "destructive",
-      })
-      return
-    }
-    const patientId =
-      consultNote.patientId || vitalsPatientId || collection?.patientId || consultContext?.patientId || activePatient?.id || ""
-    if (!isGuid(patientId)) {
-      toast({
-        title: "No patient on this visit",
-        description: "Select a patient from the top before filing the referral.",
+        title: "No visit yet",
+        description: "Collect the consultation fee first — the referral attaches to that visit.",
         variant: "destructive",
       })
       return
     }
     try {
       const created = await createAdmissionReferral.mutateAsync({
-        patientId,
-        medicalRecordId: consultNote.id,
+        visitId: diagnosticVisitId,
         admissionReason: admitReason.trim(),
       })
       setFiledReferral(created)
       setReferralConfirming(false)
-      const params = new URLSearchParams(searchParams.toString())
-      params.set("referralId", created.id)
-      router.replace(`/opd/visit-thread?${params.toString()}`)
       patch({ bannerText: `Admission referral ${created.referralCode} filed.` })
     } catch (err) {
+      const message = getToastErrorMessage(err, "Referral failed")
+      if (/already has an admission referral/i.test(message)) {
+        setReferralConfirming(false)
+        void queryClient.invalidateQueries({ queryKey: admissionReferralByVisitKey(diagnosticVisitId) })
+      }
       toast({
         title: "Could not file admission referral",
-        description: getToastErrorMessage(err, "Referral failed"),
+        description: message,
         variant: "destructive",
       })
     }
@@ -1207,7 +1236,7 @@ export function OpdVisitThreadPage() {
     }
   }
 
-  async function saveAbhaDetails() {
+  async function saveVisitCards() {
     if (!activePatient) {
       toast({ title: "No patient selected", description: "Search or register a patient first.", variant: "destructive" })
       return
@@ -1223,58 +1252,45 @@ export function OpdVisitThreadPage() {
       })
       return
     }
+    if (!readyCards.length) {
+      toast({ title: "No cards to save", description: "Add a named file, for example ABHA Card.", variant: "destructive" })
+      return
+    }
 
     try {
-      const updated = await updatePatient.mutateAsync({
-        id: activePatient.id,
-        abhaNumber: abhaNumber.trim() || null,
+      await uploadCards.mutateAsync({
+        patientId: activePatient.id,
+        cards: readyCards.map((c) => ({
+          label: c.name.trim(),
+          file: c.file as File,
+        })),
       })
-      if (readyCards.length) {
-        await uploadCards.mutateAsync({
-          patientId: activePatient.id,
-          cards: readyCards.map((c) => ({
-            label: c.name.trim(),
-            number: /abha/i.test(c.name) ? abhaNumber.trim() || undefined : undefined,
-            file: c.file as File,
-          })),
-        })
-        setJustSavedCards(
-          readyCards.map((c) => ({
-            id: `local-${c.key}`,
-            name: c.name.trim(),
-            fileName: (c.file as File).name,
-            filePath: "",
-            fileType: (c.file as File).type || "",
-            file: c.file,
-          }))
-        )
-        setPendingCards([])
-        try {
-          await queryClient.refetchQueries({ queryKey: ["patient-files", activePatient.id] })
-        } catch {
-          // Upload already succeeded — keep the cards visible from justSavedCards.
-        }
-      }
-      setActivePatient((prev) =>
-        prev
-          ? {
-              ...prev,
-              abha: updated.abhaNumber || updated.nationalId || abhaNumber.trim() || "Not linked",
-            }
-          : prev
+      setJustSavedCards(
+        readyCards.map((c) => ({
+          id: `local-${c.key}`,
+          name: c.name.trim(),
+          fileName: (c.file as File).name,
+          filePath: "",
+          fileType: (c.file as File).type || "",
+          file: c.file,
+        }))
       )
+      setPendingCards([])
+      try {
+        await queryClient.refetchQueries({ queryKey: ["patient-files", activePatient.id] })
+      } catch {
+        // Upload already succeeded — keep the cards visible from justSavedCards.
+      }
       patch({
-        bannerText: readyCards.length
-          ? `Saved — ${readyCards.length} card${readyCards.length > 1 ? "s" : ""} uploaded.`
-          : "ABHA details saved.",
+        bannerText: `Saved — ${readyCards.length} card${readyCards.length > 1 ? "s" : ""} uploaded.`,
       })
       toast({
         title: "Saved",
-        description: readyCards.length ? "ABHA number and cards uploaded." : "ABHA number updated.",
+        description: "Cards uploaded.",
       })
     } catch (err) {
       toast({
-        title: "Could not save ABHA",
+        title: "Could not save cards",
         description: getToastErrorMessage(err, "Update failed"),
         variant: "destructive",
       })
@@ -1304,6 +1320,7 @@ export function OpdVisitThreadPage() {
     params.set("appointmentId", token.appointmentId)
     if (token.userId) params.set("userId", token.userId)
     if (token.departmentId) params.set("departmentId", token.departmentId)
+    if (token.clinicId) params.set("clinicId", token.clinicId)
     if (token.patientName) params.set("name", token.patientName)
     router.push(`/opd/visit-thread?${params}`)
     setActiveToken(token)
@@ -1703,13 +1720,34 @@ export function OpdVisitThreadPage() {
       return
     }
     try {
+      let transactionReference: string | null = null
+      if (isRazorpayMethod(paymentMethod) && totalPayable > 0) {
+        setRazorpayPending(true)
+        const order = await createRazorpayOrder(totalPayable, appointmentId || undefined)
+        const checkout = await openRazorpayCheckout({
+          order,
+          description: `${feeDoctorName !== "—" ? feeDoctorName : "Consultation"} · ${paymentMethod}`,
+          prefillName: feeEstimate?.patientName || activePatient?.name || searchParams.get("name") || "",
+          prefillContact: feeEstimate?.patientPhone || activePatient?.phone || searchParams.get("phone") || "",
+          preferredMethod: paymentMethod.toLowerCase().includes("card") ? "card" : "upi",
+        })
+        transactionReference = await verifyRazorpayPayment(checkout)
+        setRazorpayPending(false)
+      }
       const created = await collectFee.mutateAsync({
         appointmentId: appointmentId || null,
         patientId: activePatient?.id || feeEstimate?.patientId || null,
         userId: feeDoctorId,
         departmentId: feeDepartmentId || null,
-        clinicId: clinicId || feeEstimate?.clinicId || null,
+        clinicId: appointmentId
+          ? isGuid(feeEstimate?.clinicId)
+            ? feeEstimate.clinicId
+            : isGuid(urlClinicId)
+              ? urlClinicId
+              : null
+          : clinicId || null,
         paymentMethod,
+        transactionReference,
         isWaived: false,
         waiverReason: null,
         visitType: feeEstimate?.visitType,
@@ -1727,6 +1765,7 @@ export function OpdVisitThreadPage() {
       })
       goNext()
     } catch (err) {
+      setRazorpayPending(false)
       toast({ title: "Could not collect fee", description: getToastErrorMessage(err, "Collection failed"), variant: "destructive" })
     }
   }
@@ -2376,7 +2415,7 @@ export function OpdVisitThreadPage() {
           </div>
         ) : (
           <BranchSelect
-            value={branchId}
+            value={visitClinicId || branchId}
             onValueChange={setBranchId}
             branches={branches}
             isLoading={isLoadingBranches}
@@ -2710,19 +2749,10 @@ export function OpdVisitThreadPage() {
                       )}
                     </div>
                     <div className="mt-3 border-t border-adminreg-divider pt-3">
-                      <FieldLabel>ABHA (Ayushman Bharat Health Account)</FieldLabel>
-                      <input
-                        value={abhaNumber}
-                        onChange={(e) => setAbhaNumber(e.target.value)}
-                        placeholder="Ayushman health account no."
-                        disabled={!editable}
-                        className="mt-1.5 w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-60"
-                      />
-
-                      <div className="mt-3.5 flex items-center justify-between gap-2">
+                      <div className="flex items-center justify-between gap-2">
                         <div>
                           <FieldLabel>Cards</FieldLabel>
-                          <p className="mt-0.5 text-[11px] text-adminreg-muted">PDF or image · name each card</p>
+                          <p className="mt-0.5 text-[11px] text-adminreg-muted">PDF or image — ABHA, insurance, ID. Name each card.</p>
                         </div>
                         {editable && (
                           <AdminButton type="button" variant="secondary" onClick={addPendingCard}>
@@ -2734,7 +2764,7 @@ export function OpdVisitThreadPage() {
 
                       {savedCards.length === 0 && pendingCards.length === 0 ? (
                         <p className="mt-2 text-[11px] text-adminreg-muted">
-                          No cards attached yet. Use Add card to attach an ABHA or insurance card.
+                          No cards attached yet. Add an ABHA card or any other ID / insurance card.
                         </p>
                       ) : (
                         <div className="mt-2 space-y-2">
@@ -2822,16 +2852,16 @@ export function OpdVisitThreadPage() {
                         </div>
                       )}
 
-                      {editable && (
+                      {editable && pendingCards.length > 0 && (
                         <AdminButton
                           type="button"
                           variant="secondary"
                           className="mt-2.5"
-                          onClick={() => void saveAbhaDetails()}
+                          onClick={() => void saveVisitCards()}
                           disabled={updatePatient.isPending || uploadCards.isPending}
                         >
                           {(updatePatient.isPending || uploadCards.isPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                          Save ABHA &amp; cards
+                          Save cards
                         </AdminButton>
                       )}
                     </div>
@@ -2891,6 +2921,11 @@ export function OpdVisitThreadPage() {
                 </div>
                 <p className="mb-3.5 text-[11px] text-adminreg-muted">Switching method before the visit proceeds is a live edit — no reason required.</p>
                 {paymentMethod === "Cashless / TPA" && <div className="mb-3.5"><InlineWarning>Cashless pre-authorization pending. Confirm approval or collect out-of-pocket before issuing the token.</InlineWarning></div>}
+                {isRazorpayMethod(paymentMethod) && !collection && (
+                  <p className="mb-3.5 text-[11px] text-adminreg-muted">
+                    UPI and Card open Razorpay test checkout. Use Razorpay test cards / UPI — no real money is charged.
+                  </p>
+                )}
                 {feeWaived && (
                   <AddendumNote header={`OVERRIDE · ${ROLE_LABEL[role] ?? "Front desk"}${waiverReason ? ` · Reason: ${waiverReason}` : ""}`}>Fee waived — nothing to collect for this visit.</AddendumNote>
                 )}
@@ -2901,9 +2936,13 @@ export function OpdVisitThreadPage() {
                   </p>
                 )}
                 {editable && (
-                  <AdminButton type="button" accent="indigo" className="mt-4" onClick={() => void confirmPaymentAndIssueToken()} disabled={collectFee.isPending}>
-                    {collectFee.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    {collection ? "Continue → Token & queue" : "Confirm payment → Assign token"}
+                  <AdminButton type="button" accent="indigo" className="mt-4" onClick={() => void confirmPaymentAndIssueToken()} disabled={collectFee.isPending || razorpayPending}>
+                    {(collectFee.isPending || razorpayPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {collection
+                      ? "Continue → Token & queue"
+                      : isRazorpayMethod(paymentMethod) && totalPayable > 0
+                        ? "Pay with Razorpay → Assign token"
+                        : "Confirm payment → Assign token"}
                   </AdminButton>
                 )}
               </Panel>
@@ -3358,22 +3397,30 @@ export function OpdVisitThreadPage() {
               </Panel>
             ) : (
               <div className="space-y-6">
-              <DxOrderPanel
-                editable={editable}
-                visitId={diagnosticVisitId}
-                patientLabel={dxPatientLabel}
-                orderingDoctor={dxOrderingDoctor}
-                clinicId={clinicId}
-                paymentMethod={collection?.paymentMethod}
-                existingOrders={dxOrders.map((o) => ({
-                  id: o.id,
-                  name: o.testName || "Test",
-                  price: o.amount || 0,
-                  statusLabel: o.statusLabel,
-                  isVoid: o.isVoid,
-                }))}
-                onConfirm={refreshDx}
-              />
+              {role === "labtech" ? (
+                <DxOrderPanel
+                  editable={editable}
+                  visitId={diagnosticVisitId}
+                  patientLabel={dxPatientLabel}
+                  orderingDoctor={dxOrderingDoctor}
+                  clinicId={clinicId}
+                  paymentMethod={collection?.paymentMethod}
+                  existingOrders={dxOrders.map((o) => ({
+                    id: o.id,
+                    name: o.testName || "Test",
+                    price: o.amount || 0,
+                    statusLabel: o.statusLabel,
+                    isVoid: o.isVoid,
+                  }))}
+                  onConfirm={refreshDx}
+                />
+              ) : (
+                <InlineInfo>
+                  Doctors order tests from Consultation. This stage is for Lab / Radiology Tech — sample collection, imaging, and result entry.
+                  {" "}
+                  <a href="/opd/diagnostics?screen=sample-collection" className="font-semibold underline">Open Sample Collection →</a>
+                </InlineInfo>
+              )}
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <Panel>
                   <SectionLabel>Ordered tests</SectionLabel>

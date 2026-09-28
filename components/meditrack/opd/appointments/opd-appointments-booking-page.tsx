@@ -311,7 +311,7 @@ export function OpdAppointmentsBookingPage() {
         bookedPatientName: selectedPatient ? null : walkInName.trim(),
         bookedPatientPhone: selectedPatient ? null : walkInPhone.trim() || null,
       })
-      setBookedAppointment(created)
+      setBookedAppointment({ ...created, clinicId: created.clinicId || clinicId })
       // Carry the reference into lookup + check-in so those tabs re-read this
       // appointment from the booking API instead of needing a manual search.
       const carryQuery =
@@ -1043,6 +1043,8 @@ export function OpdAppointmentsBookingPage() {
                         if (checkinFound.patientName) params.set("name", checkinFound.patientName)
                         if (checkinFound.providerId) params.set("userId", checkinFound.providerId)
                         if (checkinFound.departmentId) params.set("departmentId", checkinFound.departmentId)
+                        const checkinClinicId = checkinFound.clinicId || bookedAppointment?.clinicId || clinicId
+                        if (checkinClinicId) params.set("clinicId", checkinClinicId)
                         router.push(`/opd/visit-thread?${params}`)
                       }}
                     >
