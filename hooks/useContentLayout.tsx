@@ -75,6 +75,21 @@ type workspace = {
     id: number | null;
     name: string | null;
 }
+
+function readStoredAppUser(): User | null {
+    if (typeof window === "undefined") return null;
+    try {
+        const raw = window.localStorage.getItem("user");
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        const user = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
+        if (user?.id && user?.roleName) return user as User;
+    } catch {
+        return null;
+    }
+    return null;
+}
+
 export const useContentLayout = () => {
     const router = useRouter();
     const pathname = usePathname();
@@ -85,11 +100,14 @@ export const useContentLayout = () => {
         companyId: null
     });
     const [collapsed, setCollapsed] = useState(false);
-    const [user, setUser] = useState<User | null>(null);
+    const [user, setUser] = useState<User | null>(() => readStoredAppUser());
     const [productType, setProductTypeState] = useState<ProductType | null>(
         () => (getProductType() as ProductType) || null
     );
-    const [roles, setRoles] = useState<string[] | null>(null);
+    const [roles, setRoles] = useState<string[] | null>(() => {
+        const stored = readStoredAppUser();
+        return stored?.roleName ? [stored.roleName] : null;
+    });
     const [IsAdmin, setIsAdmin] = useState<boolean | null>(null);
     const [userType, setUserType] = useState<typeof userRolesObject>(userRolesObject);
     const [authorized, setAuthorized] = useState(false);
@@ -182,9 +200,15 @@ export const useContentLayout = () => {
             return;
         }
 
-        if (!user) {
-            fetchUser();
+        const stored = readStoredAppUser();
+        if (stored) {
+            setUser(stored);
+            registerUser(stored);
+            setAuthorized(true);
+            return;
         }
+
+        fetchUser();
     }, []);
     
     // Check for clinic ID in cookies on component mount
@@ -242,6 +266,11 @@ export const useContentLayout = () => {
             
             // Register user with login data
             registerUser(loginUser);
+            // Login already has roleName. GET /api/user/{id} is 403 for Nurse
+            // (USER:READ) and must not replace this payload.
+            if (loginUser.roleName) {
+                return;
+            }
         }
         
         let userid = getUserId() || data?.user?.id;
@@ -281,18 +310,33 @@ export const useContentLayout = () => {
                 }
             }
             
-            // Check for 401 Unauthorized response
             if (response.status === 401) {
                 console.warn('Received 401 Unauthorized, token may be expired');
                 handleLogout();
                 return;
             }
 
+            if (!response.ok) {
+                // Clinical roles often cannot GET /api/user/{id} (USER:READ).
+                // Keep login / stored profile so the shell does not treat the
+                // error body as the user and show Hospital Admin.
+                if (data?.user) return;
+                const stored = readStoredAppUser();
+                if (stored) {
+                    setUser(stored);
+                    registerUser(stored);
+                    setAuthorized(true);
+                    return;
+                }
+                setLoading(false);
+                setAuthorized(false);
+                return;
+            }
+
             const userData = await response.json();
 
-            if (!userData || userData.status === 400) {
+            if (!userData?.id || userData.status === 400) {
                 console.error("userData not found");
-                // Don't set loading to false here if we already have login data
                 if (!data?.user) {
                     setLoading(false);
                     setAuthorized(false);

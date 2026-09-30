@@ -7,7 +7,6 @@ import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
 import { useGetMediTrackUsers } from "@/queries/meditrack/users"
@@ -51,7 +50,7 @@ import { BED_STATUS_CLASS, type BedStatus } from "@/components/meditrack/admin/r
 const LEGEND: BedStatus[] = ["Occupied", "Vacant", "Cleaning", "Out of service"]
 const NO_CATEGORY = "none"
 const WARD_EMPTY_FORM = { code: "", name: "", sanctioned: "0", headUserId: "unassigned", isActive: true }
-const CATEGORY_EMPTY_FORM = { name: "", code: "", description: "", isActive: true }
+const CATEGORY_EMPTY_FORM = { name: "", code: "", isActive: true }
 const BED_EMPTY_FORM = { bedNumber: "", status: "Vacant" as BedStatus, categoryId: NO_CATEGORY }
 
 export function AdminWardsBedsPage() {
@@ -227,7 +226,6 @@ export function AdminWardsBedsPage() {
     setCategoryForm({
       name: category.name || "",
       code: category.code || "",
-      description: category.description || "",
       isActive: category.isActive !== false,
     })
   }
@@ -243,7 +241,6 @@ export function AdminWardsBedsPage() {
         clinicId: categoryBranchId,
         name: categoryForm.name.trim(),
         code: categoryForm.code.trim() || null,
-        description: categoryForm.description.trim() || null,
         tariffId: null,
         isActive: true,
       })
@@ -268,7 +265,6 @@ export function AdminWardsBedsPage() {
         clinicId: categoryBranchId,
         name: categoryForm.name.trim(),
         code: categoryForm.code.trim() || null,
-        description: categoryForm.description.trim() || null,
         tariffId: editingCategory.tariffId || null,
         isActive: categoryForm.isActive,
       })
@@ -444,7 +440,6 @@ export function AdminWardsBedsPage() {
   const categoryColumns: MtColumn<BedCategory>[] = [
     { key: "code", header: "Code", render: (r) => <span className="font-mono text-xs text-adminreg-muted">{r.code || "—"}</span> },
     { key: "name", header: "Category", alwaysVisible: true, render: (r) => <span className="font-medium text-adminreg-text">{r.name}</span> },
-    { key: "description", header: "Description", render: (r) => <span className="text-adminreg-muted">{r.description || "—"}</span> },
     {
       key: "status",
       header: "Status",
@@ -557,15 +552,6 @@ export function AdminWardsBedsPage() {
           value={categoryForm.code}
           onChange={(e) => setCategoryForm((f) => ({ ...f, code: e.target.value }))}
           placeholder="e.g. GEN"
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Description</Label>
-        <Textarea
-          value={categoryForm.description}
-          onChange={(e) => setCategoryForm((f) => ({ ...f, description: e.target.value }))}
-          placeholder="Optional notes"
-          rows={2}
         />
       </div>
       {!!editingCategory && (

@@ -1,7 +1,8 @@
 "use client"
 
-import { createContext, useContext, useState, type ReactNode } from "react"
-import type { StaffRole } from "./rbac"
+import { createContext, useContext, useMemo, type ReactNode } from "react"
+import { useRootContext } from "@/context/RootContext"
+import { staffRoleFromRoleName, type StaffRole } from "./rbac"
 
 interface RoleContextValue {
   role: StaffRole
@@ -10,18 +11,20 @@ interface RoleContextValue {
 
 const RoleContext = createContext<RoleContextValue | null>(null)
 
-/** Holds the demo "preview as role" selection for the unified Admin + OPD
- * shell. Provided once, above the Admin/OPD route branching in
- * meditrack-layout.tsx, so the selection survives client-side navigation
- * between the two modules — both the sidebar and each module's page content
- * read it via `useStaffRole()`. */
+/** Staff role for the unified shell comes from the signed-in user's
+ * backend roleName — not a client-side preview toggle. */
 export function RoleProvider({ children }: { children: ReactNode }) {
-  const [role, setRole] = useState<StaffRole>("admin")
-  return <RoleContext.Provider value={{ role, setRole }}>{children}</RoleContext.Provider>
+  const { user, roles } = useRootContext()
+  const role = staffRoleFromRoleName(user?.roleName || roles?.[0])
+  const value = useMemo<RoleContextValue>(
+    () => ({ role, setRole: () => {} }),
+    [role]
+  )
+  return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>
 }
 
 export function useStaffRole(): RoleContextValue {
   const ctx = useContext(RoleContext)
-  if (!ctx) throw new Error("useStaffRole must be used within a RoleProvider")
-  return ctx
+  if (ctx) return ctx
+  return { role: "admin", setRole: () => {} }
 }

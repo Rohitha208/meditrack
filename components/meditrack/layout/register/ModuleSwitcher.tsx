@@ -4,12 +4,15 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { useStaffRole } from "./RoleProvider"
-import { canAccessAdmin } from "./rbac"
+import { canAccessAdmin, firstVisibleIpdStage, firstVisibleStage, roleHomePath } from "./rbac"
 
-/** Lab / Radiology Tech's OPD home is the Sample Collection worklist, and
- * their IPD home is Diagnostics & OT — not stage 0 of either. */
+/** Role-specific OPD/IPD landing. Default module hrefs start at stage 0
+ * (Registration / Admission), which nurses must not open. */
 const ROLE_MODULE_HOME: Partial<Record<string, Partial<Record<"opd" | "ipd", string>>>> = {
-  labtech: { opd: "/opd/diagnostics?screen=sample-collection", ipd: "/ipd/stay?stage=4" },
+  nurse: { opd: roleHomePath("nurse"), ipd: `/ipd/stay?stage=${firstVisibleIpdStage("nurse")}` },
+  labtech: { opd: "/opd/diagnostics?screen=sample-collection", ipd: `/ipd/stay?stage=${firstVisibleIpdStage("labtech")}` },
+  doctor: { opd: roleHomePath("doctor"), ipd: `/ipd/stay?stage=${firstVisibleIpdStage("doctor")}` },
+  frontdesk: { opd: roleHomePath("frontdesk"), ipd: `/ipd/stay?stage=${firstVisibleIpdStage("frontdesk")}` },
 }
 
 interface ModuleDef {

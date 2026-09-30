@@ -18,7 +18,7 @@ import {
   type DrawerBadgeTone,
 } from "@/components/meditrack/admin/register"
 import { useStaffRole } from "@/components/meditrack/layout/register/RoleProvider"
-import { ROLE_LABEL, isStageEditable } from "@/components/meditrack/layout/register/rbac"
+import { ROLE_LABEL, firstVisibleStage, isStageEditable, isStageVisible } from "@/components/meditrack/layout/register/rbac"
 import { BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useGetDepartmentDoctors } from "@/queries/meditrack/opd-booking"
@@ -82,6 +82,14 @@ import {
   useCreateAdmissionReferral,
   useGetAdmissionReferralByVisit,
 } from "@/queries/meditrack/opd-admission-referral"
+import {
+  useCloseVisit,
+  useCollectVisitBalance,
+  useGetVisitBalance,
+  useGetVisitClosureStatus,
+  useOverrideVisitBalance,
+  useReopenVisit,
+} from "@/queries/meditrack/opd-visit-closure"
 import { getUserId } from "@/utils/clientCookie"
 import {
   SectionLabel,
@@ -134,6 +142,29 @@ function toPharmacyPaymentMethod(method?: string | null) {
   if (value.includes("card")) return "Card"
   if (value.includes("tpa") || value.includes("cashless") || value.includes("insurance")) return "Insurance"
   return "Cash"
+}
+
+function collectedHeading(source: string, description: string, department?: string | null) {
+  const kind = source.toLowerCase()
+  if (kind.includes("consult")) {
+    const base = description || "Specialist consultation"
+    return department && department !== "—" ? `${base} — ${department}` : base
+  }
+  if (kind.includes("pharm")) return (description || "Pharmacy").replace(/item\(s\)/i, "items")
+  return description || source
+}
+
+function collectedCaption(source: string, paymentMethod?: string | null, receiptNumber?: string | null) {
+  const kind = source.toLowerCase()
+  const when = kind.includes("consult")
+    ? "Collected at check-in"
+    : kind.includes("pharm")
+      ? "Collected at dispensing"
+      : "Collected at closure"
+  const document = receiptNumber
+    ? `${kind.includes("pharm") ? "invoice" : "receipt"} ${receiptNumber}`
+    : null
+  return [when, paymentMethod, document].filter(Boolean).join(" · ")
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +549,13 @@ export function OpdVisitThreadPage() {
   const from = searchParams.get("from")
   const appointmentId = searchParams.get("appointmentId") || ""
   const editable = isStageEditable(role, s)
+
+  useEffect(() => {
+    if (isStageVisible(role, s)) return
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("stage", String(firstVisibleStage(role)))
+    router.replace(`/opd/visit-thread?${params.toString()}`)
+  }, [role, s, router, searchParams])
   const {
     companyId,
     branchId,
@@ -583,6 +621,7 @@ export function OpdVisitThreadPage() {
 
   // Fee collection (Stage 1) and token / queue (Stage 2) — backend-backed.
   const [paymentMethod, setPaymentMethod] = useState("Cash")
+  const [closurePayMethod, setClosurePayMethod] = useState("Cash")
   const [collection, setCollection] = useState<OpdFeeCollection | null>(null)
   const [locallyVoided, setLocallyVoided] = useState<number[]>([])
   const [activeToken, setActiveToken] = useState<OpdQueueToken | null>(null)
@@ -764,18 +803,10 @@ export function OpdVisitThreadPage() {
     feeDoctorId,
     (s === 1 || s === 2) && !collection && !!feeDoctorId
   )
-  const { data: feeDoctors = [] } = useGetDepartmentDoctors(
-    feeDepartmentId || undefined,
-    clinicId,
-    (s === 1 || s === 2) && !collection && !!feeDepartmentId
-  )
 
   const doctorConsultationFee = (() => {
     const fromUser = Number(consultingDoctor?.rate)
     if (Number.isFinite(fromUser) && fromUser > 0) return fromUser
-    const matched = feeDoctors.find((d) => d.providerId === feeDoctorId)
-    const fromProvider = Number(matched?.rate)
-    if (Number.isFinite(fromProvider) && fromProvider > 0) return fromProvider
     return null
   })()
 
@@ -816,7 +847,7 @@ export function OpdVisitThreadPage() {
   const vitalsQuery = useOpdVitals(diagnosticVisitId, (s === 3 || s === 4) && !!diagnosticVisitId)
   const vitals = vitalsQuery.data ?? null
   const vitalsPatientId = collection?.patientId || activePatient?.id || feeEstimate?.patientId || ""
-  const consultContextQuery = useConsultationContext(diagnosticVisitId, s === 4 && !!diagnosticVisitId)
+  const consultContextQuery = useConsultationContext(diagnosticVisitId, (s === 4 || s === 8) && !!diagnosticVisitId)
   const consultContext = consultContextQuery.data
   const consultAppointmentId = isGuid(appointmentId)
     ? appointmentId
@@ -825,7 +856,7 @@ export function OpdVisitThreadPage() {
       : isGuid(consultContext?.appointmentId)
         ? consultContext.appointmentId
         : ""
-  const consultNoteQuery = useConsultationNote(consultAppointmentId, s === 4 && !!consultAppointmentId)
+  const consultNoteQuery = useConsultationNote(consultAppointmentId, (s === 4 || s === 8) && !!consultAppointmentId)
   const consultNote = consultNoteQuery.data ?? null
   const consultAmendmentsQuery = useConsultationAmendments(consultNote?.id, s === 4 && !!consultNote?.id)
   const createConsultationNote = useCreateConsultationNote()
@@ -847,7 +878,15 @@ export function OpdVisitThreadPage() {
   }, [vitals?.id, vitals?.updatedAt, vitals?.chiefComplaint])
 
   const dxVisitQuery = useDiagnosticVisit(diagnosticVisitId, (s === 4 || s === 5 || s === 8) && !!diagnosticVisitId)
-  const rxVisitQuery = usePrescriptionVisit(diagnosticVisitId, (s === 6 || s === 7) && !!diagnosticVisitId)
+  const rxVisitQuery = usePrescriptionVisit(diagnosticVisitId, (s === 6 || s === 7 || s === 8) && !!diagnosticVisitId)
+  const closureQuery = useGetVisitClosureStatus(diagnosticVisitId, s === 8 && !!diagnosticVisitId)
+  const balanceQuery = useGetVisitBalance(diagnosticVisitId, s === 8 && !!diagnosticVisitId)
+  const closeVisit = useCloseVisit()
+  const collectVisitBalance = useCollectVisitBalance()
+  const overrideVisitBalance = useOverrideVisitBalance()
+  const reopenVisit = useReopenVisit()
+  const closure = closureQuery.data
+  const visitBalance = balanceQuery.data
   const pharmacyOrderQuery = usePharmacyVisitOrder(diagnosticVisitId, s === 7 && !!diagnosticVisitId)
   const sendRxToPharmacy = useSendPrescriptionToPharmacy()
   const dispenseAndBill = useDispenseAndBill()
@@ -906,7 +945,7 @@ export function OpdVisitThreadPage() {
       companyId: companyId || undefined,
       date: queueDate,
     },
-    (s === 2 || s >= 3) && !!clinicId
+    (s === 2 || s >= 3) && Boolean(clinicId || companyId)
   )
   const missedTokens = liveQueue?.missedTokens ?? []
   const todayPatientOptions = [...(liveQueue?.activeQueue ?? []), ...(liveQueue?.missedTokens ?? [])]
@@ -1021,6 +1060,7 @@ export function OpdVisitThreadPage() {
   // in place rather than navigating, per the addendum spec.
   const [inlineDxOpen, setInlineDxOpen] = useState(false)
   const [clinicalNotesDraft, setClinicalNotesDraft] = useState("")
+  const [followUpDraft, setFollowUpDraft] = useState("")
 
   async function fileAdmissionReferral() {
     if (!admitReason.trim()) return
@@ -1306,25 +1346,40 @@ export function OpdVisitThreadPage() {
     router.push(`/opd/visit-thread?${params}`)
   }
 
+  function changeVisitBranch(id: string) {
+    setBranchId(id)
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("clinicId", id)
+    params.delete("appointmentId")
+    params.delete("name")
+    params.delete("patientId")
+    params.delete("userId")
+    params.delete("departmentId")
+    setActiveToken(null)
+    router.replace(`/opd/visit-thread?${params.toString()}`)
+  }
+
   function openVisitFromToken(token: OpdQueueToken) {
-    if (!token.appointmentId) {
-      toast({
-        title: "No visit for this token",
-        description: "Collect the consultation fee first — diagnostics attach to that visit.",
-        variant: "destructive",
-      })
-      return
-    }
     const params = new URLSearchParams(searchParams.toString())
     params.set("stage", String(s))
-    params.set("appointmentId", token.appointmentId)
+    if (token.appointmentId) params.set("appointmentId", token.appointmentId)
     if (token.userId) params.set("userId", token.userId)
     if (token.departmentId) params.set("departmentId", token.departmentId)
     if (token.clinicId) params.set("clinicId", token.clinicId)
     if (token.patientName) params.set("name", token.patientName)
+    if (token.patientId) params.set("patientId", token.patientId)
     router.push(`/opd/visit-thread?${params}`)
     setActiveToken(token)
   }
+
+  const firstQueueTokenId = todayPatientOptions[0]?.id
+
+  useEffect(() => {
+    if (appointmentId || activeToken) return
+    if (s < 3 || !firstQueueTokenId) return
+    const first = todayPatientOptions[0]
+    if (first) openVisitFromToken(first)
+  }, [appointmentId, activeToken, s, firstQueueTokenId])
 
   function closeDrawer() {
     setDrawer(null)
@@ -1515,16 +1570,15 @@ export function OpdVisitThreadPage() {
     }
   })
 
-  const summaryLines = [
-    { k: "Visit ID", v: diagnosticVisitId || PATIENT.visitId },
-    { k: "Doctor", v: dxOrderingDoctor.includes("—") ? "Dr. Anjali Nair — Cardiology" : dxOrderingDoctor.replace(" · ", " — ") },
-    { k: "Diagnosis (provisional)", v: "Early bronchospasm; hypertension, controlled" },
-    { k: "Tests ordered", v: dxOrders.length
-      ? dxOrders.map((o) => `${o.testName || "Test"}${o.isVoid ? " (voided)" : o.result ? "" : ""}`).join(", ")
-      : "—" },
-    { k: "Prescription", v: "3 items — 1 Schedule H" },
-    { k: "Amount collected", v: "₹700 consultation + ₹336 pharmacy" },
-  ]
+  const coverageItems = visitBalance?.coverageConfirmedItems ?? []
+  const dueItems = (visitBalance?.dueItems ?? []).filter((item) => !item.overrideReason)
+  const collectedItems = visitBalance?.alreadyCollectedItems ?? []
+  const payableNow = dueItems.reduce((sum, item) => sum + (item.amount || 0), 0)
+  const outstanding = payableNow > 0
+  const closureStatus = (closure?.closureStatus || "open").toLowerCase()
+  const visitIsClosed = closureStatus === "closed" || closureStatus === "converted_to_ipd"
+  const visitIsPending = closureStatus === "pending"
+  const pendingItems = closure?.pendingItems ?? []
 
   // ----- drawer/modal openers -----
   const openRegEdit = () => {
@@ -2101,6 +2155,7 @@ export function OpdVisitThreadPage() {
         visitDate: new Date().toISOString(),
         chiefComplaint: vitals?.chiefComplaint || chiefComplaint || null,
         physicalExamFindings: findings || null,
+        followUpInstructions: followUpDraft.trim() || null,
         weightKg: vitals?.weightKg ?? null,
         temperatureCelsius: vitals?.temperatureC ?? null,
         heartRate: vitals?.heartRateBpm ?? null,
@@ -2108,6 +2163,7 @@ export function OpdVisitThreadPage() {
         referredToUserId: opts?.referredToUserId || null,
       })
       setClinicalNotesDraft("")
+      setFollowUpDraft("")
       patch({
         bannerText: opts?.outcome === "refer_specialist"
           ? "Referral recorded — clinical notes signed."
@@ -2346,19 +2402,76 @@ export function OpdVisitThreadPage() {
       },
     })
 
-  const openSummaryEdit = () =>
-    openDrawer({ badge: badge("LIVE EDIT"), title: "Edit visit summary (pre-close)", saveLabel: "Save", onSave: doSave("Summary updated."), fields: [field("diag", "Provisional diagnosis", "text", { default: "Early bronchospasm; hypertension, controlled" })] })
-  const cancelFollowup = () => patch({ followupCancelled: true, bannerText: "Follow-up cancelled." })
   const openReopen = () =>
     openModal({
-      badge: badge("SUPERVISOR OVERRIDE REQUIRED"),
+      badge: badge("REOPEN VISIT"),
       title: "Reopen closed visit?",
-      heavy: true,
-      lines: ["Reopening a closed visit is unusual — it has already fed into ABDM sync and generated reports.", "This requires a supervisor to authorize."],
       reasonField: true,
       reasonPlaceholder: "e.g. Follow-up date needs correction, caught after close",
-      confirmLabel: "Authorize & reopen",
-      onConfirm: doConfirm("Visit reopened by supervisor override.", { supervisorApproved: true }),
+      confirmLabel: "Reopen visit",
+      lines: ["Reopening a closed visit is unusual. Enter a reason to continue."],
+      onConfirm: (reason) => {
+        void (async () => {
+          if (!reason.trim()) {
+            toast({ title: "Reason required", description: "Say why this visit is being reopened.", variant: "destructive" })
+            return
+          }
+          if (!isGuid(diagnosticVisitId)) {
+            toast({ title: "No visit selected", variant: "destructive" })
+            return
+          }
+          try {
+            await reopenVisit.mutateAsync({ visitId: diagnosticVisitId, reason: reason.trim() })
+            closeModal()
+            toast({ title: "Visit reopened" })
+          } catch (err) {
+            toast({
+              title: "Could not reopen visit",
+              description: getToastErrorMessage(err, "Reopen failed"),
+              variant: "destructive",
+            })
+          }
+        })()
+      },
+    })
+
+  const openBalanceOverride = () =>
+    openModal({
+      badge: badge("OVERRIDE"),
+      title: "Close without collecting?",
+      reasonField: true,
+      reasonPlaceholder: "e.g. Patient will settle this at a later counter",
+      confirmLabel: "Override — close without collecting",
+      lines: ["Requires a reason. Same weight as the fee waiver at check-in."],
+      onConfirm: (reason) => {
+        void (async () => {
+          if (!reason.trim()) {
+            toast({ title: "Reason required", description: "Say why this balance is being closed without collection.", variant: "destructive" })
+            return
+          }
+          if (!isGuid(diagnosticVisitId)) {
+            toast({ title: "No visit selected", variant: "destructive" })
+            return
+          }
+          try {
+            const result = await overrideVisitBalance.mutateAsync({
+              visitId: diagnosticVisitId,
+              reason: reason.trim(),
+            })
+            closeModal()
+            toast({
+              title: "Balance overridden",
+              description: `${result.itemsOverridden} item${result.itemsOverridden === 1 ? "" : "s"} · ${formatPharmacyRupees(result.amountOverridden)} closed without collecting.`,
+            })
+          } catch (err) {
+            toast({
+              title: "Could not override the balance",
+              description: getToastErrorMessage(err, "Override failed"),
+              variant: "destructive",
+            })
+          }
+        })()
+      },
     })
 
   const goNext = () => goToStage(s + 1)
@@ -2377,50 +2490,51 @@ export function OpdVisitThreadPage() {
             </div>
           )}
         </div>
-        {s >= 3 ? (
-          <div className="flex items-center gap-2">
-            <span className="hidden text-[11px] font-semibold uppercase tracking-wide text-adminreg-muted sm:inline">
-              Patient
-            </span>
-            <Select
-              value={selectedPatientKey || undefined}
-              onValueChange={(id) => {
-                const token = todayPatientOptions.find((t) => visitTokenKey(t) === id)
-                if (token) openVisitFromToken(token)
-              }}
-              disabled={liveQueueLoading || todayPatientOptions.length === 0}
-            >
-              <SelectTrigger
-                className={cn(
-                  "h-10 w-[220px] border-adminreg-border bg-adminreg-border/30 text-sm font-medium text-adminreg-text shadow-none",
-                  "hover:bg-adminreg-border/40 focus:ring-adminreg-olive"
-                )}
-              >
-                <SelectValue placeholder={liveQueueLoading ? "Loading…" : "Select patient"} />
-              </SelectTrigger>
-              <SelectContent>
-                {selectedPatientKey &&
-                  !todayPatientOptions.some((t) => visitTokenKey(t) === selectedPatientKey) && (
-                    <SelectItem value={selectedPatientKey}>
-                      {dxPatientLabel || searchParams.get("name") || "Current patient"}
-                    </SelectItem>
-                  )}
-                {todayPatientOptions.map((token) => (
-                  <SelectItem key={token.id} value={visitTokenKey(token)}>
-                    {token.patientName || "—"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        ) : (
+        <div className="flex flex-wrap items-center justify-end gap-3">
           <BranchSelect
             value={visitClinicId || branchId}
-            onValueChange={setBranchId}
+            onValueChange={changeVisitBranch}
             branches={branches}
             isLoading={isLoadingBranches}
           />
-        )}
+          {s >= 3 && (
+            <div className="flex items-center gap-2">
+              <span className="hidden text-[11px] font-semibold uppercase tracking-wide text-adminreg-muted sm:inline">
+                Patient
+              </span>
+              <Select
+                value={selectedPatientKey || undefined}
+                onValueChange={(id) => {
+                  const token = todayPatientOptions.find((t) => visitTokenKey(t) === id)
+                  if (token) openVisitFromToken(token)
+                }}
+                disabled={liveQueueLoading || todayPatientOptions.length === 0}
+              >
+                <SelectTrigger
+                  className={cn(
+                    "h-10 w-[220px] border-adminreg-border bg-adminreg-border/30 text-sm font-medium text-adminreg-text shadow-none",
+                    "hover:bg-adminreg-border/40 focus:ring-adminreg-olive"
+                  )}
+                >
+                  <SelectValue placeholder={liveQueueLoading ? "Loading…" : "Select patient"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {selectedPatientKey &&
+                    !todayPatientOptions.some((t) => visitTokenKey(t) === selectedPatientKey) && (
+                      <SelectItem value={selectedPatientKey}>
+                        {dxPatientLabel || searchParams.get("name") || "Current patient"}
+                      </SelectItem>
+                    )}
+                  {todayPatientOptions.map((token) => (
+                    <SelectItem key={token.id} value={visitTokenKey(token)}>
+                      {token.patientName || token.tokenNumber || "—"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
       </div>
 
       {!editable && <ViewOnlyBanner role={ROLE_LABEL[role]} />}
@@ -3006,7 +3120,7 @@ export function OpdVisitThreadPage() {
                     {editable && <AdminButton type="button" variant="secondary" onClick={() => void requeueToken(missed)} disabled={updateTokenStatus.isPending}>Re-queue</AdminButton>}
                   </div>
                 ))}
-                {editable && (
+                {editable && isStageEditable(role, 3) && (
                   <AdminButton type="button" accent="indigo" className="mt-4" onClick={() => void callInPatient()} disabled={updateTokenStatus.isPending}>
                     Called in → Vitals &amp; triage
                   </AdminButton>
@@ -3184,15 +3298,27 @@ export function OpdVisitThreadPage() {
                 {consultNote ? (
                   <div className="border-b border-adminreg-divider py-2.5 text-sm leading-relaxed">
                     {signedNoteBody || "—"}
+                    {consultNote.followUpInstructions ? (
+                      <div className="mt-2 text-xs text-adminreg-muted">Follow-up: {consultNote.followUpInstructions}</div>
+                    ) : null}
                   </div>
                 ) : editable ? (
-                  <textarea
-                    rows={4}
-                    value={clinicalNotesDraft}
-                    onChange={(e) => setClinicalNotesDraft(e.target.value)}
-                    placeholder="Findings, impression, and plan"
-                    className="mt-2 w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm leading-relaxed text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo"
-                  />
+                  <>
+                    <textarea
+                      rows={4}
+                      value={clinicalNotesDraft}
+                      onChange={(e) => setClinicalNotesDraft(e.target.value)}
+                      placeholder="Findings, impression, and plan"
+                      className="mt-2 w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm leading-relaxed text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo"
+                    />
+                    <FieldLabel>Follow-up</FieldLabel>
+                    <input
+                      value={followUpDraft}
+                      onChange={(e) => setFollowUpDraft(e.target.value)}
+                      placeholder="e.g. Review in 7 days, Cardiology OPD"
+                      className="mt-1 w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo"
+                    />
+                  </>
                 ) : (
                   <div className="border-b border-adminreg-divider py-2.5 text-sm leading-relaxed text-adminreg-muted">
                     No notes signed for this visit yet.
@@ -3707,40 +3833,287 @@ export function OpdVisitThreadPage() {
           )}
 
           {s === 8 && (
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.2fr_1fr]">
-              <Panel>
-                <div className="flex justify-between"><SectionLabel>Visit summary</SectionLabel>{editable && <LinkAction tone="edit" onClick={openSummaryEdit}>Edit (pre-close)</LinkAction>}</div>
-                {summaryLines.map((l) => (
-                  <div key={l.k} className="flex justify-between border-t border-adminreg-divider py-2 text-sm"><span className="text-adminreg-muted">{l.k}</span><span className="text-right">{l.v}</span></div>
-                ))}
-                <div className="mt-3.5"><InlineWarning>1 report pending — Chest X-ray radiologist read.</InlineWarning></div>
-              </Panel>
-              <Panel>
-                <div className="flex justify-between"><SectionLabel>Follow-up</SectionLabel>{editable && <LinkAction tone="void" onClick={cancelFollowup}>Cancel</LinkAction>}</div>
-                {state.followupCancelled ? (
-                  <div className={cn("text-sm", SUPERSEDED_CLASS)}>26 Aug 2026 — Dr. Anjali Nair, Cardiology <SupersededTag /></div>
-                ) : (
-                  <div className="mb-3.5"><FieldValue>26 Aug 2026 — Dr. Anjali Nair, Cardiology</FieldValue></div>
-                )}
-                <div className="mt-4"><SectionLabel>ABDM / ABHA sync</SectionLabel></div>
-                <div className="mb-4 flex items-center justify-between gap-3 border border-adminreg-red bg-adminreg-red-soft px-3 py-2.5 text-xs text-adminreg-red-text">
-                  <span>Sync failed — records not pushed</span>
-                  {editable && <AdminButton type="button" variant="secondary">Retry sync</AdminButton>}
+            <div>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border border-adminreg-border bg-adminreg-header px-4 py-3">
+                <div className="font-plexmono text-[11px] font-bold uppercase tracking-[0.06em] text-adminreg-muted">
+                  Visit balance · collected at closure
                 </div>
-                {editable && <AdminButton type="button" accent="indigo" className="mb-2.5">Close visit</AdminButton>}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-plexmono text-[10px] uppercase tracking-[0.06em] text-adminreg-muted2">Balance state</span>
+                  {(["Outstanding balance", "All cashless — zero balance"] as const).map((label) => {
+                    const active = balanceQuery.isSuccess && (label === "Outstanding balance" ? outstanding : !outstanding)
+                    return (
+                      <span
+                        key={label}
+                        className={cn(
+                          "px-3 py-1.5 text-xs font-semibold",
+                          active
+                            ? "border border-adminreg-border bg-adminreg-card text-adminreg-text"
+                            : "border border-adminreg-border bg-transparent text-adminreg-muted"
+                        )}
+                      >
+                        {label}
+                      </span>
+                    )
+                  })}
+                </div>
+              </div>
 
-                {!state.supervisorApproved ? (
-                  <div className="border-t border-adminreg-divider pt-3.5">
-                    <SectionLabel>Visit is closed</SectionLabel>
-                    <div className="mb-2.5"><InlineWarning>Your role ({ROLE_LABEL[role]}) cannot reopen a closed visit. This action requires supervisor override.</InlineWarning></div>
-                    {editable && <AdminButton type="button" variant="secondary" onClick={openReopen}>Request supervisor override to reopen</AdminButton>}
+              {(balanceQuery.isLoading || closureQuery.isLoading) && (
+                <p className="mb-4 text-sm text-adminreg-muted">Loading visit balance…</p>
+              )}
+              {balanceQuery.isError && (
+                <div className="mb-4"><InlineWarning>Could not load the visit balance.</InlineWarning></div>
+              )}
+
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.35fr_0.9fr]">
+                <div className="border border-adminreg-border bg-adminreg-card p-[18px]">
+                  <div className="font-plexmono text-[10px] font-bold uppercase tracking-[0.06em] text-adminreg-muted2">
+                    Due now — self-pay diagnostics
                   </div>
-                ) : (
-                  <AddendumNote header="REOPENED · Supervisor: R. Desai · Reason: Follow-up date needs correction, caught after close">
-                    Visit reopened. ABDM sync and prior reports referencing this visit may need to be regenerated.
-                  </AddendumNote>
-                )}
-              </Panel>
+                  {dueItems.length === 0 && (
+                    <p className="mt-3 text-sm text-adminreg-muted">No self-pay diagnostics due on this visit.</p>
+                  )}
+                  {dueItems.map((item) => (
+                    <div key={item.orderId} className="mt-3 flex items-baseline justify-between gap-4 text-sm">
+                      <span>
+                        {item.testName || "Test"}
+                        {(item.testCode || item.orderNumber) && (
+                          <span className="ml-2 font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted2">
+                            {item.testCode || item.orderNumber}
+                          </span>
+                        )}
+                      </span>
+                      <span className="font-plexmono">{formatPharmacyRupees(item.amount)}</span>
+                    </div>
+                  ))}
+                  <div className="mt-3 flex items-baseline justify-between gap-4 border-t border-adminreg-text pt-2 text-sm font-bold">
+                    <span>Payable now</span>
+                    <span className="font-plexmono">{formatPharmacyRupees(payableNow)}</span>
+                  </div>
+                  <p className="mt-2 text-[11px] text-adminreg-muted">Accrued at ordering (Diagnostics), not collected there.</p>
+
+                  {coverageItems.length > 0 && (
+                    <div className="mt-6">
+                      <div className="font-plexmono text-[10px] font-bold uppercase tracking-[0.06em] text-adminreg-muted2">
+                        Coverage-confirmed — not payable
+                      </div>
+                      {coverageItems.map((item) => (
+                        <div key={item.orderId} className="mt-3">
+                          <div className="flex items-baseline justify-between gap-4 text-sm">
+                            <span>
+                              {item.testName || "Test"}
+                              {(item.testCode) && (
+                                <span className="ml-2 font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted2">{item.testCode}</span>
+                              )}
+                            </span>
+                            <span className="font-plexmono text-adminreg-muted">{formatPharmacyRupees(item.amount)}</span>
+                          </div>
+                          <p className="mt-0.5 text-[11px] text-adminreg-indigo">
+                            {[item.tpaName, item.tpaPreauthRef ? `pre-auth ${item.tpaPreauthRef}` : null, "coverage confirmed at ordering"].filter(Boolean).join(" · ")}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="mt-6">
+                    <div className="font-plexmono text-[10px] font-bold uppercase tracking-[0.06em] text-adminreg-muted2">
+                      Already collected this visit
+                    </div>
+                    {collectedItems.length === 0 && (
+                      <p className="mt-3 text-sm text-adminreg-muted">Nothing collected yet.</p>
+                    )}
+                    {collectedItems.map((item, index) => (
+                      <div key={`${item.source}-${item.receiptNumber || "none"}-${item.description}-${index}`} className="mt-3">
+                        <div className="flex items-center justify-between gap-4 text-sm">
+                          <span className="flex flex-wrap items-center gap-2">
+                            {collectedHeading(item.source, item.description, feeDepartmentName)}
+                            <span className="border border-adminreg-olive px-1.5 py-0.5 font-plexmono text-[9px] font-bold uppercase tracking-wide text-adminreg-olive-dark">Settled</span>
+                          </span>
+                          <span className="font-plexmono">{formatPharmacyRupees(item.amount)}</span>
+                        </div>
+                        <p className="mt-0.5 text-[11px] text-adminreg-muted">
+                          {collectedCaption(item.source, item.paymentMethod, item.receiptNumber)}
+                        </p>
+                      </div>
+                    ))}
+                    <p className="mt-4 text-[11px] text-adminreg-muted">
+                      Three separate transactions — consultation at check-in, pharmacy at dispensing, diagnostics here. They are not merged into a single bill.
+                    </p>
+                  </div>
+                </div>
+
+                <Panel>
+                  <SectionLabel>Payment method</SectionLabel>
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {["Cash", "Card", "UPI"].map((method) => {
+                      const active = closurePayMethod === method
+                      return (
+                        <button
+                          key={method}
+                          type="button"
+                          disabled={!editable || visitIsClosed}
+                          onClick={() => setClosurePayMethod(method)}
+                          className={cn(
+                            "px-3.5 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60",
+                            active
+                              ? "border-[1.5px] border-adminreg-indigo bg-adminreg-indigo-soft text-adminreg-indigo-dark"
+                              : "border border-adminreg-border bg-adminreg-bg text-adminreg-muted"
+                          )}
+                        >
+                          {method}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="mb-4 text-[11px] text-adminreg-muted">Same collection step as check-in — mode, collect, receipt.</p>
+                  {isRazorpayMethod(closurePayMethod) && (
+                    <p className="mb-4 text-[11px] text-adminreg-muted">
+                      UPI and Card open Razorpay test checkout. Use Razorpay test cards / UPI — no real money is charged.
+                    </p>
+                  )}
+
+                  {editable && outstanding && !visitIsClosed && (
+                    <AdminButton
+                      type="button"
+                      accent="indigo"
+                      className="w-full"
+                      disabled={collectVisitBalance.isPending || razorpayPending || !isGuid(diagnosticVisitId)}
+                      onClick={() => {
+                        void (async () => {
+                          if (!isGuid(diagnosticVisitId)) {
+                            toast({ title: "No visit selected", variant: "destructive" })
+                            return
+                          }
+                          try {
+                            let transactionReference: string | null = null
+                            if (isRazorpayMethod(closurePayMethod)) {
+                              setRazorpayPending(true)
+                              const order = await createRazorpayOrder(payableNow, diagnosticVisitId)
+                              const checkout = await openRazorpayCheckout({
+                                order,
+                                description: `Diagnostics balance · ${closurePayMethod}`,
+                                prefillName: closure?.patientName || activePatient?.name || "",
+                                prefillContact: closure?.patientPhone || activePatient?.phone || "",
+                                preferredMethod: closurePayMethod.toLowerCase().includes("card") ? "card" : "upi",
+                              })
+                              transactionReference = await verifyRazorpayPayment(checkout)
+                              setRazorpayPending(false)
+                            }
+                            const result = await collectVisitBalance.mutateAsync({
+                              visitId: diagnosticVisitId,
+                              paymentMethod: closurePayMethod,
+                              transactionReference,
+                            })
+                            toast({
+                              title: "Diagnostics collected",
+                              description: `Receipt ${result.receiptNumber} · ${formatPharmacyRupees(result.amountCollected)}`,
+                            })
+                          } catch (err) {
+                            setRazorpayPending(false)
+                            toast({
+                              title: "Could not collect the balance",
+                              description: getToastErrorMessage(err, "Collection failed"),
+                              variant: "destructive",
+                            })
+                          }
+                        })()
+                      }}
+                    >
+                      {(collectVisitBalance.isPending || razorpayPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      {collectVisitBalance.isPending || razorpayPending
+                        ? "Collecting…"
+                        : isRazorpayMethod(closurePayMethod)
+                          ? `Pay with Razorpay → ${formatPharmacyRupees(payableNow)}`
+                          : `Collect ${formatPharmacyRupees(payableNow)} → generate receipt`}
+                    </AdminButton>
+                  )}
+
+                  {editable && outstanding && !visitIsClosed && (
+                    <div className="mt-3">
+                      <AdminButton
+                        type="button"
+                        variant="secondary"
+                        className="w-full"
+                        disabled={overrideVisitBalance.isPending || !isGuid(diagnosticVisitId)}
+                        onClick={openBalanceOverride}
+                      >
+                        {overrideVisitBalance.isPending ? "Overriding…" : "Override — close without collecting"}
+                      </AdminButton>
+                      <p className="mt-2 text-[11px] text-adminreg-muted">Requires a reason. Same weight as the fee waiver at check-in.</p>
+                    </div>
+                  )}
+
+                  {!outstanding && balanceQuery.isSuccess && (
+                    <p className="text-sm text-adminreg-muted">Nothing left to collect. Covered tests stay with the TPA; settled charges already have their own receipts.</p>
+                  )}
+
+                  {visitIsPending && (
+                    <div className="mt-4"><InlineWarning>Visit close is pending unfinished reports or tests.</InlineWarning></div>
+                  )}
+                  {pendingItems.length > 0 && !visitIsClosed && (
+                    <p className="mt-3 text-[11px] text-adminreg-muted">
+                      {pendingItems.length} report{pendingItems.length === 1 ? "" : "s"} still unfinished. Closing now marks the visit pending.
+                    </p>
+                  )}
+
+                  {editable && !visitIsClosed && (
+                    <AdminButton
+                      type="button"
+                      variant="secondary"
+                      className="mt-4 w-full"
+                      disabled={closeVisit.isPending || !isGuid(diagnosticVisitId)}
+                      onClick={() => {
+                        void (async () => {
+                          if (!isGuid(diagnosticVisitId)) {
+                            toast({ title: "No visit selected", variant: "destructive" })
+                            return
+                          }
+                          try {
+                            const result = await closeVisit.mutateAsync(diagnosticVisitId)
+                            const status = (result.closureStatus || "").toLowerCase()
+                            toast({
+                              title: status === "pending"
+                                ? "Visit marked pending"
+                                : status === "converted_to_ipd"
+                                  ? "Visit converted to IPD"
+                                  : "Visit closed",
+                              description: status === "pending"
+                                ? "Unfinished tests are still on this visit."
+                                : undefined,
+                            })
+                          } catch (err) {
+                            toast({
+                              title: "Could not close visit",
+                              description: getToastErrorMessage(err, "Close failed"),
+                              variant: "destructive",
+                            })
+                          }
+                        })()
+                      }}
+                    >
+                      {closeVisit.isPending ? "Closing…" : "Close visit"}
+                    </AdminButton>
+                  )}
+
+                  {visitIsClosed && (
+                    <div className="mt-4 border-t border-adminreg-divider pt-3.5">
+                      <SectionLabel>{closureStatus === "converted_to_ipd" ? "Converted to IPD" : "Visit is closed"}</SectionLabel>
+                      {closure?.admissionReferralCode && (
+                        <p className="mb-2.5 text-sm text-adminreg-muted">Referral {closure.admissionReferralCode}</p>
+                      )}
+                      {editable ? (
+                        <AdminButton type="button" variant="secondary" onClick={openReopen} disabled={reopenVisit.isPending}>
+                          {reopenVisit.isPending ? "Reopening…" : "Reopen visit"}
+                        </AdminButton>
+                      ) : (
+                        <InlineWarning>Your role ({ROLE_LABEL[role]}) cannot reopen a closed visit. Front Desk owns close and reopen.</InlineWarning>
+                      )}
+                    </div>
+                  )}
+                </Panel>
+              </div>
             </div>
           )}
         </div>

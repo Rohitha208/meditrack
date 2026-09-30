@@ -19,6 +19,7 @@ import { useRootContext } from "@/context/RootContext"
 import { getCompanySubdomain } from "@/utils/subdomain"
 import { useGetCompanyBySubdomain } from "@/queries/companies"
 import { getBrandName, getSubdomainFromHost } from "@/utils/appMode"
+import { roleHomePath, staffRoleFromRoleName } from "@/components/meditrack/layout/register/rbac"
 
 const loginSchema = z.object({
   email: z.string().min(2, { message: "Username is required." }),
@@ -70,7 +71,7 @@ export function MediTrackLoginForm() {
       setProductType(data.user.productType || data.user.companyProductType || company?.productType)
       fetchUser(data, data.user.roleName)
       const isSuperAdmin = data.user.roleName === "Super Admin"
-      router.push(isSuperAdmin ? "/admin/companies" : "/admin/dashboard")
+      router.push(roleHomePath(staffRoleFromRoleName(data.user.roleName), isSuperAdmin))
       toast({ title: "Login Successful", description: `Welcome to ${productBrandName}`, variant: "success" })
     },
     onError: (error: any) => {

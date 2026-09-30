@@ -146,7 +146,7 @@ export function AdminUsersRolesPage() {
   const deleteUser = useDeleteMediTrackUser()
 
   function departmentLabel(departmentId?: string | null) {
-    if (!departmentId) return "—"
+    if (!departmentId || departmentId === ALL_DEPARTMENTS) return "All"
     return departmentNameById.get(departmentId) || "—"
   }
 

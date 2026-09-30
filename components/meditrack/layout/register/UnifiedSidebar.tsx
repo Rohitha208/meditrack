@@ -115,10 +115,15 @@ function AdminNav({ isSuperAdmin }: { isSuperAdmin: boolean }) {
 }
 
 function SuperAdminRoleBadge() {
+  const { user } = useRootContext()
+  const name = `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || user?.email || "—"
   return (
     <div className="flex-shrink-0 border-t border-adminreg-sidebar-border px-3 py-3">
       <p className="mb-2 px-2 font-plexmono text-[9px] uppercase tracking-[0.1em] text-adminreg-sidebar-text-muted">Signed in as</p>
-      <div className="px-2.5 py-2 bg-adminreg-indigo font-bold text-adminreg-card text-[13px]">Super Admin</div>
+      <div className="px-2.5 py-2 bg-adminreg-indigo text-adminreg-card">
+        <div className="text-[13px] font-bold">{name}</div>
+        <div className="mt-0.5 text-[10px] font-semibold opacity-80">Super Admin</div>
+      </div>
     </div>
   )
 }

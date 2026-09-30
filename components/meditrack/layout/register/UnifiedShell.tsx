@@ -9,6 +9,8 @@ import { formatDate } from "@/components/meditrack/shared"
 import { SUPER_ADMIN_PATHS } from "@/components/meditrack/admin/register/theme"
 import { useRootContext } from "@/context/RootContext"
 import { useToast } from "@/hooks/use-toast"
+import { useStaffRole } from "./RoleProvider"
+import { canAccessAdmin, roleHomePath } from "./rbac"
 
 /** Full-bleed unified shell for /admin/* and /opd/* — one sidebar (module
  * switcher + role-aware nav + role switcher), a top bar with global search
@@ -23,6 +25,7 @@ export function UnifiedShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const { userType, handleLogout } = useRootContext()
+  const { role } = useStaffRole()
   const { toast } = useToast()
   const isAdmin = pathname.startsWith("/admin")
   const isSuperAdmin = !!userType?.isSuperAdmin
@@ -39,15 +42,20 @@ export function UnifiedShell({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    if (!isSuperAdmin) return
-    if (pathname.startsWith("/opd")) {
-      router.replace("/admin/companies")
+    if (isSuperAdmin) {
+      if (pathname.startsWith("/opd")) {
+        router.replace("/admin/companies")
+        return
+      }
+      if (!pathname.startsWith("/admin")) return
+      const allowed = SUPER_ADMIN_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+      if (!allowed) router.replace("/admin/companies")
       return
     }
-    if (!pathname.startsWith("/admin")) return
-    const allowed = SUPER_ADMIN_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
-    if (!allowed) router.replace("/admin/companies")
-  }, [isSuperAdmin, pathname, router])
+    if (pathname.startsWith("/admin") && !canAccessAdmin(role)) {
+      router.replace(roleHomePath(role))
+    }
+  }, [isSuperAdmin, pathname, role, router])
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-adminreg-bg font-archivo text-adminreg-text">

@@ -61,7 +61,19 @@ const fetchNoteByAppointment = async (appointmentId: string): Promise<Consultati
     "Failed to load consultation note"
   );
   const items = Array.isArray(data.items) ? data.items : Array.isArray(data.Items) ? data.Items : [];
-  return items[0] ?? null;
+  const first = items[0]
+  if (!first) return null
+  const raw = first as ConsultationNote & {
+    FollowUpInstructions?: string | null
+    Diagnosis?: string | null
+    TreatmentPlan?: string | null
+  }
+  return {
+    ...first,
+    diagnosis: first.diagnosis || raw.Diagnosis || null,
+    treatmentPlan: first.treatmentPlan || raw.TreatmentPlan || null,
+    followUpInstructions: first.followUpInstructions || raw.FollowUpInstructions || null,
+  }
 };
 
 export const useConsultationNote = (appointmentId?: string | null, enabled = true) =>

@@ -1,35 +1,25 @@
 "use client"
 
-import { cn } from "@/lib/utils"
+import { useRootContext } from "@/context/RootContext"
 import { useStaffRole } from "./RoleProvider"
-import { ROLES, ROLE_LABEL } from "./rbac"
+import { ROLE_LABEL } from "./rbac"
 
-/**
- * "Preview as role" — a demo-only control (explicitly not part of the
- * production design; real RBAC comes from auth, not a manual toggle) pinned
- * at the bottom of the unified sidebar so every screen's RBAC filtering can
- * be exercised without a real login per role.
- */
+function signedInName(user: { firstName?: string | null; lastName?: string | null; email?: string | null } | null | undefined) {
+  const name = `${user?.firstName || ""} ${user?.lastName || ""}`.trim()
+  return name || user?.email || "—"
+}
+
+/** Shows the signed-in user's name and role. Real RBAC comes from auth. */
 export function RoleSwitcher() {
-  const { role, setRole } = useStaffRole()
+  const { role } = useStaffRole()
+  const { user } = useRootContext()
 
   return (
     <div className="flex-shrink-0 border-t border-adminreg-sidebar-border px-3 py-3">
-      <p className="mb-2 px-2 font-plexmono text-[9px] uppercase tracking-[0.1em] text-adminreg-sidebar-text-muted">Preview as role</p>
-      <div className="space-y-0.5">
-        {ROLES.map((r) => (
-          <button
-            key={r}
-            type="button"
-            onClick={() => setRole(r)}
-            className={cn(
-              "block w-full px-2.5 py-2 text-left text-[13px] transition-colors",
-              role === r ? "bg-adminreg-indigo font-bold text-adminreg-card" : "text-adminreg-sidebar-text-secondary hover:bg-white/5 hover:text-adminreg-sidebar-text"
-            )}
-          >
-            {ROLE_LABEL[r]}
-          </button>
-        ))}
+      <p className="mb-2 px-2 font-plexmono text-[9px] uppercase tracking-[0.1em] text-adminreg-sidebar-text-muted">Signed in as</p>
+      <div className="px-2.5 py-2 bg-adminreg-indigo text-adminreg-card">
+        <div className="text-[13px] font-bold">{signedInName(user)}</div>
+        <div className="mt-0.5 text-[10px] font-semibold opacity-80">{ROLE_LABEL[role]}</div>
       </div>
     </div>
   )

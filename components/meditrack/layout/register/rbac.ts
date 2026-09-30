@@ -19,6 +19,26 @@ export const ROLE_LABEL: Record<StaffRole, string> = {
   admin: "Hospital Admin",
 }
 
+/** Maps the logged-in user's backend `roleName` (Nurse, Administrator, …)
+ * onto the shell's StaffRole. Preview-as-role is not used in production. */
+export function staffRoleFromRoleName(roleName?: string | null): StaffRole {
+  const value = (roleName || "").trim().toLowerCase()
+  if (value.includes("nurse")) return "nurse"
+  if (value.includes("receptionist") || value.includes("front desk") || value.includes("frontdesk")) return "frontdesk"
+  if (value.includes("lab") || value.includes("radio") || value.includes("phlebo")) return "labtech"
+  if (value.includes("doctor") || value.includes("physician") || value.includes("veterinar")) return "doctor"
+  return "admin"
+}
+
+export function roleHomePath(role: StaffRole, isSuperAdmin = false): string {
+  if (isSuperAdmin) return "/admin/companies"
+  if (role === "admin") return "/admin/dashboard"
+  if (role === "labtech") return "/opd/diagnostics?screen=sample-collection"
+  if (role === "nurse") return "/opd/visit-thread?stage=3"
+  if (role === "doctor") return "/opd/visit-thread?stage=4"
+  return "/opd/appointments"
+}
+
 /** Only Hospital Admin can enter the Admin module at all. */
 export function canAccessAdmin(role: StaffRole): boolean {
   return role === "admin"
@@ -53,19 +73,16 @@ export function dxWorklistEditable(role: StaffRole): boolean {
  * Triage, 4 Consultation, 5 Diagnostics, 6 e-Prescription, 7 Pharmacy
  * Dispensing, 8 Visit Closure.
  *
- * Same broad-visibility principle as IPD: Front Desk and Doctor see the
- * whole 9-stage thread (a front-desk clerk closing out a visit needs to see
- * it went through consultation/diagnostics/prescription/pharmacy even
- * though they didn't touch those stages), they just can't edit stages
- * outside their own. Nurse stays narrow — Vitals & Triage only — mirroring
- * the same explicit MAR-only restriction the spec states for IPD.
+ * Front Desk sees only their own OPD stages (Registration, Fee Collection,
+ * Token & Queue, Visit Closure). Nurse / Doctor / Lab / Pharmacy stages
+ * stay off that sidebar.
  *
  * Lab / Radiology Tech works from the three Diagnostics worklists (see
  * canAccessDxWorklist) and owns the Diagnostics stage of the visit thread.
  * Doctors order tests from Consultation — they do not re-order on Diagnostics. */
 export const OPD_STAGE_ACCESS: Record<StaffRole, { visible: number[]; editable: number[] }> = {
-  frontdesk: { visible: [0, 1, 2, 3, 4, 5, 6, 7, 8], editable: [0, 1, 2, 8] },
-  doctor: { visible: [0, 1, 2, 3, 4, 5, 6, 7, 8], editable: [4, 6] },
+  frontdesk: { visible: [0, 1, 2, 8], editable: [0, 1, 2, 8] },
+  doctor: { visible: [3, 4, 6, 7, 8], editable: [4, 6] },
   nurse: { visible: [3], editable: [3] },
   labtech: { visible: [5], editable: [5] },
   admin: { visible: [0, 1, 2, 3, 4, 5, 6, 7, 8], editable: [] },
@@ -101,7 +118,7 @@ export function firstVisibleStage(role: StaffRole): number {
  * Lab / Radiology Tech owns Diagnostics & OT (stage 4) only — same narrow
  * treatment as Nurse. */
 export const IPD_STAGE_ACCESS: Record<StaffRole, { visible: number[]; editable: number[] }> = {
-  frontdesk: { visible: [0, 1, 2, 3, 4, 5, 6, 7], editable: [0, 1, 2, 5, 7] },
+  frontdesk: { visible: [0, 1, 2, 5, 7], editable: [0, 1, 2, 5, 7] },
   doctor: { visible: [0, 1, 2, 3, 4, 5, 6, 7], editable: [4, 6] },
   nurse: { visible: [3], editable: [3] },
   labtech: { visible: [4], editable: [4] },

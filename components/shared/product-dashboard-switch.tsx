@@ -4,6 +4,8 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { DashboardScreen } from "@/components/pawtrack/dashboard";
 import { useRootContext } from "@/context/RootContext";
+import { useStaffRole } from "@/components/meditrack/layout/register/RoleProvider";
+import { roleHomePath } from "@/components/meditrack/layout/register/rbac";
 
 /** Picks the right dashboard screen for the signed-in tenant. PawTrack keeps
  * its own DashboardScreen at this route; MediTrack no longer has a generic
@@ -20,14 +22,15 @@ import { useRootContext } from "@/context/RootContext";
  * used to show, for about a second, before the effect below could redirect
  * away). Render nothing until we actually know which product this is. */
 export function ProductDashboardSwitch() {
-    const { isHumanMode, loading } = useRootContext();
+    const { isHumanMode, loading, userType } = useRootContext();
+    const { role } = useStaffRole();
     const router = useRouter();
 
     useEffect(() => {
         if (!loading && isHumanMode) {
-            router.replace("/admin/dashboard");
+            router.replace(roleHomePath(role, !!userType?.isSuperAdmin));
         }
-    }, [loading, isHumanMode, router]);
+    }, [loading, isHumanMode, role, router, userType?.isSuperAdmin]);
 
     if (loading || isHumanMode) {
         return null;

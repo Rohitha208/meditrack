@@ -24,6 +24,7 @@ export interface VisitClosureStatus {
   chiefComplaint?: string | null;
   diagnosis?: string | null;
   treatmentPlan?: string | null;
+  followUpInstructions?: string | null;
   outcome?: string | null;
   labTests: VisitLabTest[];
   prescriptionNotes?: string | null;
@@ -89,6 +90,7 @@ export interface VisitBalance {
 export interface CollectVisitBalanceRequest {
   visitId: string;
   paymentMethod: string;
+  transactionReference?: string | null;
 }
 
 export interface CollectVisitBalanceResponse {
@@ -166,6 +168,7 @@ export function normalizeVisitClosureStatus(raw: unknown): VisitClosureStatus {
     chiefComplaint: asNullableString(o.chiefComplaint ?? o.ChiefComplaint),
     diagnosis: asNullableString(o.diagnosis ?? o.Diagnosis),
     treatmentPlan: asNullableString(o.treatmentPlan ?? o.TreatmentPlan),
+    followUpInstructions: asNullableString(o.followUpInstructions ?? o.FollowUpInstructions),
     outcome: asNullableString(o.outcome ?? o.Outcome),
     labTests: Array.isArray(labTestsRaw) ? labTestsRaw.map(normalizeLabTest) : [],
     prescriptionNotes: asNullableString(o.prescriptionNotes ?? o.PrescriptionNotes),

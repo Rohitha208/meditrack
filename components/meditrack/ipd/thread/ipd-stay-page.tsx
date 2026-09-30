@@ -1,12 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { AdminButton, BED_STATUS_CLASS, type BedStatus } from "@/components/meditrack/admin/register"
 import { useStaffRole } from "@/components/meditrack/layout/register/RoleProvider"
-import { ROLE_LABEL, isIpdStageEditable } from "@/components/meditrack/layout/register/rbac"
+import { ROLE_LABEL, firstVisibleIpdStage, isIpdStageEditable, isIpdStageVisible } from "@/components/meditrack/layout/register/rbac"
 import { SectionLabel, FieldLabel, FieldValue, Panel, ViewOnlyBanner, InlineInfo, InlineSuccess } from "@/components/meditrack/opd/shared/ui"
 import { IPD_STAGE_DEFS, REFERRAL_STATE_LABEL, type ReferralState } from "./theme"
 
@@ -148,6 +148,13 @@ export function IpdStayPage() {
   const activeDay = Number(searchParams.get("day") ?? 4)
   const openRef = searchParams.get("ref")
   const editable = isIpdStageEditable(role, s)
+
+  useEffect(() => {
+    if (isIpdStageVisible(role, s)) return
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("stage", String(firstVisibleIpdStage(role)))
+    router.replace(`/ipd/stay?${params.toString()}`)
+  }, [role, s, router, searchParams])
   const activeStage = IPD_STAGE_DEFS[s] ?? IPD_STAGE_DEFS[0]
 
   const [referralState, setReferralState] = useState<ReferralState>("pending")

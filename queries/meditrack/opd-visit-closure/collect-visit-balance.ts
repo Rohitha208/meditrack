@@ -11,11 +11,12 @@ import {
 const collectVisitBalance = async ({
   visitId,
   paymentMethod,
+  transactionReference,
 }: CollectVisitBalanceRequest): Promise<CollectVisitBalanceResponse> => {
   const response = await fetch(`${VISIT_CLOSURE_BASE}/${visitId}/balance/collect`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ paymentMethod }),
+    body: JSON.stringify({ paymentMethod, transactionReference: transactionReference || null }),
   });
   const data = await readJson<unknown>(response, "Failed to collect visit balance");
   return normalizeCollectVisitBalanceResponse(data);
