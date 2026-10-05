@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, type FormEvent } from "react"
+import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { Loader2, Pencil, Plus, Trash2 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
 import { useGetMediTrackUsers } from "@/queries/meditrack/users"
-import { BranchFormField, BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
+import { BranchFormField, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
 import {
   useCreateWard,
   useDeleteWard,
@@ -58,7 +58,6 @@ export function AdminWardsBedsPage() {
   const {
     companyId,
     branchId,
-    setBranchId,
     clinicId,
     hasBranch,
     branches,
@@ -71,6 +70,10 @@ export function AdminWardsBedsPage() {
     hasBranch
   )
   const [activeWardId, setActiveWardId] = useState<string>("")
+
+  useEffect(() => {
+    setActiveWardId("")
+  }, [branchId])
   const [formBranchId, setFormBranchId] = useState("")
   const selectedWardId = activeWardId || wards[0]?.id || ""
   const selectedWard = wards.find((w) => w.id === selectedWardId)
@@ -614,17 +617,6 @@ export function AdminWardsBedsPage() {
       <AdminPageHeader
         title="Wards & Beds"
         subtitle="Add wards first, then bed categories, then beds — scoped by branch."
-        actions={
-          <BranchSelect
-            value={branchId}
-            onValueChange={(id) => {
-              setBranchId(id)
-              setActiveWardId("")
-            }}
-            branches={branches}
-            isLoading={isLoadingBranches}
-          />
-        }
       />
 
       {!hasBranch ? (

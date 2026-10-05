@@ -28,7 +28,8 @@ import {
 import { useStaffRole } from "@/components/meditrack/layout/register/RoleProvider"
 import { AdminPageHeader } from "./AdminPageHeader"
 import { AdminCard } from "./AdminCard"
-import { BranchFormField, BranchSelect, useBranchScope } from "./use-branch-scope"
+import { useBranchScope } from "./use-branch-scope"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   useCreateMediTrackUser,
   useGetMediTrackUsers,
@@ -104,7 +105,7 @@ const EMPTY_FORM = {
   email: "",
   password: "",
   departmentId: NO_DEPARTMENT,
-  branchId: "",
+  branchIds: [] as string[],
   medicalRegistrationNumber: "",
   consultationFee: "",
 }
@@ -115,6 +116,48 @@ function parseConsultationFee(value: string): number | null {
   const n = Number(trimmed)
   if (Number.isNaN(n) || n < 0) return null
   return n
+}
+
+function doctorBranchIds(doctor: { clinics?: Array<{ clinicId?: string | null; id?: string | null }> | null }): string[] {
+  return (doctor.clinics ?? [])
+    .map((clinic) => String(clinic.clinicId || clinic.id || ""))
+    .filter(Boolean)
+}
+
+function DoctorBranchPicker({
+  branches,
+  selectedIds,
+  isLoading,
+  onToggle,
+}: {
+  branches: Array<{ id: string; name: string }>
+  selectedIds: string[]
+  isLoading?: boolean
+  onToggle: (id: string, checked: boolean) => void
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Branches</Label>
+      <div className="max-h-40 space-y-2 overflow-y-auto border border-adminreg-border bg-adminreg-bg p-3">
+        {isLoading ? (
+          <p className="text-sm text-adminreg-muted">Loading branches…</p>
+        ) : branches.length === 0 ? (
+          <p className="text-sm text-adminreg-muted">No branches found.</p>
+        ) : (
+          branches.map((branch) => (
+            <label key={branch.id} className="flex cursor-pointer items-center gap-2 text-sm text-adminreg-text">
+              <Checkbox
+                checked={selectedIds.includes(branch.id)}
+                onCheckedChange={(value) => onToggle(branch.id, value === true)}
+              />
+              <span>{branch.name}</span>
+            </label>
+          ))
+        )}
+      </div>
+      <p className="text-[11px] text-adminreg-muted">Tick every branch this doctor works at.</p>
+    </div>
+  )
 }
 
 function formatConsultationFee(value?: number | null) {
@@ -130,7 +173,6 @@ export function AdminProvidersPage() {
   const {
     companyId,
     branchId,
-    setBranchId,
     clinicId,
     hasBranch,
     branches,
@@ -301,7 +343,11 @@ export function AdminProvidersPage() {
         companyId: deactivateTarget.companyId || companyId || null,
         departmentId: deactivateTarget.departmentId || null,
         specialtyId: deactivateTarget.specialtyId || null,
-        clinicIds: clinicId ? [clinicId] : null,
+        clinicIds: (() => {
+          const existing = doctorBranchIds(deactivateTarget)
+          if (existing.length) return existing
+          return clinicId ? [clinicId] : null
+        })(),
         isActive: nextActive,
         medicalRegistrationNumber: deactivateTarget.medicalRegistrationNumber || null,
         rate: deactivateTarget.rate ?? null,
@@ -320,18 +366,28 @@ export function AdminProvidersPage() {
     }
   }
 
+  function toggleDoctorBranch(id: string, checked: boolean) {
+    setDoctorForm((current) => ({
+      ...current,
+      branchIds: checked
+        ? current.branchIds.includes(id) ? current.branchIds : [...current.branchIds, id]
+        : current.branchIds.filter((branch) => branch !== id),
+    }))
+  }
+
   function openAdd() {
-    setDoctorForm({ ...EMPTY_FORM, branchId })
+    setDoctorForm({ ...EMPTY_FORM, branchIds: branchId ? [branchId] : [] })
     setAddOpen(true)
   }
 
   function openEdit(doctor: MediTrackUser) {
+    const existing = doctorBranchIds(doctor)
     setDoctorForm({
       fullName: displayName(doctor.firstName, doctor.lastName, ""),
       email: doctor.email || "",
       password: "",
       departmentId: doctor.departmentId || NO_DEPARTMENT,
-      branchId,
+      branchIds: existing.length ? existing : branchId ? [branchId] : [],
       medicalRegistrationNumber: doctor.medicalRegistrationNumber || "",
       consultationFee: doctor.rate != null ? String(doctor.rate) : "",
     })
@@ -344,8 +400,8 @@ export function AdminProvidersPage() {
       toast({ title: "Cannot save", description: "Company is missing. Please log in again.", variant: "destructive" })
       return
     }
-    if (!doctorForm.branchId) {
-      toast({ title: "Branch required", description: "Select a branch for this doctor.", variant: "destructive" })
+    if (doctorForm.branchIds.length === 0) {
+      toast({ title: "Branch required", description: "Select at least one branch for this doctor.", variant: "destructive" })
       return
     }
     if (!doctorRoleId) {
@@ -374,7 +430,7 @@ export function AdminProvidersPage() {
         roleId: doctorRoleId,
         companyId,
         departmentId: doctorForm.departmentId === NO_DEPARTMENT ? null : doctorForm.departmentId,
-        clinicIds: [doctorForm.branchId],
+        clinicIds: doctorForm.branchIds,
         medicalRegistrationNumber: doctorForm.medicalRegistrationNumber.trim() || null,
         rate,
       })
@@ -406,6 +462,10 @@ export function AdminProvidersPage() {
       toast({ title: "Consultation fee required", description: "Enter the doctor's consultation fee.", variant: "destructive" })
       return
     }
+    if (doctorForm.branchIds.length === 0) {
+      toast({ title: "Branch required", description: "Select at least one branch for this doctor.", variant: "destructive" })
+      return
+    }
     try {
       const updated = await updateUser.mutateAsync({
         id: selected.id,
@@ -416,7 +476,7 @@ export function AdminProvidersPage() {
         companyId: selected.companyId || companyId || null,
         departmentId: doctorForm.departmentId === NO_DEPARTMENT ? null : doctorForm.departmentId,
         specialtyId: selected.specialtyId || null,
-        clinicIds: clinicId ? [clinicId] : null,
+        clinicIds: doctorForm.branchIds,
         isActive: selected.isActive,
         medicalRegistrationNumber: doctorForm.medicalRegistrationNumber.trim() || null,
         rate,
@@ -445,7 +505,11 @@ export function AdminProvidersPage() {
         start: formatTimeForUi(s.startTime),
         end: formatTimeForUi(s.endTime),
         type: sessionTypeToUi(s.sessionType),
-        location: s.location || "—",
+        location: s.roomName?.trim()
+          ? s.floor?.trim()
+            ? `${s.roomName.trim()} · Floor ${s.floor.trim()}`
+            : s.roomName.trim()
+          : "—",
         slotDuration: s.slotDurationMinutes > 0 ? `${s.slotDurationMinutes} min` : "—",
       })),
     [availabilitySessions]
@@ -564,7 +628,7 @@ export function AdminProvidersPage() {
         startTime: timeToApi(start),
         endTime: timeToApi(end),
         sessionType: sessionTypeToApi(form.type),
-        location: selectedRoom.name,
+        roomId: selectedRoom.id,
         slotDurationMinutes: slotDuration,
       })
       const dateCount = sessionDates.length
@@ -719,7 +783,15 @@ export function AdminProvidersPage() {
                 <InfoRow label="Medical registration no." value={selected.medicalRegistrationNumber || "—"} />
                 <InfoRow label="Consultation fee" value={formatConsultationFee(selected.rate)} />
                 <InfoRow label="Role" value={selected.roleName || selected.role || "Doctor"} />
-                <InfoRow label="Branch" value={branchNameById.get(branchId) || "—"} />
+                <InfoRow
+                  label="Branches"
+                  value={
+                    doctorBranchIds(selected)
+                      .map((id) => branchNameById.get(id))
+                      .filter(Boolean)
+                      .join(", ") || branchNameById.get(branchId) || "—"
+                  }
+                />
                 <InfoRow label="Status" value={selected.isActive ? "Active" : "Inactive"} />
                 <InfoRow label="Sessions / week" value={isLoadingAvailability ? "Loading…" : String(sessions.length)} />
                 <InfoRow label="Leave records" value={isLoadingLeaves ? "Loading…" : String(doctorLeaves.length)} />
@@ -947,12 +1019,6 @@ export function AdminProvidersPage() {
             subtitle="Doctor registry — Doctor role, scoped by branch."
             actions={
               <div className="flex flex-wrap items-center gap-3">
-                <BranchSelect
-                  value={branchId}
-                  onValueChange={setBranchId}
-                  branches={branches}
-                  isLoading={isLoadingBranches}
-                />
                 <MtButton className="gap-2" onClick={openAdd} disabled={!doctorRoleId || !hasBranch}>
                   <Plus className="h-4 w-4" />
                   Add doctor
@@ -998,11 +1064,11 @@ export function AdminProvidersPage() {
           </>
         }
       >
-        <BranchFormField
-          value={doctorForm.branchId}
-          onValueChange={(v) => setDoctorForm((f) => ({ ...f, branchId: v }))}
+        <DoctorBranchPicker
           branches={branches}
+          selectedIds={doctorForm.branchIds}
           isLoading={isLoadingBranches}
+          onToggle={toggleDoctorBranch}
         />
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Full Name</Label>
@@ -1088,6 +1154,12 @@ export function AdminProvidersPage() {
           </>
         }
       >
+        <DoctorBranchPicker
+          branches={branches}
+          selectedIds={doctorForm.branchIds}
+          isLoading={isLoadingBranches}
+          onToggle={toggleDoctorBranch}
+        />
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold uppercase tracking-wide text-adminreg-muted">Full Name</Label>
           <Input

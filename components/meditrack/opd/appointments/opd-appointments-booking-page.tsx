@@ -21,7 +21,7 @@ import {
 import { useGetDepartments } from "@/queries/departments"
 import { useGetDoctorLeaves } from "@/queries/meditrack/doctor-leave"
 import { useGetProviderAvailability } from "@/queries/meditrack/provider-availability"
-import { BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
+import { useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
 import {
   buildCalendarDays,
   formatAppointmentDate,
@@ -79,10 +79,8 @@ export function OpdAppointmentsBookingPage() {
   const {
     companyId,
     branchId,
-    setBranchId,
     clinicId,
     hasBranch,
-    branches,
     isLoadingBranches,
     noBranchMessage,
   } = useBranchScope()
@@ -395,12 +393,6 @@ export function OpdAppointmentsBookingPage() {
             {APPOINTMENT_TABS[tab]}
           </h1>
         </div>
-        <BranchSelect
-          value={branchId}
-          onValueChange={setBranchId}
-          branches={branches}
-          isLoading={isLoadingBranches}
-        />
       </div>
 
       {!editable && <ViewOnlyBanner role={ROLE_LABEL[role]} />}

@@ -32,7 +32,7 @@ import {
 } from "@/components/meditrack/shared"
 import { AdminPageHeader } from "@/components/meditrack/admin/register/AdminPageHeader"
 import { AdminCard } from "@/components/meditrack/admin/register/AdminCard"
-import { BranchFormField, BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
+import { BranchFormField, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
 
 const EMPTY_FORM = { name: "", headUserId: "unassigned", doctorIds: [] as string[] }
 
@@ -59,7 +59,6 @@ export function AdminDepartmentsPage() {
   const {
     companyId,
     branchId,
-    setBranchId,
     clinicId,
     hasBranch,
     branches,
@@ -341,12 +340,6 @@ export function AdminDepartmentsPage() {
         subtitle="Department master data — scoped by branch."
         actions={
           <div className="flex flex-wrap items-center gap-3">
-            <BranchSelect
-              value={branchId}
-              onValueChange={setBranchId}
-              branches={branches}
-              isLoading={isLoadingBranches}
-            />
             <MtButton className="gap-2" onClick={openAdd} disabled={!hasBranch}>
               <Plus className="h-4 w-4" />
               Add department

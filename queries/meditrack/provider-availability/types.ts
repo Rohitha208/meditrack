@@ -3,12 +3,15 @@ export interface ProviderAvailability {
   providerId: string;
   providerName?: string | null;
   clinicId?: string | null;
+  roomId?: string | null;
+  roomName?: string | null;
+  roomType?: string | null;
+  floor?: string | null;
   dayOfWeek: string;
   specificDate?: string | null;
   startTime: string;
   endTime: string;
   sessionType: string;
-  location: string;
   slotDurationMinutes: number;
   isActive: boolean;
   createdAt?: string | null;
@@ -22,7 +25,7 @@ export interface CreateProviderAvailabilityRequest {
   startTime: string;
   endTime: string;
   sessionType: string;
-  location: string;
+  roomId: string;
   slotDurationMinutes?: number;
 }
 

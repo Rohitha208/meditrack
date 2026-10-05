@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 import { MtDataTable, StatusBadge, TableSkeleton, type MtColumn } from "@/components/meditrack/shared"
 import { AdminPageHeader } from "./AdminPageHeader"
 import { AdminCard } from "./AdminCard"
-import { BranchSelect, useBranchScope } from "./use-branch-scope"
+import { useBranchScope } from "./use-branch-scope"
 import { useToast } from "@/hooks/use-toast"
 import { getToastErrorMessage } from "@/utils/apiErrorHandler"
 import { useGetMediTrackUsers } from "@/queries/meditrack/users"
@@ -48,11 +48,8 @@ export function AdminHrStaffPage() {
   const {
     companyId,
     branchId,
-    setBranchId,
     clinicId,
     hasBranch,
-    branches,
-    isLoadingBranches,
     noBranchMessage,
   } = useBranchScope()
 
@@ -176,14 +173,6 @@ export function AdminHrStaffPage() {
       <AdminPageHeader
         title="HR & Staff"
         subtitle="Staff directory and weekly duty roster — scoped by branch."
-        actions={
-          <BranchSelect
-            value={branchId}
-            onValueChange={setBranchId}
-            branches={branches}
-            isLoading={isLoadingBranches}
-          />
-        }
       />
 
       <div className="mb-5 flex gap-2">

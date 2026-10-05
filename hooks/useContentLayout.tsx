@@ -25,6 +25,7 @@ import {
 } from "../utils/clientCookie";
 import { isTokenExpired, getTokenExpiration } from "../utils/jwtToken";
 import { isHumanProductType, type ProductType } from "../utils/appMode";
+import { clearActiveBranch } from "@/components/meditrack/admin/register/branch-session";
 
 export type { ProductType };
 
@@ -47,6 +48,7 @@ export type User = {
     companyId?: string | null;
     productType?: ProductType | null;
     companyProductType?: ProductType | null;
+    clinics?: Array<{ clinicId?: string | null; clinicName?: string | null; id?: string | null; name?: string | null }> | null;
 }
 
 export type UserType = {
@@ -433,6 +435,7 @@ export const useContentLayout = () => {
         removeClinicId();
         removeClinicName();
         removeProductType();
+        clearActiveBranch();
         // `productType` (and the `user` it's read alongside) drive
         // ProductLayoutSwitch's PawTrack-vs-MediTrack choice — clearing them
         // synchronously here flips isHumanMode to false while the outgoing

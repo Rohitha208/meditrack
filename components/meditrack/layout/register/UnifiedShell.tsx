@@ -4,8 +4,8 @@ import { useEffect, useState, type ReactNode } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { LogOut, Menu } from "lucide-react"
 import { UnifiedSidebar } from "./UnifiedSidebar"
-import { GlobalSearch } from "./GlobalSearch"
 import { formatDate } from "@/components/meditrack/shared"
+import { BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
 import { SUPER_ADMIN_PATHS } from "@/components/meditrack/admin/register/theme"
 import { useRootContext } from "@/context/RootContext"
 import { useToast } from "@/hooks/use-toast"
@@ -25,6 +25,7 @@ export function UnifiedShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const { userType, handleLogout } = useRootContext()
+  const branch = useBranchScope(!userType?.isSuperAdmin)
   const { role } = useStaffRole()
   const { toast } = useToast()
   const isAdmin = pathname.startsWith("/admin")
@@ -71,7 +72,14 @@ export function UnifiedShell({ children }: { children: ReactNode }) {
             <Menu className="h-4 w-4" />
           </button>
           <div className="min-w-0 flex-1">
-            <GlobalSearch />
+            {!isSuperAdmin && (
+              <BranchSelect
+                value={branch.branchId}
+                onValueChange={branch.setBranchId}
+                branches={branch.branches}
+                isLoading={branch.isLoadingBranches}
+              />
+            )}
           </div>
           <span className="hidden whitespace-nowrap font-plexmono text-xs uppercase text-adminreg-muted sm:block">{formatDate(new Date())}</span>
           <button
@@ -84,8 +92,34 @@ export function UnifiedShell({ children }: { children: ReactNode }) {
             <LogOut className="h-4 w-4" />
           </button>
         </div>
+        {branch.needsBranchChoice && (
+          <div
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="branch-choice-title"
+          >
+            <div className="w-full max-w-md border border-adminreg-border bg-adminreg-card p-6">
+              <p className="font-plexmono text-[10px] uppercase tracking-[0.06em] text-adminreg-muted">Signed in</p>
+              <h2 id="branch-choice-title" className="mt-1 text-lg font-extrabold text-adminreg-text">Which branch are you working in?</h2>
+              <p className="mt-1.5 text-sm text-adminreg-muted">This stays selected on every screen. You can change it from the branch control at the top.</p>
+              <div className="mt-4 space-y-2">
+                {branch.branches.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => branch.setBranchId(item.id)}
+                    className="w-full border border-adminreg-border bg-adminreg-bg px-3 py-2.5 text-left text-sm font-semibold text-adminreg-text hover:border-adminreg-olive hover:bg-adminreg-header"
+                  >
+                    {item.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
         <main className="adminreg-scroll min-h-0 flex-1 overflow-y-auto">
-          {isAdmin ? <div className="mx-auto max-w-[1400px] px-4 py-5 sm:px-6 sm:py-6 md:px-8 md:py-8">{children}</div> : children}
+          {branch.needsBranchChoice ? null : isAdmin ? <div className="mx-auto max-w-[1400px] px-4 py-5 sm:px-6 sm:py-6 md:px-8 md:py-8">{children}</div> : children}
         </main>
       </div>
     </div>

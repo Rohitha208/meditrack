@@ -19,7 +19,7 @@ import {
 } from "@/components/meditrack/admin/register"
 import { useStaffRole } from "@/components/meditrack/layout/register/RoleProvider"
 import { ROLE_LABEL, firstVisibleStage, isStageEditable, isStageVisible } from "@/components/meditrack/layout/register/rbac"
-import { BranchSelect, useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
+import { useBranchScope } from "@/components/meditrack/admin/register/use-branch-scope"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useGetDepartmentDoctors } from "@/queries/meditrack/opd-booking"
 import { useGetMediTrackUserById } from "@/queries/meditrack/users"
@@ -90,6 +90,7 @@ import {
   useOverrideVisitBalance,
   useReopenVisit,
 } from "@/queries/meditrack/opd-visit-closure"
+import { useRootContext } from "@/context/RootContext"
 import { getUserId } from "@/utils/clientCookie"
 import {
   SectionLabel,
@@ -542,6 +543,9 @@ export function OpdVisitThreadPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { role } = useStaffRole()
+  const { user } = useRootContext()
+  const signedInUserId = (typeof user?.id === "string" ? user.id : "") || getUserId() || ""
+  const doctorQueueUserId = role === "doctor" && isGuid(signedInUserId) ? signedInUserId : undefined
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
@@ -563,7 +567,6 @@ export function OpdVisitThreadPage() {
     clinicId,
     hasBranch,
     branches,
-    isLoadingBranches,
     noBranchMessage,
   } = useBranchScope()
   const selectedBranch = branches.find((b) => b.id === branchId)
@@ -582,6 +585,7 @@ export function OpdVisitThreadPage() {
   const [chiefComplaint, setChiefComplaint] = useState("")
   const [vitalsDraft, setVitalsDraft] = useState(EMPTY_VITALS_DRAFT)
   const [editingVitalKey, setEditingVitalKey] = useState<string | null>(null)
+  const [handedToDoctor, setHandedToDoctor] = useState(false)
   const [dismissedDeepLink, setDismissedDeepLink] = useState(false)
   const [state, setState] = useState<ThreadState>(INITIAL_STATE)
   const [tmp, setTmp] = useState<Record<string, string>>({})
@@ -710,17 +714,29 @@ export function OpdVisitThreadPage() {
   const { data: existingCollection, isLoading: collectionLoading } = useFeeCollectionByAppointment(appointmentId || undefined)
 
   useEffect(() => {
+    setCollection((current) => {
+      if (!current) return current
+      if (!appointmentId || current.appointmentId === appointmentId) return current
+      return null
+    })
+  }, [appointmentId])
+
+  useEffect(() => {
     if (!existingCollection) return
+    if (appointmentId && existingCollection.appointmentId && existingCollection.appointmentId !== appointmentId) return
+    const bookedDoctorId = existingCollection.userId || existingCollection.token?.userId || ""
+    if (doctorQueueUserId && bookedDoctorId && bookedDoctorId !== doctorQueueUserId) return
     setCollection(existingCollection)
     setPaymentMethod(existingCollection.paymentMethod || "Cash")
     if (existingCollection.token) setActiveToken(existingCollection.token)
-  }, [existingCollection])
+  }, [existingCollection, doctorQueueUserId, appointmentId])
 
   useEffect(() => {
     if (!collection) return
     const params = new URLSearchParams(searchParams.toString())
     let changed = false
-    if (isGuid(collection.visitId) && params.get("visitId") !== collection.visitId) {
+    const collectionMatchesAppointment = !appointmentId || collection.appointmentId === appointmentId
+    if (isGuid(collection.visitId) && collectionMatchesAppointment && params.get("visitId") !== collection.visitId) {
       params.set("visitId", collection.visitId as string)
       changed = true
     }
@@ -765,14 +781,6 @@ export function OpdVisitThreadPage() {
     },
     ((s === 0 && !!appointmentId) || s === 1 || s === 2) && !collection
   )
-
-  const visitClinicId =
-    (isGuid(feeEstimate?.clinicId) && feeEstimate.clinicId) ||
-    (isGuid(urlClinicId) && urlClinicId) ||
-    (isGuid(collection?.clinicId) && collection.clinicId) ||
-    (isGuid(collection?.token?.clinicId) && collection.token.clinicId) ||
-    clinicId ||
-    ""
 
   useEffect(() => {
     const knownClinic =
@@ -839,9 +847,10 @@ export function OpdVisitThreadPage() {
   const totalPayable = feeWaived ? 0 : payableCharges.reduce((sum, c) => sum + (c.amount || 0), 0)
 
   const visitIdParam = searchParams.get("visitId") || ""
-  const diagnosticVisitId = isGuid(collection?.visitId)
+  const collectionMatchesAppointment = !appointmentId || !collection?.appointmentId || collection.appointmentId === appointmentId
+  const diagnosticVisitId = collectionMatchesAppointment && isGuid(collection?.visitId)
     ? collection.visitId!
-    : isGuid(visitIdParam)
+    : !appointmentId && isGuid(visitIdParam)
       ? visitIdParam
       : ""
   const vitalsQuery = useOpdVitals(diagnosticVisitId, (s === 3 || s === 4) && !!diagnosticVisitId)
@@ -866,8 +875,15 @@ export function OpdVisitThreadPage() {
   const referralStatusQuery = useGetAdmissionReferralByVisit(diagnosticVisitId, s === 4 && !!diagnosticVisitId)
 
   useEffect(() => {
-    if (vitals?.chiefComplaint != null) setChiefComplaint(vitals.chiefComplaint)
-    if (!vitals) return
+    setHandedToDoctor(false)
+    setEditingVitalKey(null)
+    setChiefComplaint("")
+    setVitalsDraft(EMPTY_VITALS_DRAFT)
+  }, [diagnosticVisitId])
+
+  useEffect(() => {
+    if (!vitals || !diagnosticVisitId || vitals.visitId !== diagnosticVisitId) return
+    if (vitals.chiefComplaint != null) setChiefComplaint(vitals.chiefComplaint)
     setVitalsDraft({
       bloodPressure: vitals.bloodPressure || "",
       pulse: vitals.heartRateBpm != null ? String(vitals.heartRateBpm) : "",
@@ -875,7 +891,7 @@ export function OpdVisitThreadPage() {
       spo2: vitals.spo2 != null ? String(vitals.spo2) : "",
       weightKg: vitals.weightKg != null ? String(vitals.weightKg) : "",
     })
-  }, [vitals?.id, vitals?.updatedAt, vitals?.chiefComplaint])
+  }, [diagnosticVisitId, vitals])
 
   const dxVisitQuery = useDiagnosticVisit(diagnosticVisitId, (s === 4 || s === 5 || s === 8) && !!diagnosticVisitId)
   const rxVisitQuery = usePrescriptionVisit(diagnosticVisitId, (s === 6 || s === 7 || s === 8) && !!diagnosticVisitId)
@@ -944,6 +960,7 @@ export function OpdVisitThreadPage() {
       clinicId,
       companyId: companyId || undefined,
       date: queueDate,
+      userId: doctorQueueUserId,
     },
     (s === 2 || s >= 3) && Boolean(clinicId || companyId)
   )
@@ -952,6 +969,7 @@ export function OpdVisitThreadPage() {
     .filter((token, index, all) => all.findIndex((t) => t.id === token.id) === index)
     .filter((token) => token.status !== "Cancelled")
     .filter((token) => Boolean(token.appointmentId || token.id))
+    .filter((token) => !doctorQueueUserId || !token.userId || token.userId === doctorQueueUserId)
   const visitTokenKey = (token: OpdQueueToken) => token.appointmentId || token.id
   const selectedPatientKey = appointmentId || activeToken?.appointmentId || ""
   const awaitingVisitContext = Boolean(appointmentId) && collectionLoading
@@ -1346,19 +1364,6 @@ export function OpdVisitThreadPage() {
     router.push(`/opd/visit-thread?${params}`)
   }
 
-  function changeVisitBranch(id: string) {
-    setBranchId(id)
-    const params = new URLSearchParams(searchParams.toString())
-    params.set("clinicId", id)
-    params.delete("appointmentId")
-    params.delete("name")
-    params.delete("patientId")
-    params.delete("userId")
-    params.delete("departmentId")
-    setActiveToken(null)
-    router.replace(`/opd/visit-thread?${params.toString()}`)
-  }
-
   function openVisitFromToken(token: OpdQueueToken) {
     const params = new URLSearchParams(searchParams.toString())
     params.set("stage", String(s))
@@ -1368,18 +1373,48 @@ export function OpdVisitThreadPage() {
     if (token.clinicId) params.set("clinicId", token.clinicId)
     if (token.patientName) params.set("name", token.patientName)
     if (token.patientId) params.set("patientId", token.patientId)
+    params.delete("visitId")
     router.push(`/opd/visit-thread?${params}`)
     setActiveToken(token)
+    setCollection((current) => (current?.appointmentId === token.appointmentId ? current : null))
   }
 
   const firstQueueTokenId = todayPatientOptions[0]?.id
 
   useEffect(() => {
+    if (s < 3) return
+    if (doctorQueueUserId) {
+      if (liveQueueLoading) return
+      const bookedDoctorId = collection?.userId || activeToken?.userId || urlUserId || ""
+      const currentKey = appointmentId || activeToken?.appointmentId || ""
+      const inMyQueue = todayPatientOptions.some(
+        (token) =>
+          (Boolean(currentKey) && visitTokenKey(token) === currentKey) ||
+          (Boolean(activeToken?.id) && token.id === activeToken?.id)
+      )
+      const isMine = inMyQueue || (Boolean(bookedDoctorId) && bookedDoctorId === doctorQueueUserId)
+      if (isMine) return
+      if (currentKey && !bookedDoctorId && collectionLoading) return
+      setCollection(null)
+      setActiveToken(null)
+      const first = todayPatientOptions[0]
+      if (first) {
+        openVisitFromToken(first)
+        return
+      }
+      if (!currentKey) return
+      const params = new URLSearchParams(searchParams.toString())
+      for (const key of ["appointmentId", "visitId", "name", "uhid", "phone", "patientId", "userId", "providerId", "departmentId"]) {
+        params.delete(key)
+      }
+      router.replace(`/opd/visit-thread?${params.toString()}`)
+      return
+    }
     if (appointmentId || activeToken) return
-    if (s < 3 || !firstQueueTokenId) return
+    if (!firstQueueTokenId) return
     const first = todayPatientOptions[0]
     if (first) openVisitFromToken(first)
-  }, [appointmentId, activeToken, s, firstQueueTokenId])
+  }, [appointmentId, activeToken, s, firstQueueTokenId, doctorQueueUserId, liveQueueLoading, collection, urlUserId, collectionLoading, router, searchParams])
 
   function closeDrawer() {
     setDrawer(null)
@@ -2032,7 +2067,7 @@ export function OpdVisitThreadPage() {
       })
     )
     if (!saved) return null
-    patch({ bannerText: isCompleted ? "Vitals saved — sending to doctor." : "Vitals saved." })
+    patch({ bannerText: isCompleted ? "Sent to doctor." : "Vitals saved." })
     return saved
   }
 
@@ -2090,13 +2125,17 @@ export function OpdVisitThreadPage() {
       )
     )
     if (!saved) return
+    setHandedToDoctor(false)
     patch({ retriaged: true, bannerText: "Re-assessment logged." })
   }
+
+  const sentToDoctor = handedToDoctor || Boolean(vitals?.isCompleted && !vitals.isRetriage)
 
   async function sendToDoctor() {
     const saved = await saveDraftVitals(true)
     if (!saved) return
-    goNext()
+    setHandedToDoctor(true)
+    patch({ bannerText: "Sent to doctor." })
   }
 
   const openAddendum = () =>
@@ -2491,12 +2530,6 @@ export function OpdVisitThreadPage() {
           )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
-          <BranchSelect
-            value={visitClinicId || branchId}
-            onValueChange={changeVisitBranch}
-            branches={branches}
-            isLoading={isLoadingBranches}
-          />
           {s >= 3 && (
             <div className="flex items-center gap-2">
               <span className="hidden text-[11px] font-semibold uppercase tracking-wide text-adminreg-muted sm:inline">
@@ -2520,7 +2553,9 @@ export function OpdVisitThreadPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {selectedPatientKey &&
-                    !todayPatientOptions.some((t) => visitTokenKey(t) === selectedPatientKey) && (
+                    !todayPatientOptions.some((t) => visitTokenKey(t) === selectedPatientKey) &&
+                    (!doctorQueueUserId ||
+                      (collection?.userId || activeToken?.userId || urlUserId) === doctorQueueUserId) && (
                       <SelectItem value={selectedPatientKey}>
                         {dxPatientLabel || searchParams.get("name") || "Current patient"}
                       </SelectItem>
@@ -3131,6 +3166,11 @@ export function OpdVisitThreadPage() {
 
           {s === 3 && (
             <div>
+              {sentToDoctor && (
+                <div className="mb-4 border border-adminreg-olive bg-adminreg-olive-soft px-4 py-2.5 text-sm font-semibold text-adminreg-olive-dark">
+                  Sent to doctor — Consultation
+                </div>
+              )}
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="font-plexmono text-[10px] uppercase tracking-[0.04em] text-adminreg-muted2">Vitals</h2>
                 {editable && (
@@ -3226,7 +3266,7 @@ export function OpdVisitThreadPage() {
                   className="w-full border border-adminreg-border bg-adminreg-bg px-2.5 py-2 text-sm text-adminreg-text placeholder:text-adminreg-muted2 focus:outline-none focus:ring-1 focus:ring-adminreg-indigo disabled:opacity-70"
                 />
               </Panel>
-              {editable && (
+              {editable && (vitalsReadyToSave || !sentToDoctor) && (
                 <div className="mt-4 flex flex-wrap items-center gap-2">
                   {vitalsReadyToSave && (
                     <AdminButton
@@ -3239,15 +3279,17 @@ export function OpdVisitThreadPage() {
                       Save vitals
                     </AdminButton>
                   )}
-                  <AdminButton
-                    type="button"
-                    accent="indigo"
-                    onClick={() => void sendToDoctor()}
-                    disabled={saveOpdVitals.isPending}
-                  >
-                    {saveOpdVitals.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Send to doctor → Consultation
-                  </AdminButton>
+                  {!sentToDoctor && (
+                    <AdminButton
+                      type="button"
+                      accent="indigo"
+                      onClick={() => void sendToDoctor()}
+                      disabled={saveOpdVitals.isPending}
+                    >
+                      {saveOpdVitals.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Send to doctor → Consultation
+                    </AdminButton>
+                  )}
                 </div>
               )}
             </div>
