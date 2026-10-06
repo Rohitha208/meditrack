@@ -44,7 +44,7 @@ export function UnifiedShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (isSuperAdmin) {
-      if (pathname.startsWith("/opd")) {
+      if (pathname.startsWith("/opd") || pathname.startsWith("/ed") || pathname.startsWith("/ipd")) {
         router.replace("/admin/companies")
         return
       }

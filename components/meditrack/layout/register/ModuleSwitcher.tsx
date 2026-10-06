@@ -4,7 +4,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { useStaffRole } from "./RoleProvider"
-import { canAccessAdmin, firstVisibleIpdStage, firstVisibleStage, roleHomePath } from "./rbac"
+import { canAccessAdmin, canAccessEd, firstVisibleIpdStage, firstVisibleStage, roleHomePath } from "./rbac"
 
 /** Role-specific OPD/IPD landing. Default module hrefs start at stage 0
  * (Registration / Admission), which nurses must not open. */
@@ -16,7 +16,7 @@ const ROLE_MODULE_HOME: Partial<Record<string, Partial<Record<"opd" | "ipd", str
 }
 
 interface ModuleDef {
-  key: "admin" | "opd" | "ipd"
+  key: "admin" | "opd" | "ipd" | "ed"
   label: string
   sublabel: string
   href: string | null
@@ -28,6 +28,7 @@ interface ModuleDef {
 const MODULES: ModuleDef[] = [
   { key: "admin", label: "Admin", sublabel: "Configuration & registers", href: "/admin/dashboard", dotClass: "bg-adminreg-olive", accentClass: "border-l-adminreg-olive", match: (p) => p.startsWith("/admin") },
   { key: "opd", label: "OPD", sublabel: "Outpatient visit thread", href: "/opd/visit-thread", dotClass: "bg-adminreg-indigo", accentClass: "border-l-adminreg-indigo", match: (p) => p.startsWith("/opd") },
+  { key: "ed", label: "ED", sublabel: "Emergency encounter", href: "/ed/encounter?stage=0", dotClass: "bg-adminreg-olive", accentClass: "border-l-adminreg-olive", match: (p) => p.startsWith("/ed") },
   { key: "ipd", label: "IPD", sublabel: "Inpatient stay record", href: "/ipd/stay", dotClass: "bg-adminreg-ipd", accentClass: "border-l-adminreg-ipd", match: (p) => p.startsWith("/ipd") },
 ]
 
@@ -55,7 +56,8 @@ export function ModuleSwitcher({ isSuperAdmin = false }: { isSuperAdmin?: boolea
         const disabled =
           href === null ||
           (isSuperAdmin && m.key !== "admin") ||
-          (m.key === "admin" && !canAccessAdmin(role) && !isSuperAdmin)
+          (m.key === "admin" && !canAccessAdmin(role) && !isSuperAdmin) ||
+          (m.key === "ed" && !canAccessEd(role))
         const content = (
           <div
             className={cn(

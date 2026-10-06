@@ -12,7 +12,7 @@ import { RoleProvider } from "@/components/meditrack/layout/register/RoleProvide
 
 function MediTrackLayoutBase({ children }: { children: ReactNode }) {
   const pathname = usePathname()
-  const isUnified = pathname.startsWith("/admin") || pathname.startsWith("/opd") || pathname.startsWith("/ipd")
+  const isUnified = pathname.startsWith("/admin") || pathname.startsWith("/opd") || pathname.startsWith("/ipd") || pathname.startsWith("/ed")
 
   // RoleProvider wraps both branches so the "preview as role" selection
   // survives client-side navigation between Admin/OPD/IPD (it lives above
