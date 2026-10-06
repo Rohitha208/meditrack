@@ -7,7 +7,8 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { ModuleSwitcher } from "./ModuleSwitcher"
 import { RoleSwitcher } from "./RoleSwitcher"
 import { useStaffRole } from "./RoleProvider"
-import { canAccessAppointmentBooking, canAccessDxWorklist, dxWorklistEditable, isStageEditable, isStageVisible, isIpdStageVisible } from "./rbac"
+import { canAccessAppointmentBooking, canAccessDxWorklist, dxWorklistEditable, isEdStageEditable, isStageEditable, isStageVisible, isIpdStageVisible, ED_STAGE_ACCESS } from "./rbac"
+import { ED_STAGE_DEFS, useEdHandoffs } from "@/components/meditrack/ed/theme"
 import {
   ADMIN_NAV_GROUPS,
   ADMIN_REGISTER_NAV,
@@ -108,6 +109,42 @@ function AdminNav({ isSuperAdmin }: { isSuperAdmin: boolean }) {
               })}
             </div>
           </div>
+        )
+      })}
+    </nav>
+  )
+}
+
+function EdNav() {
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const { role } = useStaffRole()
+  const currentStage = pathname.startsWith("/ed") ? Number(searchParams.get("stage") ?? 0) : -1
+  const visible = ED_STAGE_ACCESS[role].visible
+
+  return (
+    <nav className="adminreg-scroll-dark flex-1 overflow-y-auto px-3 py-3">
+      <div className="mb-3 border-b border-l-[3px] border-adminreg-sidebar-border border-l-adminreg-olive bg-black/[0.03] px-3.5 py-3">
+        <div className="text-sm font-bold text-adminreg-sidebar-text">Unidentified male · ~30–50 y</div>
+        <div className="mt-0.5 font-plexmono text-[10px] text-adminreg-sidebar-text-muted">ED-20260812-0109 · arrived 10:14</div>
+        <div className="mt-1.5 font-plexmono text-[10px] text-adminreg-sidebar-text-muted">Encounter open</div>
+      </div>
+      <div className="mb-2 px-2.5 font-plexmono text-[9px] uppercase tracking-[0.1em] text-adminreg-sidebar-text-muted">ED encounter · 3 stages</div>
+      {ED_STAGE_DEFS.map((def, i) => {
+        if (!visible.includes(i)) return null
+        const active = currentStage === i
+        const editable = isEdStageEditable(role, i)
+        return (
+          <Link key={def.name} href={`/ed/encounter?stage=${i}`} className="flex gap-2.5 px-2 py-2">
+            <div className="flex w-4 flex-shrink-0 flex-col items-center">
+              <span className={cn("mt-[3px] h-2.5 w-2.5 rounded-full border-[1.5px]", active ? "border-adminreg-olive bg-adminreg-olive shadow-[0_0_0_3px_rgba(30,61,61,0.25)]" : "border-adminreg-sidebar-text-muted bg-transparent")} />
+            </div>
+            <div className="min-w-0 flex-1 pb-1">
+              <div className="font-plexmono text-[9px] tracking-[0.04em] text-adminreg-sidebar-text-muted">{def.role}</div>
+              <div className={cn("mt-px text-[13px]", active ? "font-extrabold text-adminreg-sidebar-text" : "font-semibold text-adminreg-sidebar-text-secondary")}>{def.name}</div>
+              {!editable && <div className="mt-0.5 text-[10px] italic text-adminreg-amber">View only</div>}
+            </div>
+          </Link>
         )
       })}
     </nav>
@@ -294,6 +331,7 @@ function SidebarContent() {
   const pathname = usePathname()
   const isOpd = pathname.startsWith("/opd")
   const isIpd = pathname.startsWith("/ipd")
+  const isEd = pathname.startsWith("/ed")
   const { userType } = useRootContext()
   const isSuperAdmin = !!userType?.isSuperAdmin
 
@@ -305,7 +343,7 @@ function SidebarContent() {
       </div>
 
       <ModuleSwitcher isSuperAdmin={isSuperAdmin} />
-      {isSuperAdmin ? <AdminNav isSuperAdmin /> : isOpd ? <OpdNav /> : isIpd ? <IpdNav /> : <AdminNav isSuperAdmin={false} />}
+      {isSuperAdmin ? <AdminNav isSuperAdmin /> : isOpd ? <OpdNav /> : isIpd ? <IpdNav /> : isEd ? <EdNav /> : <AdminNav isSuperAdmin={false} />}
       {isSuperAdmin ? <SuperAdminRoleBadge /> : <RoleSwitcher />}
     </>
   )

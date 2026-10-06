@@ -136,3 +136,23 @@ export function isIpdStageEditable(role: StaffRole, stage: number): boolean {
 export function firstVisibleIpdStage(role: StaffRole): number {
   return IPD_STAGE_ACCESS[role].visible[0] ?? 0
 }
+
+/** ED encounter stages: 0 Arrival & Triage, 1 Assessment & Treatment,
+ * 2 Disposition. Per the handoff, ED is open to every role except Lab /
+ * Radiology Tech. Front desk takes identity and payment at arrival and at
+ * disposition; the nurse triages; the doctor treats and disposes. */
+export const ED_STAGE_ACCESS: Record<StaffRole, { visible: number[]; editable: number[] }> = {
+  frontdesk: { visible: [0, 1, 2], editable: [0, 2] },
+  doctor: { visible: [0, 1, 2], editable: [1, 2] },
+  nurse: { visible: [0, 1, 2], editable: [0] },
+  labtech: { visible: [], editable: [] },
+  admin: { visible: [0, 1, 2], editable: [] },
+}
+
+export function canAccessEd(role: StaffRole): boolean {
+  return ED_STAGE_ACCESS[role].visible.length > 0
+}
+
+export function isEdStageEditable(role: StaffRole, stage: number): boolean {
+  return ED_STAGE_ACCESS[role].editable.includes(stage)
+}

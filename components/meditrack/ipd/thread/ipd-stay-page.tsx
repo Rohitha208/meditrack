@@ -9,6 +9,9 @@ import { useStaffRole } from "@/components/meditrack/layout/register/RoleProvide
 import { ROLE_LABEL, firstVisibleIpdStage, isIpdStageEditable, isIpdStageVisible } from "@/components/meditrack/layout/register/rbac"
 import { SectionLabel, FieldLabel, FieldValue, Panel, ViewOnlyBanner, InlineInfo, InlineSuccess } from "@/components/meditrack/opd/shared/ui"
 import { IPD_STAGE_DEFS, REFERRAL_STATE_LABEL, type ReferralState } from "./theme"
+import { useEdHandoffs } from "@/components/meditrack/ed/theme"
+import { AdmissionRouteSelector, EmergencyAdmissionPanel, PlannedAdmissionPanel, parseRoute, type AdmissionRoute } from "@/components/meditrack/ipd/admission/ipd-admission-routes"
+import { MarBody, DiagnosticsOtBody, DailyBillingBody, DischargeBody, FinalBillingBody } from "./ipd-stage-bodies"
 
 // ---------------------------------------------------------------------------
 // Frontend/UI only — the IPD "stay record". Mirrors the Arogya HMS handoff's
@@ -118,6 +121,8 @@ interface WorklistRow {
   referredAt: string
   waitMin: number
   overdueThresholdMin: number
+  /** Set on rows handed off from ED — shows the NEW · FROM ED note. */
+  edNote?: string
 }
 
 const WORKLIST: WorklistRow[] = [
@@ -147,6 +152,7 @@ export function IpdStayPage() {
   const s = Number(searchParams.get("stage") ?? 0)
   const activeDay = Number(searchParams.get("day") ?? 4)
   const openRef = searchParams.get("ref")
+  const route = parseRoute(searchParams.get("route"))
   const editable = isIpdStageEditable(role, s)
 
   useEffect(() => {
@@ -190,6 +196,10 @@ export function IpdStayPage() {
   function goToDay(d: number) {
     router.push(`/ipd/stay?stage=${s}&day=${d}`)
   }
+  function setRoute(next: AdmissionRoute) {
+    const suffix = next === "opd" ? "" : `&route=${next}`
+    router.push(`/ipd/stay?stage=0&day=${activeDay}${suffix}`)
+  }
   function openWorklistRow(row: WorklistRow) {
     router.push(`/ipd/stay?stage=0&day=${activeDay}&ref=${row.id}`)
     setDismissedJustCompleted(false)
@@ -202,8 +212,27 @@ export function IpdStayPage() {
     setDismissedJustCompleted(false)
   }
 
-  const selectedRow = WORKLIST.find((r) => r.id === openRef)
-  const overdueCount = WORKLIST.filter(overdue).length
+  // ED hand-offs join the referral worklist as NEW · FROM ED rows (wait starts at 0).
+  const edRows = useEdHandoffs()
+  const worklist: WorklistRow[] = [
+    ...edRows.map<WorklistRow>((e) => ({
+      id: e.id,
+      patient: e.patient,
+      ageSex: e.ageSex,
+      uhid: e.uhid,
+      referredBy: e.doctor,
+      department: e.department,
+      diagnosis: e.complaint,
+      referredAt: e.handedOffAt,
+      waitMin: 0,
+      overdueThresholdMin: 45,
+      edNote: `NEW · FROM ED · ${e.id} · handed off ${e.handedOffAt} by ${e.doctor} → ${e.department}, ${e.bedCategory} bed. Identity and payment were resolved in ED before handoff.`,
+    })),
+    ...WORKLIST,
+  ]
+
+  const selectedRow = worklist.find((r) => r.id === openRef)
+  const overdueCount = worklist.filter(overdue).length
 
   return (
     <div className="min-h-full">
@@ -245,6 +274,13 @@ export function IpdStayPage() {
       <div className="px-4 pb-16 pt-6 font-archivo sm:px-6 md:px-8">
         <div className="mx-auto max-w-[1240px]">
           {s === 0 && !selectedRow && (
+            <div className="mb-6">
+              <AdmissionRouteSelector route={route} onChange={setRoute} opdCount={worklist.length} emergencyPending={3} plannedToday={4} />
+            </div>
+          )}
+          {s === 0 && !selectedRow && route === "emergency" && <EmergencyAdmissionPanel editable={editable} />}
+          {s === 0 && !selectedRow && route === "planned" && <PlannedAdmissionPanel editable={editable} />}
+          {s === 0 && !selectedRow && route === "opd" && (
             <div>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <SectionLabel>OPD referral worklist</SectionLabel>
@@ -253,7 +289,7 @@ export function IpdStayPage() {
               <p className="mb-3.5 text-xs text-adminreg-muted">Patients a doctor has referred for admission, waiting on desk action. Opening a row starts Stage 1 with the OPD context already carried over — nothing is re-typed here.</p>
 
               <div className="space-y-2.5">
-                {WORKLIST.map((row) => {
+                {worklist.map((row) => {
                   const isOverdue = overdue(row)
                   const isJustAdmitted = row.id === "REF-20260812-0031" && referralState === "admitted"
                   return (
@@ -277,6 +313,9 @@ export function IpdStayPage() {
                           )}
                         </div>
                       </div>
+                      {row.edNote && (
+                        <div className="mx-3.5 mb-3.5 border-l-[3px] border-adminreg-olive bg-adminreg-olive-soft px-3.5 py-2 text-[11px] font-semibold text-adminreg-olive-dark">{row.edNote}</div>
+                      )}
                       {isOverdue && !isJustAdmitted && (
                         <div className="border-t border-adminreg-red bg-adminreg-red-soft px-3.5 py-2 text-[11px] font-semibold text-adminreg-red-text">
                           OVERDUE — {row.waitMin} min since referral, threshold 45. This patient has already been told they need admission and is still waiting on desk action.
@@ -565,79 +604,11 @@ export function IpdStayPage() {
             </div>
           )}
 
-          {s === 3 && (
-            <Panel>
-              <SectionLabel>Medication administration record — Day {activeDay}</SectionLabel>
-              <div className="border border-adminreg-border">
-                <div className="grid grid-cols-[1.3fr_1fr_1fr_1fr] bg-adminreg-header px-4 py-2.5 text-[11px] font-bold text-adminreg-muted"><span>Drug</span><span>08:00</span><span>14:00</span><span>20:00</span></div>
-                {[{ drug: "Atenolol 50mg", d: ["✓", "—", "—"] }, { drug: "Atorvastatin 40mg", d: ["—", "—", "✓"] }, { drug: "Heparin 5000 IU SC", d: ["✓", "✓", "Due"] }].map((row) => (
-                  <div key={row.drug} className="grid grid-cols-[1.3fr_1fr_1fr_1fr] items-center border-t border-adminreg-divider px-4 py-2.5 text-sm">
-                    <span className="font-medium text-adminreg-text">{row.drug}</span>
-                    {row.d.map((v, i) => <span key={i} className={cn("font-plexmono text-xs", v === "Due" ? "font-bold text-adminreg-amber-text" : v === "✓" ? "text-adminreg-olive-700" : "text-adminreg-muted")}>{v}</span>)}
-                  </div>
-                ))}
-              </div>
-              <p className="mt-3 text-[11px] text-adminreg-muted">Nurse role sees only this screen — no billing, no admin, per the unified shell's RBAC.</p>
-            </Panel>
-          )}
-
-          {s === 4 && (
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <Panel>
-                <SectionLabel>Ordered diagnostics — Day {activeDay}</SectionLabel>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between border-b border-adminreg-divider pb-2"><span>ECG (repeat)</span><span className="font-plexmono text-adminreg-muted">Ordered 08:10</span></div>
-                  <div className="flex justify-between"><span>Troponin-I (repeat)</span><span className="font-plexmono text-adminreg-muted">Ordered 08:10</span></div>
-                </div>
-              </Panel>
-              <Panel>
-                <SectionLabel>OT booking</SectionLabel>
-                <p className="text-sm text-adminreg-muted">No procedure booked for this stay.</p>
-                {editable && <AdminButton type="button" variant="secondary" className="mt-3.5">Book OT slot</AdminButton>}
-              </Panel>
-            </div>
-          )}
-
-          {s === 5 && (
-            <Panel>
-              <SectionLabel>Daily billing accrual — Day {activeDay}</SectionLabel>
-              <div className="border border-adminreg-border">
-                <div className="grid grid-cols-[1.6fr_1fr] bg-adminreg-header px-4 py-2.5 text-[11px] font-bold text-adminreg-muted"><span>Charge</span><span>Amount (₹)</span></div>
-                {[["General ward bed / day", "1,200"], ["Nursing care", "800"], ["Consultant visit — Dr. Anjali Nair", "700"]].map(([label, amt]) => (
-                  <div key={label} className="grid grid-cols-[1.6fr_1fr] border-t border-adminreg-divider px-4 py-2.5 text-sm"><span>{label}</span><span className="font-plexmono">{amt}</span></div>
-                ))}
-                <div className="grid grid-cols-[1.6fr_1fr] border-t border-adminreg-divider bg-adminreg-header px-4 py-2.5 text-sm font-bold"><span>Day {activeDay} total</span><span className="font-plexmono">₹2,700</span></div>
-              </div>
-            </Panel>
-          )}
-
-          {s === 6 && (
-            <Panel>
-              <SectionLabel>Discharge checklist</SectionLabel>
-              <div className="space-y-2 text-sm">
-                {["Final round completed", "Discharge summary drafted", "Follow-up appointment scheduled", "Take-home medication reconciled"].map((item) => (
-                  <label key={item} className="flex items-center gap-2.5">
-                    <input type="checkbox" disabled={!editable} className="h-3.5 w-3.5 accent-adminreg-ipd" />
-                    <span className="text-adminreg-text">{item}</span>
-                  </label>
-                ))}
-              </div>
-              {editable && <AdminButton type="button" className="mt-4 border-adminreg-ipd bg-adminreg-ipd text-adminreg-card hover:bg-adminreg-ipd/90" onClick={() => goToStage(7)}>Ready → Final billing</AdminButton>}
-            </Panel>
-          )}
-
-          {s === 7 && (
-            <Panel>
-              <SectionLabel>Final billing &amp; settlement</SectionLabel>
-              <div className="grid grid-cols-2 gap-2.5 text-sm">
-                <div><FieldLabel>Total charges</FieldLabel><FieldValue>₹48,200</FieldValue></div>
-                <div><FieldLabel>Deposit adjusted</FieldLabel><FieldValue>₹25,000</FieldValue></div>
-                <div><FieldLabel>TPA settlement</FieldLabel><FieldValue>₹18,000</FieldValue></div>
-                <div><FieldLabel>Balance due</FieldLabel><FieldValue>₹5,200</FieldValue></div>
-              </div>
-              {editable && <AdminButton type="button" className="mt-4 border-adminreg-ipd bg-adminreg-ipd text-adminreg-card hover:bg-adminreg-ipd/90">Collect balance &amp; discharge</AdminButton>}
-            </Panel>
-          )}
+          {s === 3 && <MarBody editable={editable} />}
+          {s === 4 && <DiagnosticsOtBody editable={editable} />}
+          {s === 5 && <DailyBillingBody editable={editable} />}
+          {s === 6 && <DischargeBody editable={editable} />}
+          {s === 7 && <FinalBillingBody editable={editable} />}
         </div>
       </div>
     </div>
